@@ -4,8 +4,9 @@
 #   stage-on-disk.sh ISO OVERLAY.tar [HOSTNAME [EXTRA_OPTIONS]]
 # The ISO and the overlay go to /var/lib/fspec-live, the live kernel and initrd to the ESP, and a
 # systemd-boot entry with +3 boot counting is set as the one-shot entry for the next boot only.
-# Any boot that fails, hangs or never comes online reboots into the default entry again; panic=20
-# covers live-boot dropping to its initramfs shell when it cannot find the ISO.
+# toram copies the ISO into RAM so the disk it sits on is free to repartition. Any boot that fails,
+# hangs or never comes online reboots into the default entry again; panic=20 covers live-boot
+# dropping to its initramfs shell when it cannot find the ISO.
 set -euo pipefail
 
 iso=$1
@@ -37,7 +38,7 @@ cat > "$esp/loader/entries/fspec-live+3.conf" <<ENTRY
 title   FormalSpec installer (one-shot)
 linux   /fspec-live/vmlinuz
 initrd  /fspec-live/initrd.img
-options boot=live components findiso=$rel/formalspec-installer-amd64.iso fspec.overlay=$rel/overlay.tar username=root hostname=$name locales=en_US.UTF-8 keyboard-layouts=us panic=20${extra:+ $extra}
+options boot=live components findiso=$rel/formalspec-installer-amd64.iso fspec.overlay=$rel/overlay.tar username=root hostname=$name locales=en_US.UTF-8 keyboard-layouts=us toram panic=20${extra:+ $extra}
 ENTRY
 sync
 bootctl set-oneshot fspec-live.conf

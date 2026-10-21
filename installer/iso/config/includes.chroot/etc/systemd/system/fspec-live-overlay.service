@@ -4,6 +4,8 @@ ConditionKernelCommandLine=fspec.overlay
 After=live-config.service local-fs.target
 Before=network-pre.target NetworkManager.service ssh.service tailscaled.service fspec-live-guard.service
 Wants=network-pre.target
+# Without the overlay a remote machine has no network or keys, so go back to the default entry.
+FailureAction=reboot
 
 [Service]
 Type=oneshot

@@ -7,12 +7,40 @@ set -eu
 for arg in $(cat /proc/cmdline); do
 	case $arg in fspec.overlay=*) path=${arg#fspec.overlay=} ;; esac
 done
+# With toram, live-boot unmounts the findiso filesystem once the ISO is in RAM, so it is mounted
+# again read-only just long enough to unpack, which leaves the disk free for repartitioning. The
+# options keep the mount from replaying a journal or log on a disk that is about to be converted;
+# btrfs mounts its default subvolume, the top level, which is what the path is relative to.
 tarball=/run/live/findiso/${path#/}
+mnt=
 if [ ! -f "$tarball" ]; then
-	echo "fspec-live-overlay: $tarball not found" >&2
+	mnt=$(mktemp -d)
+	lsblk -rpno NAME,FSTYPE | while read -r dev fstype; do
+		case $fstype in
+		ext4) opts=ro,noload ;;
+		btrfs) opts=ro,rescue=nologreplay ;;
+		xfs) opts=ro,norecovery ;;
+		vfat) opts=ro ;;
+		*) continue ;;
+		esac
+		echo "$dev $fstype $opts"
+	done > /run/fspec-live-disks
+	while read -r dev fstype opts; do
+		mount -t "$fstype" -o "$opts" "$dev" "$mnt" 2> /dev/null || continue
+		[ -f "$mnt/${path#/}" ] && break
+		umount "$mnt"
+	done < /run/fspec-live-disks
+	tarball=$mnt/${path#/}
+fi
+if [ ! -f "$tarball" ]; then
+	echo "fspec-live-overlay: ${path} not found on any disk" >&2
 	exit 1
 fi
 tar -xpf "$tarball" --no-same-owner -C /
+if [ -n "$mnt" ]; then
+	umount "$mnt"
+	rmdir "$mnt"
+fi
 # NetworkManager ignores keyfiles that others can read.
 chmod -R go-rwx /etc/NetworkManager/system-connections 2>/dev/null || true
 echo "fspec-live-overlay: unpacked $tarball"
