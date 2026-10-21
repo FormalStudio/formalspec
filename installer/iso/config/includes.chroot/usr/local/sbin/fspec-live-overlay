@@ -1,0 +1,18 @@
+#!/bin/sh
+# Unpacks a per-host tarball over / before networking starts. fspec.overlay= is a path on the
+# filesystem that held the ISO for findiso=, which live-boot leaves mounted at /run/live/findiso,
+# so host secrets (Wi-Fi, ssh keys, tailscale state) stay on that machine's disk, never in the ISO.
+set -eu
+
+for arg in $(cat /proc/cmdline); do
+	case $arg in fspec.overlay=*) path=${arg#fspec.overlay=} ;; esac
+done
+tarball=/run/live/findiso/${path#/}
+if [ ! -f "$tarball" ]; then
+	echo "fspec-live-overlay: $tarball not found" >&2
+	exit 1
+fi
+tar -xpf "$tarball" --no-same-owner -C /
+# NetworkManager ignores keyfiles that others can read.
+chmod -R go-rwx /etc/NetworkManager/system-connections 2>/dev/null || true
+echo "fspec-live-overlay: unpacked $tarball"

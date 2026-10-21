@@ -1,0 +1,15 @@
+[Unit]
+Description=Keep this boot only if the machine is reachable
+ConditionPathExists=/etc/fspec-live/guard.conf
+After=fspec-live-overlay.service ssh.service tailscaled.service NetworkManager.service
+# systemd-bless-boot runs after boot-complete.target and needs the ESP the guard mounts.
+Before=boot-complete.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/fspec-live-guard
+
+[Install]
+WantedBy=multi-user.target
+RequiredBy=boot-complete.target

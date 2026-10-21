@@ -1,0 +1,6 @@
+#!/bin/sh
+set -eu
+
+# Host keys made at build time would be shared by every copy of the ISO. live-config's
+# openssh-server step generates fresh ones at boot, and a host overlay can bring its own.
+rm -f /etc/ssh/ssh_host_*

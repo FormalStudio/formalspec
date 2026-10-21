@@ -1,6 +1,6 @@
 #!/bin/sh
 set -eu
 
-systemctl enable NetworkManager.service
+systemctl enable NetworkManager.service ssh.service fspec-live-overlay.service fspec-live-guard.service
 systemctl set-default multi-user.target
 echo 'LANG=C.UTF-8' > /etc/default/locale

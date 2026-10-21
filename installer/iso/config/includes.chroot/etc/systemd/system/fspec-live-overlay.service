@@ -1,0 +1,14 @@
+[Unit]
+Description=Unpack the host overlay named by fspec.overlay=
+ConditionKernelCommandLine=fspec.overlay
+After=live-config.service local-fs.target
+Before=network-pre.target NetworkManager.service ssh.service tailscaled.service fspec-live-guard.service
+Wants=network-pre.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/fspec-live-overlay
+
+[Install]
+WantedBy=sysinit.target
