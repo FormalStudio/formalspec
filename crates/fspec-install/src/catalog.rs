@@ -13,7 +13,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "fedora",
         name: "Fedora",
-        reason: "Current software every six months, with a signed kernel that Secure Boot and anti-cheat trust.",
+        reason: "Current software every six months. Secure Boot ready.",
         release: Fixed,
         init: Systemd,
         signed_kernel: true,
@@ -28,7 +28,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "bazzite",
         name: "Bazzite",
-        reason: "A gaming image built on Fedora, with Steam, HDR and handheld support ready on first boot.",
+        reason: "Gaming image on Fedora: Steam, HDR and handhelds.",
         release: Fixed,
         init: Systemd,
         signed_kernel: true,
@@ -43,7 +43,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "fedora-atomic",
         name: "Fedora Atomic",
-        reason: "Fedora as an image: updates land whole and the previous one stays in the boot menu.",
+        reason: "Fedora as an image, with the last one kept to boot back.",
         release: Fixed,
         init: Systemd,
         signed_kernel: true,
@@ -58,7 +58,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "aurora",
         name: "Aurora",
-        reason: "A KDE image from Universal Blue, tuned for daily work and development.",
+        reason: "KDE image from Universal Blue for daily work.",
         release: Fixed,
         init: Systemd,
         signed_kernel: true,
@@ -73,7 +73,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "arch",
         name: "Arch Linux",
-        reason: "The newest packages the week they ship, and only what you ask for.",
+        reason: "Newest packages, and only what you ask for.",
         release: Rolling,
         init: Systemd,
         signed_kernel: false,
@@ -88,7 +88,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "cachyos",
         name: "CachyOS",
-        reason: "Arch with packages built for current CPUs and a kernel tuned for desktops and games.",
+        reason: "Arch tuned for current CPUs, desktops and games.",
         release: Rolling,
         init: Systemd,
         signed_kernel: false,
@@ -103,7 +103,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "ubuntu",
         name: "Ubuntu",
-        reason: "Long-term support and the broadest hardware and vendor support.",
+        reason: "Long-term support with broad hardware support.",
         release: Fixed,
         init: Systemd,
         signed_kernel: true,
@@ -118,7 +118,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "debian",
         name: "Debian",
-        reason: "Stable for years at a time. Nothing changes until you decide to upgrade.",
+        reason: "Stable for years. Nothing changes until you upgrade.",
         release: Fixed,
         init: Systemd,
         signed_kernel: true,
@@ -133,7 +133,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "void",
         name: "Void Linux",
-        reason: "An independent rolling distro with runit and a package manager that stays out of the way.",
+        reason: "Independent rolling distro with runit.",
         release: Rolling,
         init: Runit,
         signed_kernel: false,
@@ -148,7 +148,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "void-musl",
         name: "Void Linux (musl)",
-        reason: "Void built on musl instead of glibc: smaller and simpler, but some prebuilt apps will not run.",
+        reason: "Void on musl: smaller, but some prebuilt apps will not run.",
         release: Rolling,
         init: Runit,
         signed_kernel: false,
@@ -163,7 +163,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "opensuse-tumbleweed",
         name: "openSUSE Tumbleweed",
-        reason: "Rolling, but every update is tested together before it ships, and you can roll back to an earlier state.",
+        reason: "Rolling, with each update tested together and rollback.",
         release: Rolling,
         init: Systemd,
         signed_kernel: true,
@@ -178,7 +178,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "opensuse-leap",
         name: "openSUSE Leap",
-        reason: "Built from SUSE Linux Enterprise's sources, with each release supported for 24 months.",
+        reason: "Built from SUSE Enterprise sources, 24 months per release.",
         release: Fixed,
         init: Systemd,
         signed_kernel: true,
@@ -193,7 +193,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "aeon",
         name: "openSUSE Aeon",
-        reason: "A GNOME desktop that updates itself daily in the background, with apps from Flatpak and tools in Distrobox.",
+        reason: "Self-updating GNOME desktop, apps from Flatpak.",
         release: Rolling,
         init: Systemd,
         signed_kernel: true,
@@ -208,7 +208,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "kalpa-desktop",
         name: "openSUSE Kalpa",
-        reason: "Aeon's approach with KDE Plasma: automatic transactional updates, apps from Flatpak and Distrobox.",
+        reason: "Aeon's approach with KDE Plasma.",
         release: Rolling,
         init: Systemd,
         signed_kernel: true,
@@ -223,7 +223,7 @@ pub const DISTROS: [Distro; 15] = [
     Distro {
         id: "aerynos",
         name: "AerynOS",
-        reason: "Built from scratch by its own tooling. Moss switches each update in atomically, and you can boot back into an earlier state.",
+        reason: "Built from scratch, with atomic updates and rollback.",
         release: Rolling,
         init: Systemd,
         signed_kernel: false,

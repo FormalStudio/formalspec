@@ -3,22 +3,22 @@
 
   Choose a system
 
-    Fedora                   fixed    systemd  signed    classic
-    Bazzite                  fixed    systemd  signed    image
-  ▌ Fedora Atomic            fixed    systemd  signed    image
-    Aurora                   fixed    systemd  signed    image
-    Arch Linux               rolling  systemd  unsigned  classic
-    CachyOS                  rolling  systemd  unsigned  classic
+    Fedora                   fixed    classic
+    Bazzite                  fixed    image
+  ▌ Fedora Atomic            fixed    image
+    Aurora                   fixed    image
+    Arch Linux               rolling  classic
+    CachyOS                  rolling  classic
+    Ubuntu                   fixed    classic
+    Debian                   fixed    classic
+    Void Linux               rolling  classic
+    Void Linux (musl)        rolling  classic
+    openSUSE Tumbleweed      rolling  classic
+    openSUSE Leap            fixed    classic
+    openSUSE Aeon  RC        rolling  atomic
+    openSUSE Kalpa  alpha    rolling  atomic
+    AerynOS  alpha           rolling  atomic
 
   Fedora Atomic
-  Fedora as an image: updates land whole and the previous one stays in the
-  boot menu.
-
-  fixed            New versions arrive in scheduled releases you upgrade to.
-  systemd          Services start with systemd, as on most distros.
-  signed kernel    Boots with Secure Boot on, and anti-cheat that checks
-                   kernel signatures trusts it.
-  image            The system is a bootc image: updates apply whole, and the
-                   previous image stays bootable.
-  based on Fedora  Uses Fedora's packages, with its own changes on top.
+  Fedora as an image, with the last one kept to boot back.
   ↑↓ Move  Enter Continue  Esc Back  ? Keys  s Spec

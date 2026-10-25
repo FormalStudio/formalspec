@@ -135,8 +135,10 @@ subvolumes for the system, `@home`, `@swap`, `@snapshots` and `@fspec`. The
 
 ### System
 
-Choose the distro. Each entry says how it updates, its init system, whether its kernel is signed
-for Secure Boot, and whether it is a bootc image. Distros still in development are marked.
+Choose the distro. Each row says whether it is rolling or fixed-release and whether it is classic,
+atomic or a bootc image, with one line about the selected distro underneath. Distros still in
+development are marked. The table below also lists init and kernel signing, which the review screen
+uses for the Secure Boot option.
 
 | Distro | Updates | Init | Signed kernel | Kind |
 | --- | --- | --- | --- | --- |

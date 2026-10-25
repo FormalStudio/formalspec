@@ -4,20 +4,20 @@
   Choose a preset for Fedora                                          ╭─ spec.star ──────────────────────────────────╮
                                                                       │  # This machine's spec. `fspec plan` shows   │
     Minimal                                                           │      what a change would do, `fspec apply`   │
-    A console system with networking and sudo. Add the rest in        │      makes it so.                            │
-    your spec.                                                        │  load("//modules/desktop.star", "modules",   │
-                                                                      │      "system")                               │
-  ▌ Desktop                                                           │                                              │
-  ▌ GNOME or KDE Plasma with a browser, audio, printing and           │  hosts = [                                   │
-  ▌ Flatpak.                                                          │      host(                                   │
-                                                                      │          platform = "x86_64-linux",          │
-    Gaming                                                            │          locale = "en_US.UTF-8",             │
-    The desktop plus Steam, Proton, GameMode and MangoHud.            │          keymap = "us",                      │
+  ▌ Desktop                                                           │      makes it so.                            │
+    Gaming                                                            │  load("//modules/desktop.star", "modules",   │
+    Server                                                            │      "system")                               │
+                                                                      │                                              │
+  GNOME or KDE Plasma with a browser and Flatpak.                     │  hosts = [                                   │
+                                                                      │      host(                                   │
+    Desktop   GNOME   KDE Plasma                                      │          platform = "x86_64-linux",          │
+                                                                      │          locale = "en_US.UTF-8",             │
+                                                                      │          keymap = "us",                      │
                                                                       │          timezone = "UTC",                   │
-    Server                                                            │          system = system("fedora", desktop = │
-    SSH, a firewall and automatic security updates. No desktop.       │              "gnome"),                       │
+                                                                      │          system = system("fedora", desktop = │
+                                                                      │              "gnome"),                       │
                                                                       │          modules = modules("fedora", desktop │
-    Desktop   GNOME   KDE Plasma                                      │              = "gnome"),                     │
+                                                                      │              = "gnome"),                     │
                                                                       │          protect = ["/home"],                │
                                                                       │      ),                                      │
                                                                       │  ]                                           │

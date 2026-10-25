@@ -3,12 +3,12 @@
 
   Choose a system                                                     ╭─ spec.star ──────────────────────────────────╮
                                                                       │  # This machine's spec. `fspec plan` shows   │
-  ▌ Fedora                   fixed    systemd  signed    classic      │      what a change would do, `fspec apply`   │
-    Bazzite                  fixed    systemd  signed    image        │      makes it so.                            │
-    Fedora Atomic            fixed    systemd  signed    image        │  load("//modules/minimal.star", "modules",   │
-    Aurora                   fixed    systemd  signed    image        │      "system")                               │
-    Arch Linux               rolling  systemd  unsigned  classic      │                                              │
-    CachyOS                  rolling  systemd  unsigned  classic      │  hosts = [                                   │
+  ▌ Fedora                   fixed    classic                         │      what a change would do, `fspec apply`   │
+    Bazzite                  fixed    image                           │      makes it so.                            │
+    Fedora Atomic            fixed    image                           │  load("//modules/minimal.star", "modules",   │
+    Aurora                   fixed    image                           │      "system")                               │
+    Arch Linux               rolling  classic                         │                                              │
+    CachyOS                  rolling  classic                         │  hosts = [                                   │
     Ubuntu                   ╭────────────────────────────────────────────────────────────╮                          │
     Debian                   │                                                            │ "x86_64-linux",          │
     Void Linux               │  Keys                                                      │en_US.UTF-8",             │
@@ -21,17 +21,17 @@
                              │  ←→                Change a choice or a number             │                          │
   Fedora                     │  Enter             Continue                                │                          │
   Current software every six │  Esc               Back                                    │                          │
-  Secure Boot and anti-cheat │  s                 Show or hide the spec                   │                          │
+                             │  s                 Show or hide the spec                   │                          │
                              │  Ctrl+C            Quit                                    │                          │
-  fixed            New versio│                                                            │                          │
-                   upgrade to│                                                            │                          │
-  systemd          Services s╰────────────────────────────────────────────────────────────╯                          │
-  signed kernel    Boots with Secure Boot on, and anti-cheat that     │                                              │
-                   checks kernel signatures trusts it.                │                                              │
-  classic          The package manager changes the system in place;   │                                              │
-                   btrfs snapshots cover rollback.                    │                                              │
-  independent      Built from its own sources and tooling, not on     │                                              │
-                   top of another distro.                             │                                              │
+                             │                                                            │                          │
+                             │                                                            │                          │
+                             ╰────────────────────────────────────────────────────────────╯                          │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
                                                                       │                                              │
                                                                       │                                              │
                                                                       │                                              │

@@ -8,7 +8,7 @@ use crate::model::{Desktop, Distro, Preset};
 use crate::ui::theme::fg;
 use crate::ui::widgets::controls::segmented;
 use crate::ui::widgets::list::row_chrome;
-use crate::ui::widgets::{Canvas, Hit, rect_in, wrap};
+use crate::ui::widgets::{Canvas, Hit, rect_in};
 
 const W_CARD: u8 = 0;
 const W_DESKTOP: u8 = 1;
@@ -31,10 +31,10 @@ pub fn blurb(p: Preset, d: &Distro) -> String {
         [rest @ .., last] => format!("{} or {last}", rest.join(", ")),
     };
     match p {
-        Preset::Minimal => "A console system with networking and sudo. Add the rest in your spec.".into(),
-        Preset::Desktop => format!("{desktops} with a browser, audio, printing and Flatpak."),
-        Preset::Gaming => "The desktop plus Steam, Proton, GameMode and MangoHud.".into(),
-        Preset::Server => "SSH, a firewall and automatic security updates. No desktop.".into(),
+        Preset::Minimal => "A console system with networking and sudo.".into(),
+        Preset::Desktop => format!("{desktops} with a browser and Flatpak."),
+        Preset::Gaming => "The desktop plus Steam and Proton.".into(),
+        Preset::Server => "SSH, a firewall and automatic updates. No desktop.".into(),
     }
 }
 
@@ -130,27 +130,17 @@ impl PresetScreen {
         let w = a.width.min(76);
         let mut y = 2;
         for (i, p) in self.distro.presets.iter().enumerate() {
-            let (name, desc) = (title(*p), blurb(*p, self.distro));
-            let lines = wrap(&desc, w as usize - 4);
-            let h = 1 + lines.len() as u16;
-            let card = rect_in(a, 0, y, w, h);
+            let row = rect_in(a, 0, y, w, 1);
             let on = self.sel == i;
-            for dy in 0..h {
-                row_chrome(c, Rect { y: card.y + dy, height: 1, ..card }, on, true);
-            }
-            c.hit(rect_in(a, 0, y, w, h + 1), W_CARD, i);
-            c.text(
-                card,
-                2,
-                0,
-                name,
-                if on { Style::new().fg(th.ink).add_modifier(Modifier::BOLD) } else { fg(th.ink) },
-            );
-            for (n, l) in lines.iter().enumerate() {
-                c.text(card, 2, 1 + n as u16, l, fg(th.muted));
-            }
-            y += h + 1;
+            row_chrome(c, row, on, true);
+            c.hit(row, W_CARD, i);
+            let st = if on { Style::new().fg(th.ink).add_modifier(Modifier::BOLD) } else { fg(th.ink) };
+            c.text(row, 2, 0, title(*p), st);
+            y += 1;
         }
+        y += 1;
+        c.text(a, 0, y, &blurb(self.preset(), self.distro), fg(th.muted));
+        y += 2;
         if self.choosable() {
             let row = rect_in(a, 0, y, a.width, 1);
             c.text(row, 2, 0, "Desktop", fg(th.muted));
