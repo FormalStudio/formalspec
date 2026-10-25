@@ -189,6 +189,12 @@ filesystem besides `load`, and it only reads the spec's own tree: patterns
 cannot start with `/` or contain `..`, and links that lead outside the tree are
 dropped.
 
+A branch `rev` locks the branch's tip, unless `git(..., paths = [...])` names
+the files or directories that make the build: then `fspec update` takes a bare
+`--filter=blob:none` clone of the branch and locks
+`git log -1 <tip> -- <paths>`, so commits that touch nothing else leave the
+lock and its cached build alone. Tags and full commits ignore `paths`.
+
 `fspec update` writes `patches = "sha256-…"` into the lock: a hash over the
 patch file names and contents, in the order the spec lists them. A package
 whose patches no longer hash to the lock's value is refused ("patches changed,
@@ -1812,7 +1818,10 @@ binary runs on every distro, with a link from `/usr/local/bin/fspec` to
 spec can drop it by accident.
 
 It is an ordinary `git(...)` package from there on. `fspec update` locks the
-newest commit of `main`, `fspec ci packages` gives it a CI job, `--cache`
+newest commit of `main` that touches `crates/`, `Cargo.toml` or `Cargo.lock`
+(`git(..., paths = ...)`): the kyan lock lives on the same `main`, and locking
+the tip would move the engine with every lock commit, past what CI has built.
+From there, `fspec ci packages` gives it a CI job, `--cache`
 records its OCI digest, and `apply` installs it, so a host runs the engine
 the lock names from its next apply on, and `fspec rollback` takes the engine
 back with the rest of the generation. `/usr/local/bin/fspec` is the path

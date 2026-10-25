@@ -102,7 +102,7 @@ pub fn resolve(pkg: &Pkg, platforms: &[String], min_age: Option<i64>, cx: &Cx) -
         // formulae.brew.sh knows only Homebrew's own taps; a third-party one installs what it has.
         Source::Brew { tap: Some(_), .. } => Ok(()),
         Source::Brew { name, cask, .. } => service::brew(name.as_deref().unwrap_or(&pkg.name), *cask, cx, &mut locked),
-        Source::Git { url, rev, .. } => git::resolve(url, rev, cx, &mut locked),
+        Source::Git { url, rev, paths, .. } => git::resolve(url, rev, paths, cx, &mut locked),
         Source::Nix { attr } => service::nix(attr, cx, &mut locked),
         Source::Dnf(_) | Source::Pacman(_) | Source::Apt(_) | Source::Xbps(_) => {
             distro::resolve(&pkg.source, &pkg.name, platforms, cx, &mut locked)

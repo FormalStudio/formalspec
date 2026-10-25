@@ -183,7 +183,7 @@ Each returns a value for `pkg(source = ...)`.
 | `flatpak(id)` | `id` | `remote = "flathub"` | Flathub or another remote. Linux |
 | `brew(name)` | `name` | `cask = False`, `tap = "owner/repo"` | Homebrew formulae and casks. macOS |
 | `url(url)` | `url` | | One file or archive at a fixed URL |
-| `git(url, rev = "main")` | `url`, `rev` | `deps = []`, `image = None` | A source build at a commit. See [Building from source](../guides/source-builds.md) |
+| `git(url, rev = "main")` | `url`, `rev` | `deps = []`, `image = None`, `paths = []` | A source build at a commit. See [Building from source](../guides/source-builds.md) |
 | `nix(attr)` | `attr` | | A nixpkgs attribute, on hosts that have Nix |
 | `dnf(names)`, `pacman(names)`, `apt(names)`, `xbps(names)`, `moss(names)`, `zypper(names)` | a name or a list | `repo` (zypper only) | The distro's repositories, on hosts of that distro |
 

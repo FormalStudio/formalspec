@@ -29,7 +29,7 @@ fspec update [<pkg>...] [--cache] [--images] [--registry <r>]
 Resolves versions, URLs and hashes from upstream and rewrites `fspec.lock`. Prints one line per
 change. With package names, re-resolves only those and keeps every other entry and every `gh:`
 load at its locked commit. Entries no host declares are dropped. The `fspec` package every Linux host carries is
-locked like any other, at the newest commit of FormalSpec's `main`.
+locked like any other, at the newest commit of FormalSpec's `main` that changes its sources.
 
 | Flag | Meaning |
 | --- | --- |

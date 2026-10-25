@@ -509,6 +509,10 @@ pub enum Source {
         /// The OCI image the build runs in. Unset: on the build machine itself.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         image: Option<String>,
+        /// Files or directories of the repository that move the lock: a branch `rev` locks its
+        /// newest commit touching one of them, not its tip. Empty: the tip.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        paths: Vec<String>,
     },
     Nix {
         attr: String,

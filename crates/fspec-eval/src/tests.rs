@@ -347,7 +347,8 @@ hosts = [host("m", platform = "aarch64-darwin", modules = [[formalmusic()]])]
                 url: "https://github.com/FormalStudio/formalmusic".into(),
                 rev: REV.into(),
                 deps: vec![],
-                image: None
+                image: None,
+                paths: vec![]
             }
         );
         assert_eq!(p.build_flags, ["--release"]);

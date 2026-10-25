@@ -454,3 +454,43 @@ fn parts_lock_their_url_and_hash() {
     assert_eq!(part.url.as_deref(), Some("https://h/core.tar.br"));
     assert_eq!(part.hash.as_deref(), Some("sha256-DUX1/UYrjHC/+xACGsG8/z9Y8psfr3VoWVCVQn1CgSw="));
 }
+
+#[test]
+fn a_git_branch_with_paths_locks_its_newest_commit_touching_them() {
+    let tip = "a".repeat(40);
+    let touched = "b".repeat(40);
+    let runner = RecordingRunner::default();
+    runner.respond(
+        "git ls-remote https://x/y main",
+        Output { status: 0, stdout: format!("{tip}\trefs/heads/main\n"), stderr: String::new() },
+    );
+    runner.respond("git -C ", Output { status: 0, stdout: format!("{touched}\n"), stderr: String::new() });
+    let fetch = MapFetch::default();
+    let p = pkg(
+        json!({"name": "tool", "source": {"kind": "git", "url": "https://x/y", "rev": "main", "paths": ["crates", "Cargo.lock"]}}),
+    );
+    let locked = resolve(&p, &platforms(&["x86_64-linux"]), None, &cx(&fetch, &runner)).unwrap();
+    assert_eq!(locked.rev.as_deref(), Some(touched.as_str()));
+    let lines = runner.lines();
+    assert!(
+        lines[1].starts_with("git clone -q --bare --filter=blob:none --single-branch --branch main https://x/y "),
+        "{lines:?}"
+    );
+    assert!(lines[2].ends_with(&format!("log -1 --format=%H {tip} -- crates Cargo.lock")), "{lines:?}");
+}
+
+#[test]
+fn a_git_tag_ignores_paths() {
+    let tag = "c".repeat(40);
+    let runner = RecordingRunner::default();
+    runner.respond(
+        "git ls-remote",
+        Output { status: 0, stdout: format!("{tag}\trefs/tags/v1\n"), stderr: String::new() },
+    );
+    let fetch = MapFetch::default();
+    let p =
+        pkg(json!({"name": "tool", "source": {"kind": "git", "url": "https://x/y", "rev": "v1", "paths": ["crates"]}}));
+    let locked = resolve(&p, &platforms(&["x86_64-linux"]), None, &cx(&fetch, &runner)).unwrap();
+    assert_eq!(locked.rev.as_deref(), Some(tag.as_str()));
+    assert_eq!(runner.lines().len(), 1);
+}

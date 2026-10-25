@@ -19,7 +19,15 @@ const BUILD: &str = r#"cd "$FSPEC_SRC" && t="$(uname -m)-unknown-linux-musl" && 
 pub fn pkg() -> Pkg {
     serde_json::from_value(serde_json::json!({
         "name": NAME,
-        "source": {"kind": "git", "url": REPO, "rev": "main", "image": IMAGE, "deps": ["build-base"]},
+        "source": {
+            "kind": "git",
+            "url": REPO,
+            "rev": "main",
+            // The lock in examples/ lives on the same main, so the tip moves on every lock commit.
+            "paths": ["crates", "Cargo.toml", "Cargo.lock"],
+            "image": IMAGE,
+            "deps": ["build-base"],
+        },
         "build": ["sh", "-c", BUILD],
         "bins": [NAME],
         "files": [{"path": BIN, "mode": "link", "target": LINK}],

@@ -52,6 +52,12 @@ a builder machine you name, or the host itself.
 `fspec update` resolves the ref with `git ls-remote`. `apply` never does, so the build always
 uses the locked commit.
 
+`paths` narrows a branch to the parts of the repository that make the build: with
+`git(url, paths = ["crates", "Cargo.lock"])`, `fspec update` locks the newest commit on the branch
+that touches one of them, read from a clone of the commits and trees without file contents. A
+commit that only changes docs then leaves the lock, and the cached build, where they are. Tags
+and full commits ignore `paths`.
+
 ## Recipes
 
 `fspec build` checks out the locked commit, applies the patches, and picks the first recipe whose
