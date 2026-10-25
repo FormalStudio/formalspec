@@ -18,9 +18,9 @@
                              │  Windows on /dev/nvme0n1 shrinks to 870 GB. Type           │ystem("fedora"),          │
                              │  /dev/nvme0n1 to confirm.                                  │modules("fedora"),        │
                              │                                                            │ser("kyan", uid = 1000,   │
-                             │  Device                                                    │ = ["wheel"])],           │
-                             │  ▌ /dev/nvme                                               │["/home"],                │
-                             │                                                            │                          │
+                             │  Device                                                    │ = ["wheel"], shell =     │
+                             │  ▌ /dev/nvme                                               │)],                       │
+                             │                                                            │["/home"],                │
                              │                                                            │                          │
                              │    Install      Cancel                                     │                          │
                              │                                                            │                          │

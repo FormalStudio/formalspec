@@ -55,6 +55,7 @@ pub fn plan(paths: &Paths, c: &Choices, s: &Setup) -> Result<Plan> {
         Cmd::new("tee").arg(format!("{root}/etc/hostname")).stdin(format!("{}\n", host.name)),
         Cmd::new("tee").arg("-a").arg(format!("{root}/etc/hosts")).stdin(format!("127.0.1.1 {}\n", host.name)),
         Cmd::new("chroot").arg(&root).arg("chpasswd").stdin(format!("{}:{}\n", user.name, c.account.password.0)),
+        Cmd::new("chroot").arg(&root).args(["usermod", "-c"]).arg(&c.account.full_name).arg(&user.name),
         Cmd::new("cp").arg("-a").arg(s.spec_dir.display().to_string()).arg(format!("{root}{home}")),
         Cmd::new("chroot").arg(&root).args(["chown", "-R"]).arg(format!("{0}:{0}", user.name)).arg(&home),
     ];
@@ -101,8 +102,11 @@ fn stage_of(cmd: &Cmd, device: &str, distro: &str, luks: bool) -> Option<String>
         "chroot" if cmd.args.iter().any(|a| a.contains("sbctl")) => "Setting up Secure Boot".into(),
         "chroot" if arg("apply") => "Applying your spec".into(),
         "chroot" if arg("chpasswd") => "Setting your password".into(),
+        // `usermod -c` sets the full name right after the password, in the same stage.
+        "chroot" if arg("usermod") => return None,
         // The script that moves the copied fspec binary into place is setup, not the kernel step.
         "chroot" if cmd.args.iter().any(|a| a.contains("fspec.new")) => return None,
+        "chroot" if cmd.args.iter().any(|a| a.contains("apt-get full-upgrade")) => format!("Updating {name}"),
         "chroot" if arg("-c") => "Building the kernel image".into(),
         "cp" if cmd.args.iter().any(|a| a.contains("/home/")) => "Copying your spec".into(),
         _ => return None,
@@ -317,6 +321,9 @@ mod tests {
         assert!(lines.iter().any(|l| l.starts_with("sgdisk -n1:0:+2G -t1:ef00")));
         assert!(at("pacstrap -K /r/run/fspec/disk/arch") < at("chroot /r/run/fspec/disk/arch chpasswd"));
         assert!(at("cp -a") < at("chroot /r/run/fspec/disk/arch chown -R kyan:kyan /home/kyan/spec"));
+        assert!(
+            at("chroot /r/run/fspec/disk/arch chpasswd") < at("chroot /r/run/fspec/disk/arch usermod -c Kyan kyan")
+        );
         assert!(!lines.iter().any(|l| l.contains("hunter22") || l.contains("correct horse")));
         let kernel = plan.steps.iter().find_map(|s| match s {
             Step::Run(c) if c.args.iter().any(|a| a.ends_with("/etc/kernel/cmdline")) => c.stdin.clone(),
@@ -375,6 +382,25 @@ mod tests {
         let paths = Paths::new("/r".into(), "/r/root".into());
         let plan = plan(&paths, &secure(choices(false)), &setup(dir.path(), &ids, true)).unwrap();
         assert!(!plan.lines().iter().any(|l| l.contains("sbctl")));
+    }
+
+    #[test]
+    fn debian_updates_before_the_apply_and_builds_its_kernel_after() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("spec.star"),
+            "hosts = [host(\"nova\", platform = \"x86_64-linux\", system = debian(packages = [\"sudo\"]), \
+             users = [user(\"kyan\", uid = 1000)])]\n",
+        )
+        .unwrap();
+        let ids = ids();
+        let paths = Paths::new("/r".into(), "/r/root".into());
+        let plan = plan(&paths, &choices(false), &setup(dir.path(), &ids, true)).unwrap();
+        let (titles, _) = stages(&plan, "/dev/vdb", "debian");
+        let at = |t: &str| titles.iter().position(|x| x == t).unwrap_or_else(|| panic!("no {t} in {titles:?}"));
+        assert!(at("Installing Debian") < at("Updating Debian"));
+        assert!(at("Updating Debian") < at("Applying your spec"));
+        assert!(at("Applying your spec") < at("Building the kernel image"));
     }
 
     #[test]

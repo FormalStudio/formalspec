@@ -18,11 +18,11 @@
   Password                                                            │          system = system("fedora"),          │
   ▌ •••••                                                             │          modules = modules("fedora"),        │
     Use at least 8 characters.                                        │          users = [user("kyan", uid = 1000,   │
-                                                                      │              groups = ["wheel"])],           │
-  Confirm password                                                    │          protect = ["/home"],                │
-                                                                      │      ),                                      │
-    The passwords do not match.                                       │  ]                                           │
-                                                                      │                                              │
+                                                                      │              groups = ["wheel"], shell =     │
+  Confirm password                                                    │              "bash")],                       │
+                                                                      │          protect = ["/home"],                │
+    The passwords do not match.                                       │      ),                                      │
+                                                                      │  ]                                           │
                                                                       │                                              │
                                                                       │                                              │
                                                                       │                                              │

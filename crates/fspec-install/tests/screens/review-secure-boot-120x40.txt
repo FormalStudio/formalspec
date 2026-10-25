@@ -18,11 +18,11 @@
                                                                       │          system = system("fedora"),          │
     Install beside Windows                                            │          modules = modules("fedora"),        │
                                                                       │          users = [user("kyan", uid = 1000,   │
-                                                                      │              groups = ["wheel"])],           │
+                                                                      │              groups = ["wheel"], shell =     │
+                                                                      │              "bash")],                       │
                                                                       │          protect = ["/home"],                │
                                                                       │      ),                                      │
                                                                       │  ]                                           │
-                                                                      │                                              │
                                                                       │                                              │
                                                                       │                                              │
                                                                       │                                              │

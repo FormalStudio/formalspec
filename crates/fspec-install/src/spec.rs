@@ -72,7 +72,11 @@ pub fn preview(d: &Draft) -> String {
     }
     if let Some(a) = &d.account {
         let group = fresh.map_or("wheel", |(distro, _, _)| admin_group(distro));
-        out.push_str(&format!("        users = [user({}, uid = 1000, groups = [\"{group}\"])],\n", quote(&a.name)));
+        // useradd's own default is /bin/sh on Debian, Ubuntu and Void.
+        out.push_str(&format!(
+            "        users = [user({}, uid = 1000, groups = [\"{group}\"], shell = \"bash\")],\n",
+            quote(&a.name)
+        ));
     }
     out.push_str("        protect = [\"/home\"],\n    ),\n]\n");
     out

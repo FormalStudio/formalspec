@@ -75,6 +75,7 @@ fn every_combination_writes_a_spec_that_evaluates() {
         assert_eq!(host.users[0].uid, Some(1000), "{what}");
         let admin = if matches!(distro.id, "debian" | "ubuntu") { "sudo" } else { "wheel" };
         assert_eq!(host.users[0].groups, [admin], "{what}");
+        assert_eq!(host.users[0].shell.as_deref(), Some("bash"), "{what}");
         assert_eq!(host.protect, ["/home"], "{what}");
         assert_eq!(host.locale.as_deref(), Some("en_US.UTF-8"), "{what}");
         assert_eq!(host.timezone.as_deref(), Some("Europe/Madrid"), "{what}");
