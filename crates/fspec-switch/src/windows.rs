@@ -126,6 +126,10 @@ pub(crate) fn partitions(plan: &mut Plan, b: &BesideWindows, root_code: &str) ->
             .arg(format!("-c{root}:root"))
             .arg(&w.disk),
     );
+    // A failed install leaves the space free for the next try. A shrunk C: stays shrunk, and
+    // marked for a check, so the next try finds free space instead of shrinking it again.
+    let remove = r#"sgdisk -d"$2" -d"$3" "$1" && partx -u "$1""#;
+    plan.undo(Cmd::new("sh").args(["-c", remove, "sh", &w.disk, &boot.to_string(), &root.to_string()]));
     Ok((boot, root))
 }
 

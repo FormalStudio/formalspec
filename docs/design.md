@@ -1344,7 +1344,11 @@ cannot satisfy is refused with the fix, usually a `fspec disk` command.
   more than `ntfsresize --info` says it needs. `ntfsresize` refuses a
   hibernated volume (Fast Startup) and one marked for `chkdsk`; a BitLocker
   volume cannot be resized from Linux at all, so it has to be shrunk in
-  Windows' Disk Management, leaving free space.
+  Windows' Disk Management, leaving free space. Once the partitions exist, an
+  undo step deletes them if a later step fails. `C:` stays shrunk, and
+  `ntfsresize` has marked it for a check, so the next try finds the space free
+  instead of shrinking `C:` again; the installer's "Try again" reads the disk
+  anew for that.
 
 Every destructive step asks for the device name to be typed back, refuses a
 mounted target unless the step is built for one (`btrfs filesystem resize`

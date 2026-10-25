@@ -685,6 +685,91 @@ fn bitlocker_blocks_the_shrink_until_the_disk_is_erased_instead() {
     assert_eq!(r.app.draft().disk.unwrap().windows, None);
 }
 
+/// The demo machine, with Windows on its first disk changed by `edit` on each scan, counted from 0.
+struct Rescans {
+    inner: DemoBackend,
+    scans: Mutex<u32>,
+    edit: fn(u32, &mut fspec_switch::WindowsDisk),
+}
+
+impl Backend for Rescans {
+    fn disks(&self) -> anyhow::Result<Vec<DiskInfo>> {
+        let mut disks = self.inner.disks()?;
+        let mut scans = self.scans.lock().unwrap();
+        (self.edit)(*scans, disks[0].windows.as_mut().unwrap());
+        *scans += 1;
+        Ok(disks)
+    }
+    fn firmware(&self) -> Firmware {
+        self.inner.firmware()
+    }
+    fn locales(&self) -> Vec<(String, String)> {
+        self.inner.locales()
+    }
+    fn keymaps(&self) -> Vec<(String, String)> {
+        self.inner.keymaps()
+    }
+    fn timezones(&self) -> Vec<String> {
+        self.inner.timezones()
+    }
+    fn set_keymap(&self, k: &str) -> anyhow::Result<()> {
+        self.inner.set_keymap(k)
+    }
+    fn clone_spec(&self, u: &str, a: &GitAuth, i: &Path) -> anyhow::Result<Vec<HostSummary>> {
+        self.inner.clone_spec(u, a, i)
+    }
+    fn preview(&self, d: &Draft) -> String {
+        self.inner.preview(d)
+    }
+    fn install(&self, c: &Choices, tx: Sender<Progress>) {
+        self.inner.install(c, tx)
+    }
+}
+
+#[test]
+fn a_rescan_after_fixing_windows_fits_the_size_to_what_it_can_give() {
+    let edit = |n, w: &mut fspec_switch::WindowsDisk| {
+        w.shrink_min = match n {
+            0 => Err("Windows marked C: for a disk check.".into()),
+            _ => Ok(w.windows.size - fspec_switch::WINDOWS_HEADROOM - 60 * fspec_switch::GB),
+        }
+    };
+    let be = Arc::new(Rescans { inner: DemoBackend::instant(), scans: Mutex::default(), edit });
+    let mut r = Rig::new(be, (120, 40), false);
+    r.to(Step::Disk);
+    assert!(r.text((120, 40)).contains("disk check"));
+    r.press(KeyCode::Char('r'));
+    let w = r.app.draft().disk.unwrap().windows.expect("Windows can be shrunk after the rescan");
+    let sh = w.space.shrink.unwrap();
+    assert_eq!((w.disk.windows.size - sh.to) / fspec_switch::GB, 60);
+    assert!(r.text((120, 40)).contains("Linux size  ‹ 60 GB ›"));
+}
+
+#[test]
+fn try_again_after_a_failed_shrink_uses_the_space_it_freed() {
+    // From the second scan on, C: is 128 GB smaller and the space after it free, as a failed
+    // install leaves it.
+    let edit = |n, w: &mut fspec_switch::WindowsDisk| {
+        if n > 0 {
+            w.windows.size -= 128 * fspec_switch::GB;
+            let start = (w.windows.start + w.windows.size / 512).div_ceil(2048) * 2048;
+            w.gaps = vec![fspec_switch::Gap { start, end: w.windows_limit }];
+        }
+    };
+    let be = Arc::new(Rescans { inner: DemoBackend::instant().failing_at(5), scans: Mutex::default(), edit });
+    let mut r = Rig::new(be, (120, 40), false);
+    r.to(Step::Review);
+    assert!(r.app.draft().disk.unwrap().windows.unwrap().space.shrink.is_some());
+    r.erase_and_install("/dev/nvme0n1");
+    r.settle();
+    assert!(matches!(r.app.install_outcome(), Outcome::Failed { .. }));
+    r.press(KeyCode::Enter);
+    assert_eq!(r.app.step(), Step::Review);
+    let w = r.app.draft().disk.unwrap().windows.expect("still beside Windows");
+    assert_eq!(w.space.shrink, None, "C: is not shrunk a second time");
+    assert!(r.text((120, 40)).contains("Windows is untouched"));
+}
+
 #[test]
 fn golden_system() {
     let mut r = Rig::demo();

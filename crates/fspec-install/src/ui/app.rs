@@ -451,6 +451,7 @@ impl App {
 
     fn go(&mut self, step: Step, now: Instant) {
         let forward = self.order(step) >= self.order(self.step);
+        let from = self.step;
         self.step = step;
         self.reached.insert(step);
         match step {
@@ -458,6 +459,11 @@ impl App {
             Step::Disk => self.disk.reload(&self.sh),
             Step::Account => self.account.enter(&self.sh),
             Step::Review => {
+                // A failed install beside Windows can leave C: shrunk, so the retry plans from
+                // the disk as it is now.
+                if from == Step::Install {
+                    self.disk.reload(&self.sh);
+                }
                 let s = self.summary();
                 self.review.enter(s);
             }

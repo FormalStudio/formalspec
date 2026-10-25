@@ -111,16 +111,17 @@ impl DiskScreen {
         self.follow();
     }
 
-    /// A newly picked disk starts beside Windows, with the default size.
+    /// A newly picked disk starts beside Windows, with the default size. A rescan keeps the size
+    /// but fits it to what Windows can give now, which changes once a refused C: is fixed.
     fn follow(&mut self) {
         let path = self.selected().map(|d| d.path.clone());
-        if path == self.for_disk {
-            return;
+        if path != self.for_disk {
+            self.for_disk = path;
+            self.beside = true;
+            self.linux_gb = DEFAULT_LINUX;
         }
-        self.for_disk = path;
-        self.beside = true;
         if let Some(Room::Shrink(most)) = self.windows().map(room) {
-            self.linux_gb = DEFAULT_LINUX.clamp(fspec_switch::MIN_LINUX / GB, most);
+            self.linux_gb = self.linux_gb.clamp(fspec_switch::MIN_LINUX / GB, most);
         }
     }
 

@@ -1729,6 +1729,11 @@ fn init_beside_windows_shrinks_c_and_keeps_its_partition() {
             239616 + (400u64 << 21) - 1
         )
     );
+    assert_eq!(
+        lines[at("sgdisk") + 1],
+        r#"undo sh -c 'sgdisk -d"$2" -d"$3" "$1" && partx -u "$1"' sh /dev/nvme0n1 5 6"#,
+        "a failed install frees the space again"
+    );
     assert!(lines.contains(&"wipefs -a /dev/nvme0n1p5 /dev/nvme0n1p6".to_string()));
     assert!(lines.contains(&"mkfs.vfat -F 32 -n BOOT -i ABCD1234 /dev/nvme0n1p5".to_string()));
     assert!(!lines.iter().any(|l| l.contains("mkfs") && l.contains("nvme0n1p1")), "Windows' ESP is never formatted");

@@ -147,6 +147,9 @@ On a disk that holds Windows, the screen offers **Install beside Windows**, pick
   leaves Windows 20 GB more than it uses now, in steps of 8 GB. `ntfsresize` shrinks `C:` and its
   partition. Windows checks the disk once on its next start.
 
+If the install fails, the installer deletes the partitions it made. `C:` keeps its new size, and
+**Try again** installs into the space it freed.
+
 Linux gets a 2 GB boot partition for the kernels and the rest for btrfs. systemd-boot goes on
 Windows' own EFI partition and lists **Windows Boot Manager** in its menu, which shows for 5
 seconds at every boot. The firmware boots systemd-boot first and keeps Windows' entry. Nothing in

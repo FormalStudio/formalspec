@@ -121,18 +121,36 @@ fn stages(plan: &Plan, device: &str, distro: &str) -> (Vec<String>, Vec<usize>) 
 /// Execute `plan`, reporting each stage, every output line and a failure on `tx` and appending all
 /// of it to `log`. Cleanup runs whether or not the steps succeeded, as [`Plan::execute`] does.
 pub fn execute(plan: &Plan, device: &str, distro: &str, log: &Path, tx: &Sender<Progress>) -> Result<()> {
-    let (titles, of_step) = stages(plan, device, distro);
     let runner = Streaming { tx: tx.clone(), log: Mutex::new(File::create(log)?) };
+    execute_with(plan, &runner, device, distro, log, tx)
+}
+
+/// [`execute`] on `runner`. The undo steps reached run, newest first, when a later step fails,
+/// after the cleanup has unmounted what they would undo.
+fn execute_with(
+    plan: &Plan,
+    runner: &dyn Runner,
+    device: &str,
+    distro: &str,
+    log: &Path,
+    tx: &Sender<Progress>,
+) -> Result<()> {
+    let (titles, of_step) = stages(plan, device, distro);
     let total = titles.len();
     let mut current = usize::MAX;
+    let mut undo = Vec::new();
     let mut result = Ok(());
     for (step, &stage) in plan.steps.iter().zip(&of_step) {
         if stage != current {
             current = stage;
             let _ = tx.send(Progress::Stage { index: stage, total, title: titles[stage].clone() });
         }
+        if let Step::Undo(c) = step {
+            undo.push(c);
+            continue;
+        }
         let one = Plan { steps: vec![step.clone()], cleanup: Vec::new() };
-        if let Err(e) = one.execute(&runner) {
+        if let Err(e) = one.execute(runner) {
             let error = format!("{e:#}");
             let _ = tx.send(Progress::Failed { stage: titles[stage].clone(), error, log: log.to_path_buf() });
             result = Err(e);
@@ -144,6 +162,11 @@ pub fn execute(plan: &Plan, device: &str, distro: &str, log: &Path, tx: &Sender<
     }
     for c in &plan.cleanup {
         let _ = runner.run(c);
+    }
+    if result.is_err() {
+        for c in undo.iter().rev() {
+            let _ = runner.run(c);
+        }
     }
     result
 }
@@ -313,6 +336,58 @@ mod tests {
         );
         assert_eq!(of_step.len(), plan.steps.len());
         assert!(of_step.windows(2).all(|w| w[0] <= w[1]));
+    }
+
+    fn beside_windows() -> Choices {
+        let part = |dev: &str, partn, start, size, fstype: &str| fspec_switch::Part {
+            dev: dev.into(),
+            partn,
+            start,
+            size,
+            fstype: fstype.into(),
+            ..fspec_switch::Part::default()
+        };
+        let disk = fspec_switch::WindowsDisk {
+            disk: "/dev/nvme0n1".into(),
+            sector: 512,
+            esp: part("/dev/nvme0n1p1", 1, 2048, 100 << 20, "vfat"),
+            windows: part("/dev/nvme0n1p3", 3, 239616, 100 * fspec_switch::GIB, "ntfs"),
+            windows_limit: 239616 + (100 << 21),
+            gaps: vec![fspec_switch::Gap { start: 210_000_000, end: 290_000_000 }],
+            next_partn: 5,
+            shrink_min: Ok(fspec_switch::GIB),
+        };
+        let space = fspec_switch::space(&disk, None).unwrap();
+        let mut c = choices(false);
+        c.disk.device = "/dev/nvme0n1".into();
+        c.disk.windows = Some(fspec_switch::BesideWindows { disk, space });
+        c
+    }
+
+    #[test]
+    fn a_failed_install_beside_windows_removes_the_partitions_it_made() {
+        let dir = spec_dir();
+        let ids = ids();
+        let paths = Paths::new("/r".into(), "/r/root".into());
+        let plan = plan(&paths, &beside_windows(), &setup(dir.path(), &ids, true)).unwrap();
+        let log = dir.path().join("install.log");
+        let remove = r#"sh -c 'sgdisk -d"$2" -d"$3" "$1" && partx -u "$1"' sh /dev/nvme0n1 5 6"#;
+
+        let (tx, _rx) = std::sync::mpsc::channel();
+        let missing = Output { status: 1, ..Output::default() };
+        let ok = fspec_core::runner::RecordingRunner::default();
+        ok.respond("test -e", missing.clone());
+        execute_with(&plan, &ok, "/dev/nvme0n1", "arch", &log, &tx).unwrap();
+        assert!(!ok.lines().iter().any(|l| l.starts_with("sh -c sgdisk -d")), "{:#?}", ok.lines());
+
+        let failing = fspec_core::runner::RecordingRunner::default();
+        failing.respond("test -e", missing);
+        failing.respond("pacstrap", Output { status: 1, stdout: String::new(), stderr: "no repositories".into() });
+        assert!(execute_with(&plan, &failing, "/dev/nvme0n1", "arch", &log, &tx).is_err());
+        let lines = failing.lines();
+        let at = |p: &str| lines.iter().rposition(|l| l.starts_with(p)).unwrap_or_else(|| panic!("no `{p}`"));
+        assert_eq!(lines.last().map(String::as_str), Some(remove));
+        assert!(at("pacstrap") < at("umount /r/run/fspec/disk/esp") && at("umount /r/run/fspec/disk") < at(remove));
     }
 
     #[test]
