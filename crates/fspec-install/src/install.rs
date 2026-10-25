@@ -46,7 +46,10 @@ pub fn plan(paths: &Paths, c: &Choices, s: &Setup) -> Result<Plan> {
 
     let root = fspec_switch::root_dir(paths, distro);
     let home = format!("/home/{}/spec", user.name);
+    // debootstrap copies the live system's /etc/hostname into the new root.
     let in_root = [
+        Cmd::new("tee").arg(format!("{root}/etc/hostname")).stdin(format!("{}\n", host.name)),
+        Cmd::new("tee").arg("-a").arg(format!("{root}/etc/hosts")).stdin(format!("127.0.1.1 {}\n", host.name)),
         Cmd::new("chroot").arg(&root).arg("chpasswd").stdin(format!("{}:{}\n", user.name, c.account.password.0)),
         Cmd::new("cp").arg("-a").arg(s.spec_dir.display().to_string()).arg(format!("{root}{home}")),
         Cmd::new("chroot").arg(&root).args(["chown", "-R"]).arg(format!("{0}:{0}", user.name)).arg(&home),

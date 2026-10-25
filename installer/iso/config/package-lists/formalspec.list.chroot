@@ -41,6 +41,7 @@ iproute2
 iputils-ping
 systemd-resolved
 openssh-client
+openssh-server
 git
 curl
 ca-certificates

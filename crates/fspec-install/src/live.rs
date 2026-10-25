@@ -285,9 +285,10 @@ impl Backend for Live {
         spec::preview(draft)
     }
 
-    /// The ISO's boot check waits for this line on the serial console.
+    /// The ISO's boot check waits for this line on the serial console. The serial entries boot with
+    /// loglevel=3, since a chattier console stalls the VM, so it is logged as critical to get through.
     fn shown(&self) {
-        let _ = std::fs::write("/dev/kmsg", "<6>fspec-install: first screen\n");
+        let _ = std::fs::write("/dev/kmsg", "<2>fspec-install: first screen\n");
     }
 
     fn install(&self, c: &Choices, tx: Sender<Progress>) {

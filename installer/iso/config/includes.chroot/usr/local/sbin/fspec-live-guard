@@ -1,0 +1,50 @@
+#!/bin/sh
+# For machines nobody can reach by hand. A host overlay's /etc/fspec-live/guard.conf turns it on:
+#   TIMEOUT=600        seconds to wait for sshd (and tailscale) before rebooting
+#   TAILSCALE=1        also require tailscale to be running
+#   WATCHDOG_SEC=30    arm the hardware watchdog, so a hang resets the machine
+#   ESP=UUID=...       the ESP to mount for systemd-bless-boot
+# Rebooting out of a boot-counted entry that still has tries lands in the default entry again.
+# Once an entry has been blessed it has no counter left, which makes it the last resort that a
+# broken default falls back to; then the guard keeps waiting instead of rebooting in a loop.
+set -u
+. /etc/fspec-live/guard.conf
+
+say() { echo "<5>fspec-live-guard: $*" > /dev/kmsg; echo "$*"; }
+
+if [ -n "${WATCHDOG_SEC:-}" ]; then
+	busctl set-property org.freedesktop.systemd1 /org/freedesktop/systemd1 \
+		org.freedesktop.systemd1.Manager RuntimeWatchdogUSec t "$((WATCHDOG_SEC * 1000000))" &&
+		say "watchdog armed at ${WATCHDOG_SEC}s"
+fi
+
+online() {
+	systemctl -q is-active ssh.service || return 1
+	ss -Hltn 'sport = :22' | grep -q . || return 1
+	ip -4 route show default | grep -q . || return 1
+	[ "${TAILSCALE:-0}" = 1 ] || return 0
+	tailscale status --peers=false > /dev/null 2>&1
+}
+
+deadline=$(($(date +%s) + ${TIMEOUT:-600}))
+warned=
+until online; do
+	if [ "$(date +%s)" -ge "$deadline" ] && [ -z "$warned" ]; then
+		if ls /sys/firmware/efi/efivars/LoaderBootCountPath-* > /dev/null 2>&1; then
+			say "not reachable after ${TIMEOUT:-600}s, rebooting into the default entry"
+			systemctl reboot
+			exit 1
+		fi
+		say "not reachable after ${TIMEOUT:-600}s; this entry is the fallback, so staying up"
+		warned=1
+	fi
+	sleep 5
+done
+say "reachable over ssh$([ "${TAILSCALE:-0}" = 1 ] && echo ' and tailscale')"
+
+if [ -n "${ESP:-}" ]; then
+	mkdir -p /efi
+	mountpoint -q /efi || mount "$ESP" /efi
+fi
+systemctl start --no-block boot-complete.target
+say "boot marked good"

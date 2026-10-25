@@ -1,0 +1,18 @@
+#!/bin/sh
+set -eu
+
+VERSION=1.104.2
+SHA256=512f613ed7d04fc7282f7dc5bd76aa105aae28168fbb9357eb749ebcbc29f0ae
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+curl -fsSL -o "$work/tailscale.tgz" "https://pkgs.tailscale.com/stable/tailscale_${VERSION}_amd64.tgz"
+echo "$SHA256  $work/tailscale.tgz" | sha256sum -c -
+tar -xzf "$work/tailscale.tgz" -C "$work"
+dir=$work/tailscale_${VERSION}_amd64
+install -m 0755 "$dir/tailscale" /usr/bin/tailscale
+install -m 0755 "$dir/tailscaled" /usr/sbin/tailscaled
+install -m 0644 "$dir/systemd/tailscaled.service" /etc/systemd/system/tailscaled.service
+install -m 0644 "$dir/systemd/tailscaled.defaults" /etc/default/tailscaled
+systemctl enable tailscaled.service
+/usr/bin/tailscale version
