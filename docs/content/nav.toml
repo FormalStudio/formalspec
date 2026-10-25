@@ -21,7 +21,7 @@ pages = [
 
 [[section]]
 title = "Operate"
-pages = ["guides/removal-and-rollback", "guides/remote-hosts", "guides/sync", "guides/source-builds"]
+pages = ["guides/removal-and-rollback", "guides/recovery", "guides/remote-hosts", "guides/sync", "guides/source-builds"]
 
 [[section]]
 title = "The operating system"
