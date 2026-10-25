@@ -1318,10 +1318,12 @@ cannot satisfy is refused with the fix, usually a `fspec disk` command.
   tries, `boot.panic_on_fail panic=10` (a failed initrd reboots and burns a
   try) and `systemd.mask=` for `emergency` and `rescue` (a failed mount after
   the initrd still reaches `sshd`), `loader.conf` loses its `default`,
+  the profile drops the ext4 generations, so the next `nixos-rebuild` does
+  not write their entries again (`ext2_saved` keeps them for the way back),
   and the `fspec-live` entry's `findiso=` and `fspec.overlay=` move to
   `/@fspec/live/`. After three failed boots systemd-boot falls through to
   `fspec-live`; NixOS's `systemd-bless-boot` marks a good boot. Once it has,
-  a `systemd.run=` on the entry drops those arguments again, so later boots
+  a `systemd.run=` on the entry (started by `systemd.wants=`, as below) drops those arguments again, so later boots
   keep their emergency shells; `fspec disk unmask` does the same by hand.
   Every step
   journals its undo, synced before the step runs, in `fspec/disk-journal` on
@@ -1333,6 +1335,35 @@ cannot satisfy is refused with the fix, usually a `fspec disk` command.
   deleting the old top level with `ext2_saved` (which ends the way back to
   ext4), the copy of `/home` in `@nixos` and its old `/swapfile`, and refuses
   the first while `fspec-live` still finds its files outside `@fspec`.
+- `disk migrate --stage <iso> --nixos-system <path>`, run on the NixOS
+  root itself, sets that up for one unattended run on the next boot. It
+  checks the system as above against the running root, refuses a dynamically
+  linked fspec, asks for the root's device name and a backup (`--backup` or
+  `--no-backup`), and then copies the ISO and an overlay to
+  `/var/lib/fspec-live` on the root, the ISO's kernel and initrd to
+  `fspec-live/` on the ESP, writes `loader/entries/fspec-live+3.conf` and
+  makes it the `bootctl set-oneshot` entry. A GC root keeps the system in the
+  store until the migration has made it a generation. The overlay is
+  `--overlay <tar>` (network, ssh keys, a `guard.conf` of its own) with
+  fspec's files appended: the running fspec at `/usr/local/bin/fspec`, so the
+  live system runs the engine that staged it, `/etc/fspec-live/migrate`, and
+  a `guard.conf` (ten minutes to come online, the hardware watchdog at 30
+  seconds, the ESP to bless on) unless the host's overlay has one. The entry
+  boots `toram`, so the root is unmounted once the ISO is in RAM, and carries
+  `fspec.migrate`, `systemd.run=` for the script and
+  `systemd.wants=kernel-command-line.service`: `systemd.run=` alone only
+  swaps the default target, which the live system's own `default.target`
+  outranks. The script waits for the guard, types the device name into
+  `disk migrate <device> --nixos-system <path> --no-backup`, writes its log
+  to `fspec/migrate.log` on the ESP and reboots, into the new NixOS
+  generation or, after a rollback, into NixOS on ext4; it stays up for ssh
+  only when an unfinished journal is left. A live boot that never comes
+  online reboots on its own and costs one of the entry's three tries, and the
+  one-shot variable means the boot after it is NixOS again. The migration
+  drops `fspec.migrate` and the `systemd.run=` arguments from the entry
+  along with moving its paths to `@fspec/live`, so later boots of it are a
+  plain live system; after a reset mid-migration the script still runs,
+  because it also starts when the ESP holds a journal.
 - `fspec disk init <device> [--layout default|zfs|bios] [--luks] [--distro d
   --host h]` partitions and formats a disk from scratch, creates the shared
   subvolumes or datasets, installs the bootloader, and with `--distro`
@@ -1743,6 +1774,7 @@ self-signed chain are unverified.
 | `fspec forget <distro>` | Delete an old distro root, from the root that owns boot |
 | `fspec disk plan [device]` | Steps that bring a disk onto a supported layout |
 | `fspec disk migrate [device]` | Run the in-place steps of `disk plan` |
+| `fspec disk migrate --stage <iso> --nixos-system <path>` | Boot the live ISO once from the disk and migrate this NixOS root there |
 | `fspec disk init <device>` | Partition and format a disk with a supported layout |
 | `fspec sync [item...] [--peer h] [--from h] [--rollback] [--dry-run] [--watch [s]]` | Sync app data with the item's peers |
 

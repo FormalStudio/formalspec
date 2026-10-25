@@ -709,7 +709,7 @@ fn a_nixos_root_converts_snapshots_and_boots_its_new_system() {
             (
                 "make /nix/store/x58v-nixos-system-e1504g generation 427 of NixOS in @nixos and its boot default with \
                  three tries, move generation 426 and older to loader/entries.ext4 on the ESP, and point the fspec-live \
-                 entry at @fspec/live",
+                 entry at @fspec/live without the staged migration",
                 false
             ),
         ]
@@ -734,6 +734,9 @@ fn a_nixos_root_converts_snapshots_and_boots_its_new_system() {
     let env = format!("chroot {root} {sys}/sw/bin/env PATH={sys}/sw/bin HOME=/root LOCALE_ARCHIVE=");
     let find = |what: &str| boot.iter().position(|l| l.starts_with(&env) && l.contains(what)).unwrap();
     assert!(find("nix-env -p /nix/var/nix/profiles/system --set") < find("bin/switch-to-configuration boot"));
+    let unroot = format!("rm -f {root}/nix/var/nix/gcroots/fspec-migrate");
+    assert!(find("nix-env -p /nix/var/nix/profiles/system --set") < at(&boot, &unroot));
+    assert!(find("bin/switch-to-configuration boot") < find("--delete-generations old"));
     assert!(boot.iter().any(|l| l.contains("init=$2/init") && l.ends_with("/nix/store/x58v-nixos-system-e1504g")));
 }
 
@@ -750,7 +753,9 @@ fn the_new_generation_gets_tries_until_blessed_and_the_live_entry_moves_into_at_
     let sys = "/nix/store/x58v-nixos-system-e1504g";
     w(entries.join("nixos-aaa.conf"), &format!("title NixOS\noptions init={sys}/init loglevel=4\n"));
     w(entries.join("nixos-bbb.conf"), "title NixOS\noptions init=/nix/store/old/init loglevel=4\n");
-    let live = "title FormalSpec live\nlinux /fspec-live/vmlinuz\noptions boot=live findiso=/var/lib/fspec-live/formalspec-installer-amd64.iso fspec.overlay=/var/lib/fspec-live/overlay.tar quiet\n";
+    let plain = "title FormalSpec live\nlinux /fspec-live/vmlinuz\noptions boot=live findiso=/var/lib/fspec-live/formalspec-installer-amd64.iso fspec.overlay=/var/lib/fspec-live/overlay.tar quiet\n";
+    let live = plain.replace(" quiet\n", &format!(" quiet {}\n", crate::disk::LIVE_MIGRATE));
+    let live = live.as_str();
     w(entries.join("fspec-live+3.conf"), live);
     w(esp.join("loader/loader.conf"), "timeout 3\ndefault nixos-aaa.conf\nconsole-mode keep\n");
     let steps =
@@ -788,7 +793,7 @@ fn the_new_generation_gets_tries_until_blessed_and_the_live_entry_moves_into_at_
             "options init={sys}/init loglevel=4 boot.panic_on_fail panic=10 systemd.mask=emergency.target \
              systemd.mask=emergency.service systemd.mask=rescue.target systemd.mask=rescue.service \
              systemd.run=\"/bin/sh /boot/loader/fspec-unmask\" systemd.run_success_action=none \
-             systemd.run_failure_action=none\n"
+             systemd.run_failure_action=none systemd.wants=kernel-command-line.service\n"
         )),
         "{new}"
     );
@@ -797,16 +802,24 @@ fn the_new_generation_gets_tries_until_blessed_and_the_live_entry_moves_into_at_
     assert_eq!(std::fs::read_to_string(esp.join("loader/loader.conf")).unwrap(), "timeout 3\nconsole-mode keep\n");
 
     let move_live = script("fspec-live*.conf");
-    let err =
-        std::process::Command::new("sh").arg("-c").arg(&move_live).arg("sh").arg(&esp).arg(&top).output().unwrap();
+    let err = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(&move_live)
+        .arg("sh")
+        .arg(&esp)
+        .arg(&top)
+        .arg(move_live_suffix(&steps))
+        .output()
+        .unwrap();
     assert!(!err.status.success() && String::from_utf8_lossy(&err.stderr).contains("not in @fspec/live"));
     assert_eq!(std::fs::read_to_string(entries.join("fspec-live+3.conf")).unwrap(), live);
     w(top.join("@fspec/live/formalspec-installer-amd64.iso"), "");
     w(top.join("@fspec/live/overlay.tar"), "");
-    run(move_live, &[&esp, &top]);
+    let suffix = move_live_suffix(&steps);
+    run(move_live, &[&esp, &top, Path::new(&suffix)]);
     assert_eq!(
         std::fs::read_to_string(entries.join("fspec-live+3.conf")).unwrap(),
-        live.replace("=/var/lib/fspec-live/", "=/@fspec/live/")
+        plain.replace("=/var/lib/fspec-live/", "=/@fspec/live/")
     );
     assert_eq!(ls(&entries), ["fspec-live+3.conf", "nixos-aaa+3.conf"]);
 
@@ -1859,4 +1872,143 @@ fn fedora_bootstrap_keeps_weak_dependencies() {
     let dnf = cmds.iter().find(|c| c.program == "dnf").unwrap();
     // systemd-pam is only a Recommends of systemd; without it GDM gets no logind session.
     assert!(!dnf.args.iter().any(|a| a.contains("install_weak_deps")), "{:?}", dnf.args);
+}
+
+/// The third argument of the boot step's script that points the fspec-live entry at @fspec/live.
+#[cfg(target_os = "linux")]
+fn move_live_suffix(steps: &[crate::disk::Step]) -> String {
+    steps[3]
+        .plan
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            crate::Step::Run(c) if c.program == "sh" && c.args[1].contains("fspec-live*.conf") => {
+                Some(c.args[5].clone())
+            }
+            _ => None,
+        })
+        .unwrap()
+}
+
+fn stage(overlay: Option<&str>) -> crate::Plan {
+    let root = crate::NixosRoot { device: "/dev/nvme0n1p5".into(), ..nixos_root() };
+    let keep = ["console=ttyS0,115200".to_string()];
+    let s = crate::Stage {
+        root: &root,
+        uuid: NIXOS_UUID,
+        iso: "/home/kyan/formalspec-installer-amd64.iso",
+        overlay,
+        fspec: "/usr/local/bin/fspec",
+        esp: "/boot",
+        esp_uuid: "ABCD-1234",
+        hostname: "g815",
+        keep: &keep,
+    };
+    crate::stage_live(&paths(), &s)
+}
+
+#[test]
+fn staging_puts_the_iso_on_the_root_and_a_one_shot_migrating_entry_on_the_esp() {
+    let plan = stage(None);
+    let lines = plan.lines();
+    let at = |p: &str| position(&lines, p);
+    let live = "/r/var/lib/fspec-live";
+    assert!(at("test -e /r/sys/firmware/efi/efivars/LoaderEntryDefault-") < at("install -d -m 0700"));
+    assert!(
+        at(&format!("install -m 0600 /home/kyan/formalspec-installer-amd64.iso {live}/formalspec-installer-amd64.iso"))
+            < at("mount -o loop,ro")
+    );
+    assert!(at("install -m 0755 /usr/local/bin/fspec /r/run/fspec/stage/files/usr/local/bin/fspec") < at("tar -cf"));
+    assert!(
+        lines.contains(&format!("tar -cf {live}/overlay.tar --owner=0 --group=0 -C /r/run/fspec/stage/files usr etc"))
+    );
+    assert!(
+        at("install -m 0644 /r/run/fspec/stage/iso/live/vmlinuz /r/boot/fspec-live/vmlinuz") < at("sh -c 'set -e; e=")
+    );
+    assert!(at("ln -sfn /nix/store/x58v-nixos-system-e1504g /r/nix/var/nix/gcroots/fspec-migrate") < at("bootctl"));
+    assert_eq!(lines[lines.len() - 3], "bootctl set-oneshot fspec-live.conf");
+    assert_eq!(&lines[lines.len() - 2..], ["umount /r/run/fspec/stage/iso", "rm -rf /r/run/fspec/stage"]);
+
+    let stdin = |marker: &str| {
+        plan.steps
+            .iter()
+            .find_map(|s| match s {
+                crate::Step::Run(c) if c.args.iter().any(|a| a.contains(marker)) => c.stdin.clone(),
+                _ => None,
+            })
+            .unwrap()
+    };
+    let entry = stdin("fspec-live+3.conf");
+    assert!(
+        entry.ends_with(&format!(
+            "options boot=live components findiso=/var/lib/fspec-live/formalspec-installer-amd64.iso \
+             fspec.overlay=/var/lib/fspec-live/overlay.tar username=root hostname=g815-live locales=en_US.UTF-8 \
+             keyboard-layouts=us toram panic=20 console=ttyS0,115200 {}\n",
+            crate::disk::LIVE_MIGRATE
+        )),
+        "{entry}"
+    );
+    assert_eq!(stdin("guard.conf"), "TIMEOUT=600\nWATCHDOG_SEC=30\nESP=UUID=ABCD-1234\n");
+    let script = stdin("etc/fspec-live/migrate");
+    assert!(script.contains(&format!("readlink -f /dev/disk/by-uuid/{NIXOS_UUID}")), "{script}");
+    assert!(
+        script.contains(
+            r#"printf '%s\n' "$dev" | /usr/local/bin/fspec disk migrate "$dev" --nixos-system /nix/store/x58v-nixos-system-e1504g --no-backup"#
+        ),
+        "{script}"
+    );
+    assert!(script.contains("mount -o ro UUID=ABCD-1234"), "{script}");
+    assert!(position(&script.lines().map(String::from).collect::<Vec<_>>(), "systemctl reboot") > 0);
+}
+
+#[test]
+fn a_staged_overlay_keeps_the_hosts_own_guard() {
+    let plan = stage(Some("/home/kyan/g815-live.tar"));
+    let lines = plan.lines();
+    let live = "/r/var/lib/fspec-live";
+    assert!(lines.contains(&format!("install -m 0600 /home/kyan/g815-live.tar {live}/overlay.tar")));
+    assert!(
+        lines.contains(&format!("tar -rf {live}/overlay.tar --owner=0 --group=0 -C /r/run/fspec/stage/files usr etc"))
+    );
+    let guard = plan
+        .steps
+        .iter()
+        .find_map(|s| match s {
+            crate::Step::Run(c) if c.program == "sh" && c.args[1].contains("guard\\.conf") => Some(c.clone()),
+            _ => None,
+        })
+        .unwrap();
+    let dir = tempfile::tempdir().unwrap();
+    let tree = dir.path().join("tree");
+    std::fs::create_dir_all(tree.join("etc/fspec-live")).unwrap();
+    std::fs::create_dir_all(tree.join("etc/ssh")).unwrap();
+    std::fs::write(tree.join("etc/ssh/key"), "k").unwrap();
+    let run = |tar: &Path, out: &Path| {
+        let mut child = std::process::Command::new("sh")
+            .args(["-c", &guard.args[1], "sh"])
+            .arg(tar)
+            .arg(out)
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        use std::io::Write;
+        child.stdin.take().unwrap().write_all(guard.stdin.as_deref().unwrap().as_bytes()).unwrap();
+        child.wait().unwrap();
+    };
+    let tar = |name: &str| {
+        let t = dir.path().join(name);
+        let ok = std::process::Command::new("tar").arg("-cf").arg(&t).arg("-C").arg(&tree).arg(".").status().unwrap();
+        assert!(ok.success());
+        t
+    };
+    let without = tar("without.tar");
+    run(&without, &dir.path().join("ours"));
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("ours")).unwrap(),
+        "TIMEOUT=600\nWATCHDOG_SEC=30\nESP=UUID=ABCD-1234\n"
+    );
+    std::fs::write(tree.join("etc/fspec-live/guard.conf"), "TIMEOUT=60\nTAILSCALE=1\n").unwrap();
+    let with = tar("with.tar");
+    run(&with, &dir.path().join("theirs"));
+    assert!(!dir.path().join("theirs").exists());
 }

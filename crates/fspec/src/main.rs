@@ -310,9 +310,18 @@ enum DiskCommand {
     /// Run those steps: in place on the running system, or converting DEVICE to btrfs.
     Migrate {
         device: Option<String>,
-        /// For a NixOS root on DEVICE: the system to boot from @nixos, in that root's /nix/store.
-        #[arg(long, requires = "device")]
+        /// For a NixOS root on DEVICE, or the running one with --stage: the system to boot from
+        /// @nixos, in that root's /nix/store.
+        #[arg(long)]
         nixos_system: Option<String>,
+        /// From the running NixOS root on ext4: stage this live ISO to boot once from the disk,
+        /// where it converts this root unattended and reboots into NixOS from @nixos.
+        #[arg(long, value_name = "ISO", conflicts_with = "device", requires = "nixos_system")]
+        stage: Option<PathBuf>,
+        /// With --stage: an uncompressed tarball unpacked over the live system (network, ssh keys,
+        /// /etc/fspec-live/guard.conf).
+        #[arg(long, requires = "stage")]
+        overlay: Option<PathBuf>,
         /// A backup taken in the last 24 hours, when there is no recent snapshot under @snapshots.
         #[arg(long)]
         backup: Option<PathBuf>,
@@ -1127,6 +1136,12 @@ fn disk(paths: &Paths, spec_path: &Path, cmd: &DiskCommand) -> Result<()> {
             }
             Ok(())
         }
+        DiskCommand::Migrate { stage: Some(iso), nixos_system: Some(system), overlay, backup, no_backup, .. } => {
+            stage_migration(paths, runner, iso, overlay.as_deref(), system, backup.as_deref(), *no_backup)
+        }
+        DiskCommand::Migrate { device: None, nixos_system: Some(_), .. } => {
+            bail!("--nixos-system names the system for a NixOS root on DEVICE, or for the running one with --stage")
+        }
         DiskCommand::Plan { device: None, .. } | DiskCommand::Migrate { device: None, .. } => {
             let m = fspec_switch::detect(runner, paths)?;
             let left = fspec_switch::leftovers(runner, paths, &m)?;
@@ -1211,6 +1226,94 @@ fn disk(paths: &Paths, spec_path: &Path, cmd: &DiskCommand) -> Result<()> {
             Ok(())
         }
     }
+}
+
+/// `disk migrate --stage`: on the running NixOS root on ext4, stage the live ISO and a one-shot
+/// boot entry that migrates this root unattended on the next boot.
+fn stage_migration(
+    paths: &Paths,
+    runner: &dyn Runner,
+    iso: &Path,
+    overlay: Option<&Path>,
+    system: &str,
+    backup: Option<&Path>,
+    no_backup: bool,
+) -> Result<()> {
+    let found = |c: Cmd| -> Result<String> { Ok(runner.check(&c)?.stdout.trim().to_string()) };
+    let root = found(Cmd::new("findmnt").args(["-nvo", "SOURCE,FSTYPE", "/"]))?;
+    let (device, fstype) = root.split_once(' ').map(|(d, f)| (d, f.trim())).unwrap_or((&root, ""));
+    if fstype != "ext4" {
+        bail!("/ is {fstype}, not ext4; --stage migrates a NixOS root on ext4");
+    }
+    let uuid = found(Cmd::new("lsblk").args(["-no", "UUID", device]))?;
+    let Some(nixos) = fspec_switch::nixos_at(&paths.system("/"), device, &uuid, Some(system))? else {
+        bail!("this root is not NixOS; --stage only migrates a NixOS root")
+    };
+    let esp = found(Cmd::new("bootctl").arg("--print-esp-path"))?;
+    if esp != nixos.esp_at {
+        bail!("{system} mounts the ESP at {}, but systemd-boot's ESP is {esp}", nixos.esp_at);
+    }
+    let esp_uuid = found(Cmd::new("findmnt").args(["-no", "UUID", &esp]))?;
+    let exe = std::env::current_exe()?;
+    if !static_elf(&exe)? {
+        bail!(
+            "{} is linked dynamically; the live system runs the fspec that staged it, which needs a static build \
+             such as the one fspec installs at /usr/local/bin/fspec",
+            exe.display()
+        );
+    }
+    let hostname = std::fs::read_to_string("/proc/sys/kernel/hostname")?.trim().to_string();
+    let cmdline = std::fs::read_to_string("/proc/cmdline")?;
+    let keep: Vec<String> =
+        cmdline.split_whitespace().filter(|o| o.starts_with("console=")).map(String::from).collect();
+    require_backup(device, backup, no_backup)?;
+    let (iso, overlay, exe) =
+        (iso.display().to_string(), overlay.map(|o| o.display().to_string()), exe.display().to_string());
+    let stage = fspec_switch::Stage {
+        root: &nixos,
+        uuid: &uuid,
+        iso: &iso,
+        overlay: overlay.as_deref(),
+        fspec: &exe,
+        esp: &esp,
+        esp_uuid: &esp_uuid,
+        hostname: &hostname,
+        keep: &keep,
+    };
+    let plan = fspec_switch::stage_live(paths, &stage);
+    confirm(
+        device,
+        &format!(
+            "On the next boot, a live system converts {device} to btrfs and moves NixOS into @nixos, with nobody \
+             asked again."
+        ),
+    )?;
+    plan.execute(runner)?;
+    println!(
+        "staged; the next boot runs the live system once, migrates {device} and reboots into NixOS generation {} \
+         from @nixos. Its log lands in {esp}/fspec/migrate.log",
+        nixos.generation + 1
+    );
+    Ok(())
+}
+
+/// An ELF executable without an interpreter, which runs on any Linux root.
+fn static_elf(path: &Path) -> Result<bool> {
+    let elf = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    let at = |o: usize, n: usize| elf.get(o..o + n).context("not a 64-bit ELF file");
+    if at(0, 5)? != b"\x7fELF\x02" {
+        bail!("{} is not a 64-bit ELF executable", path.display());
+    }
+    let phoff = u64::from_le_bytes(at(0x20, 8)?.try_into()?) as usize;
+    let size = u16::from_le_bytes(at(0x36, 2)?.try_into()?) as usize;
+    let count = u16::from_le_bytes(at(0x38, 2)?.try_into()?) as usize;
+    const PT_INTERP: u32 = 3;
+    for i in 0..count {
+        if u32::from_le_bytes(at(phoff + i * size, 4)?.try_into()?) == PT_INTERP {
+            return Ok(false);
+        }
+    }
+    Ok(true)
 }
 
 /// `disk plan` or `disk migrate` for the NixOS root on a live system's unmounted ext4 partition.

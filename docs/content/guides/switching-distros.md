@@ -23,6 +23,7 @@ you cannot restore. Run them on a machine you can reinstall, with a backup you h
 | `fspec disk init <device>` | Everything on the disk | You type the device name. A disk with data needs `--backup` |
 | `fspec disk migrate` | Changes partitions and moves files in place | You type the disk name for each destructive step, and it needs a recent snapshot or `--backup` |
 | `fspec disk migrate <device>` | Converts an ext4 root to btrfs | You type the device name. It needs `--backup` or `--no-backup` |
+| `fspec disk migrate --stage <iso>` | Converts the running NixOS root to btrfs on the next boot, unattended | You type the device name when staging. It needs `--backup` or `--no-backup` |
 | `fspec switch --to-image --yes` | Replaces the running system and reinitialises `/boot` | `--yes` |
 | `fspec switch --reset-var` | Deletes everything in `/etc` and `/var` that is not kept, at the next boot | Removing the `pending` marker cancels it |
 | `fspec forget <distro>` | Deletes that root and its boot entries | Refuses the running root, and refuses unless this root owns boot |
@@ -456,34 +457,35 @@ as ext4. So you build the new system first, and fspec converts the disk under it
 Prerequisites:
 
 - A NixOS system built to mount `/` as btrfs `subvol=@nixos` on the same filesystem UUID, `/home`
-  from `@home` and `/swap` from `@swap`, copied into the ext4 root's `/nix/store`
-  (`nix copy --to`).
-- A systemd-boot entry `loader/entries/fspec-live*.conf` on the ESP that boots a live system,
-  such as the installer ISO, from the disk. fspec does not write this entry.
+  from `@home` and `/swap` from `@swap`, in the ext4 root's `/nix/store`. On the machine itself,
+  `nixos-rebuild build` with those `fileSystems` puts it there.
+- The [installer ISO](installer.md), which the machine boots once from its own disk.
 - The EFI variable `LoaderEntryDefault` cleared: `bootctl set-default ""`.
+- A static fspec, such as the one at `/usr/local/bin/fspec`: the live system runs the fspec that
+  staged it.
 
 Steps:
 
-1. Boot the `fspec-live` entry. The NixOS root must not be mounted.
-
-2. See the steps:
+1. On the running NixOS, stage the migration:
 
    ```sh
-   sudo fspec disk plan /dev/nvme0n1p2 --nixos-system /nix/store/<hash>-nixos-system-desktop-<version>
+   sudo fspec disk migrate --stage formalspec-installer-amd64.iso \
+     --nixos-system /nix/store/<hash>-nixos-system-desktop-<version> --backup /mnt/backup/desktop.tar
    ```
 
-3. Run them:
+   Type the device name when asked. `--no-backup` stages without one, for a disk with nothing to
+   save. `--overlay <tar>` adds a tarball unpacked over the live system, for Wi-Fi connections,
+   ssh keys, tailscale state or a `/etc/fspec-live/guard.conf` of your own. Without one, the live
+   system gets wired DHCP and a guard that waits ten minutes for sshd with the hardware watchdog
+   armed.
 
-   ```sh
-   sudo fspec disk migrate /dev/nvme0n1p2 --nixos-system /nix/store/<hash>-nixos-system-desktop-<version> --backup /mnt/backup/desktop.tar
-   ```
+2. Reboot. The machine boots the live system once from the disk, converts the root, writes the
+   log to `fspec/migrate.log` on the ESP and reboots into the new NixOS generation from `@nixos`.
+   Nobody needs to be at the keyboard. A live boot that never comes online reboots into NixOS on
+   ext4, and a failed migration rolls back and does the same; read `fspec/migrate.log` on the
+   ESP for why.
 
-   Type the device name when asked. `--no-backup` converts without one, for a disk with nothing
-   to save.
-
-4. Reboot. The new NixOS generation boots from `@nixos`.
-
-5. From the booted `@nixos`, see what is left to clean up:
+3. From the booted `@nixos`, see what is left to clean up:
 
    ```sh
    sudo fspec disk plan
@@ -493,14 +495,23 @@ Steps:
    old `/swapfile`. Deleting `ext2_saved` ends the way back to ext4, so do it last, once you trust
    the new layout.
 
+To run the migration by hand instead, boot any live system with the NixOS root unmounted and a
+`loader/entries/fspec-live*.conf` entry on the ESP, then run
+`sudo fspec disk plan /dev/nvme0n1p2 --nixos-system <path>` to see the steps and
+`sudo fspec disk migrate /dev/nvme0n1p2 --nixos-system <path> --backup <path>` to run them.
+
 What the migration does:
 
+- With `--stage`, copies the ISO and the overlay to `/var/lib/fspec-live`, the live kernel to
+  `fspec-live/` on the ESP, and writes a one-shot `fspec-live` entry with three boot tries that
+  boots the ISO into RAM, so the root is unmounted while it converts.
 - Makes `fspec-live*` the default entry first, so a reset during the migration comes back into
-  the live system.
+  the live system, which rolls the migration back and reboots into NixOS on ext4.
 - Converts with `btrfs-convert --uuid copy`, keeping `ext2_saved`, snapshots the top level into
   `@nixos`, and creates `@home`, `@swap`, `@snapshots` and `@fspec`.
 - Runs NixOS's own `switch-to-configuration boot` in a chroot, so NixOS writes its entry. The
-  older generations cannot boot btrfs, so their entries move to `loader/entries.ext4/` on the ESP.
+  older generations cannot boot btrfs, so their entries move to `loader/entries.ext4/` on the ESP,
+  and they leave the system profile, so the next `nixos-rebuild` does not list them again.
 - Gives the new entry three tries. A failed initrd reboots and uses a try; a failed mount after
   the initrd still reaches `sshd` instead of an emergency shell. After three failed boots,
   systemd-boot falls through to `fspec-live`. Once NixOS marks a boot good, those trial options
@@ -515,8 +526,9 @@ ESP. When a step fails, `disk migrate` rolls back at once: it runs `btrfs-conver
 ESP's `loader`, `EFI/systemd` and `EFI/BOOT` back, so NixOS boots from ext4 as before. The error
 ends with `rolled back: <device> is ext4 again, with NixOS as it was`.
 
-When the migration was killed or the machine reset, boot `fspec-live` again. `disk plan` reports
-the interrupted run:
+When the migration was killed or the machine reset, the next boot comes back into `fspec-live`.
+A staged migration finds the journal there, rolls it back and reboots into NixOS on ext4 by
+itself. Otherwise `disk plan` reports the interrupted run:
 
 ```text
 an interrupted migration left <esp>/fspec/disk-journal; `fspec disk migrate /dev/nvme0n1p2` rolls it back
@@ -635,8 +647,14 @@ See [Migrate a NixOS ext4 machine in place](#migrate-a-nixos-ext4-machine-in-pla
 
 **`the ESP has no fspec-live entry to boot while the migration runs; install the live entry first`**
 
-Add a systemd-boot entry that boots a live system from the disk, named `fspec-live*.conf`.
+Stage it with `fspec disk migrate --stage`, or add a systemd-boot entry that boots a live system
+from the disk, named `fspec-live*.conf`.
 
 **`the EFI variable LoaderEntryDefault outranks loader.conf; clear it with `bootctl set-default ""` first`**
 
 Run `sudo bootctl set-default ""`.
+
+**`<path> is linked dynamically; the live system runs the fspec that staged it, which needs a static build such as the one fspec installs at /usr/local/bin/fspec`**
+
+Run `--stage` with the static fspec, `sudo /usr/local/bin/fspec disk migrate --stage ...`, or a
+musl build (`cargo build --release --target x86_64-unknown-linux-musl -p fspec`).

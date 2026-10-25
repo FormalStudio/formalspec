@@ -193,6 +193,7 @@ first. [Remote hosts](guides/remote-hosts.md) covers builders and `plan --all`.
 | `boot.kernelPackages`, `boot.kernelParams`, the NVIDIA module | `image(...)` with `kernel_args`, or `tumbleweed(kernel_args = [...])` |
 | `services.flatpak` | `pkg(..., source = flatpak())` |
 | `nixos-rebuild switch --target-host` | `fspec apply --host` |
+| Reinstalling a NixOS host onto btrfs from a USB stick | `fspec disk migrate --stage <iso> --nixos-system <path>`, which boots the ISO once from the disk and moves the root into `@nixos` unattended |
 | `nix.buildMachines`, `max-jobs = 0` | `host(builders = [builder("<host>", routes = [...])])` |
 | `environment.systemPackages` that the distro ships | The distro's package list, such as `tumbleweed(packages = [...])`, before any `git(...)` build |
 | `fileSystems.<path>` | A `.mount` (and `.automount`) unit as a `file(...)` plus a `service(...)` |

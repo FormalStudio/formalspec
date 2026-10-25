@@ -80,9 +80,12 @@ Steps:
    entries for your own configuration.
 
 If the migration itself failed, you do not need this: it rolls itself back, and the error ends
-with `rolled back: <device> is ext4 again, with NixOS as it was`. After a killed run or a reset,
-boot `fspec-live` and run `fspec disk migrate <device>` again, which replays the journal on the
-ESP (see [How a failed NixOS migration rolls back](switching-distros.md#how-a-failed-nixos-migration-rolls-back)).
+with `rolled back: <device> is ext4 again, with NixOS as it was`. A staged migration
+(`disk migrate --stage`) writes its output to `fspec/migrate.log` on the ESP (`/boot` on NixOS),
+reboots into NixOS on ext4 after a rollback, and after a reset rolls back by itself on the next
+boot. Only when it cannot finish the rollback does it stay in the live system, reachable over
+ssh. After a killed run by hand, boot `fspec-live` and run `fspec disk migrate <device>` again,
+which replays the journal on the ESP (see [How a failed NixOS migration rolls back](switching-distros.md#how-a-failed-nixos-migration-rolls-back)).
 
 ## Roll back a bad apply
 

@@ -170,6 +170,7 @@ before you run any of them. All need root.
 | `fspec forget <distro>` | Deletes a root made by `switch`, or the NixOS a migration kept, and its boot entries |
 | `fspec disk plan [<device>] [--nixos-system <path>]` | Prints the steps that bring a disk onto a supported layout |
 | `fspec disk migrate [<device>] [--backup <path> \| --no-backup] [--swap <GiB>] [--nixos-system <path>]` | Runs the in-place steps of `disk plan` |
+| `fspec disk migrate --stage <iso> --nixos-system <path> [--overlay <tar>] [--backup <path> \| --no-backup]` | From the running NixOS root on ext4, stages the live ISO to boot once from the disk and migrate this root unattended |
 | `fspec disk init <device> [--layout default\|zfs\|bios] [--luks] [--distro <d> --host <h>] [--release <r>] [--backup <path>] [--swap <GiB>]` | Partitions and formats a disk from scratch |
 | `fspec disk unmask [--esp <dir>]` | After the first good boot of a migrated NixOS, drops the trial boot options |
 

@@ -59,6 +59,7 @@ the store-wide build graph and hand-written hashes.
 | `boot.kernelPackages`, `boot.kernelParams`, NVIDIA module | `image(...)` with `kernel_args`, or `tumbleweed(kernel_args = [...])` |
 | `services.flatpak` | `pkg(..., source = flatpak())` |
 | `nixos-rebuild switch --target-host` | `fspec apply --host` |
+| reinstalling a NixOS host onto btrfs from a USB stick | `fspec disk migrate --stage <iso> --nixos-system <path>`, which boots the ISO once from the disk and moves the root into `@nixos` unattended |
 | `nix.buildMachines`, `max-jobs = 0` | `host(builders = [builder("<host>", routes = [...])])` |
 | `environment.systemPackages` that the distro ships | the distro's package list on `tumbleweed(...)`, before any `git(...)` build |
 | `fileSystems.<path>` | a `.mount` (and `.automount`) unit as a `file(...)` plus `service(...)` |

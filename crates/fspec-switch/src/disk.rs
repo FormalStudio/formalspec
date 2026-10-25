@@ -1064,40 +1064,42 @@ pub fn nixos_root(
     let mnt = s(&paths.system(format!("{DISK}/look")));
     runner.check(&Cmd::new("mkdir").arg("-p").arg(&mnt))?;
     runner.check(&Cmd::new("mount").args(["-t", "ext4", "-o", "ro,noload", device, &mnt]))?;
-    let read = || -> Result<Option<NixosRoot>> {
-        let root = Path::new(&mnt);
-        let profile = root.join("nix/var/nix/profiles/system");
-        if !root.join("etc/NIXOS").exists() && profile.symlink_metadata().is_err() {
-            return Ok(None);
-        }
-        let Some(system) = system else {
-            bail!(
-                "{device} holds NixOS, whose fstab and initrd come from its configuration: build a system that \
-                 mounts / as btrfs subvol=@nixos, copy it into this root's /nix/store, and name it with --nixos-system"
-            )
-        };
-        let link = std::fs::read_link(&profile).with_context(|| format!("reading {}", profile.display()))?;
-        let link = link.to_string_lossy();
-        let generation = link
-            .strip_prefix("system-")
-            .and_then(|l| l.strip_suffix("-link"))
-            .and_then(|n| n.parse().ok())
-            .with_context(|| format!("the system profile points at {link}, not a system-<n>-link generation"))?;
-        let name = system.strip_prefix("/nix/store/").filter(|n| !n.is_empty() && !n.contains('/'));
-        if name.is_none() || !root.join(&system[1..]).is_dir() {
-            bail!("{system} is not a store path in {device}'s /nix/store; copy it there with `nix copy --to`");
-        }
-        if !resolve_in(root, &format!("{system}/bin/switch-to-configuration"))?.is_file() {
-            bail!("{system} has no bin/switch-to-configuration, so it is not a NixOS system");
-        }
-        let fstab = resolve_in(root, &format!("{system}/etc/fstab"))?;
-        let fstab = std::fs::read_to_string(&fstab).with_context(|| format!("reading {system}/etc/fstab"))?;
-        let (esp, esp_at) = nixos_fstab(&fstab, uuid).with_context(|| format!("{system} does not fit"))?;
-        Ok(Some(NixosRoot { device: device.into(), generation, system: system.into(), esp, esp_at }))
-    };
-    let found = read();
+    let found = nixos_at(Path::new(&mnt), device, uuid, system);
     runner.run(&Cmd::new("umount").arg(&mnt))?;
     found
+}
+
+/// The NixOS root of the ext4 `device` (UUID `uuid`) whose files are at `root`, with `system`
+/// checked against it, or `None` when it is not NixOS.
+pub fn nixos_at(root: &Path, device: &str, uuid: &str, system: Option<&str>) -> Result<Option<NixosRoot>> {
+    let profile = root.join("nix/var/nix/profiles/system");
+    if !root.join("etc/NIXOS").exists() && profile.symlink_metadata().is_err() {
+        return Ok(None);
+    }
+    let Some(system) = system else {
+        bail!(
+            "{device} holds NixOS, whose fstab and initrd come from its configuration: build a system that \
+             mounts / as btrfs subvol=@nixos, copy it into this root's /nix/store, and name it with --nixos-system"
+        )
+    };
+    let link = std::fs::read_link(&profile).with_context(|| format!("reading {}", profile.display()))?;
+    let link = link.to_string_lossy();
+    let generation = link
+        .strip_prefix("system-")
+        .and_then(|l| l.strip_suffix("-link"))
+        .and_then(|n| n.parse().ok())
+        .with_context(|| format!("the system profile points at {link}, not a system-<n>-link generation"))?;
+    let name = system.strip_prefix("/nix/store/").filter(|n| !n.is_empty() && !n.contains('/'));
+    if name.is_none() || !root.join(&system[1..]).is_dir() {
+        bail!("{system} is not a store path in {device}'s /nix/store; copy it there with `nix copy --to`");
+    }
+    if !resolve_in(root, &format!("{system}/bin/switch-to-configuration"))?.is_file() {
+        bail!("{system} has no bin/switch-to-configuration, so it is not a NixOS system");
+    }
+    let fstab = resolve_in(root, &format!("{system}/etc/fstab"))?;
+    let fstab = std::fs::read_to_string(&fstab).with_context(|| format!("reading {system}/etc/fstab"))?;
+    let (esp, esp_at) = nixos_fstab(&fstab, uuid).with_context(|| format!("{system} does not fit"))?;
+    Ok(Some(NixosRoot { device: device.into(), generation, system: system.into(), esp, esp_at }))
 }
 
 /// The ESP directories NixOS's systemd-boot installer rewrites, which a rollback puts back.
@@ -1133,6 +1135,11 @@ pub fn mount_esp(runner: &dyn Runner, paths: &Paths, device: &str) -> Result<Opt
     }
     Ok(Some((esp, at)))
 }
+
+/// `systemd.run=` alone only makes its unit the boot target through a generated `default.target`,
+/// which the `default.target` that Debian and NixOS keep in `/etc/systemd/system` outranks, and
+/// which would replace the normal boot anyway; this starts the unit beside it.
+const RUN_BESIDE: &str = "systemd.wants=kernel-command-line.service";
 
 /// What a migration appends to the options of the new NixOS entry while it is on trial.
 const TRIAL: &str = "boot.panic_on_fail panic=10 systemd.mask=emergency.target systemd.mask=emergency.service \
@@ -1365,6 +1372,8 @@ sync "$1.fspec-tmp"; mv "$1.fspec-tmp" "$1"; sync -f "$1""#,
         true,
         format!("nix-env did not make {sys} generation {next} of the system profile"),
     );
+    // The profile keeps the system alive from here on.
+    plan.run(Cmd::new("rm").arg("-f").arg(format!("{root}{STAGED_ROOT}")));
     plan.run(chroot(&[&format!("{sys}/bin/switch-to-configuration"), "boot"]));
     // Newer NixOS names its entries by hash instead of nixos-generation-<n>.conf.
     plan.expect(
@@ -1382,7 +1391,8 @@ sync "$1.fspec-tmp"; mv "$1.fspec-tmp" "$1"; sync -f "$1""#,
     // emergency shells back and the entry's content matches the hash NixOS named it by.
     let unmask = format!("{}/loader/fspec-unmask", r.esp_at.trim_end_matches('/'));
     let trial = format!(
-        "{TRIAL} systemd.run=\"/bin/sh {unmask}\" systemd.run_success_action=none systemd.run_failure_action=none"
+        "{TRIAL} systemd.run=\"/bin/sh {unmask}\" systemd.run_success_action=none systemd.run_failure_action=none \
+         {RUN_BESIDE}"
     );
     plan.run(Cmd::new("sh").args([
         "-c",
@@ -1401,6 +1411,9 @@ sync -f "$1/loader""#,
         &trial,
         &unmask_script(&trial),
     ]));
+    // The next nixos-rebuild would write entries for the ext4 generations again. The ext4 image
+    // in ext2_saved keeps them for `btrfs-convert -r`, and their entries stay in entries.ext4.
+    plan.run(chroot(&[&format!("{sys}/sw/bin/nix-env"), "-p", profile, "--delete-generations", "old"]));
     mount_top(&mut plan, &top, dev.into());
     plan.run(Cmd::new("sh").args([
         "-c",
@@ -1409,17 +1422,20 @@ sync -f "$1/loader""#,
 for p in $(grep -oE '(findiso|fspec\.overlay)=/var/lib/fspec-live/[^ ]+' "$f" | sed 's#.*/##'); do
   [ -f "$2/@fspec/live/$p" ] || { echo "$p is not in @fspec/live" >&2; exit 1; }
 done
-sed -E 's#((findiso|fspec\.overlay)=)/var/lib/fspec-live/#\1/@fspec/live/#g' "$f" > "$f.fspec-tmp"
+sed -E 's#((findiso|fspec\.overlay)=)/var/lib/fspec-live/#\1/@fspec/live/#g' "$f" |
+  while IFS= read -r l; do case $l in "options "*"$3") l=${l%"$3"};; esac; printf '%s\n' "$l"; done > "$f.fspec-tmp"
 sync "$f.fspec-tmp"; mv "$f.fspec-tmp" "$f"; sync -f "$f"
 done
 [ -n "$found" ] || echo "no fspec-live entry on the ESP, so no live ISO to point at @fspec/live""#,
         "sh",
         &esp,
         &top,
+        &format!(" {LIVE_MIGRATE}"),
     ]));
     let what = format!(
         "make {sys} generation {next} of NixOS in @nixos and its boot default with three tries, move generation {} \
-         and older to loader/entries.ext4 on the ESP, and point the fspec-live entry at @fspec/live",
+         and older to loader/entries.ext4 on the ESP, and point the fspec-live entry at @fspec/live without the \
+         staged migration",
         r.generation
     );
     steps.push(Step { what, destructive: false, plan });
@@ -1439,4 +1455,205 @@ umount "$1""#;
     Cmd::new("systemd-run")
         .args(["--unit=fspec-compress", "--collect", "sh", "-c", script, "sh"])
         .args([&top, device, BTRFS_OPTS])
+}
+
+/// Where `disk migrate --stage` puts the live ISO and its overlay on the running root.
+/// [`nixos_migrate`] moves them to `@fspec/live`, so the paths here are what it rewrites.
+pub const LIVE_DIR: &str = "/var/lib/fspec-live";
+const LIVE_ISO: &str = "formalspec-installer-amd64.iso";
+
+/// The GC root that keeps the staged NixOS system in the store until the migration has made it a
+/// generation of the system profile.
+const STAGED_ROOT: &str = "/nix/var/nix/gcroots/fspec-migrate";
+
+/// The end of the staged live entry's options that runs the migration; [`nixos_migrate`] drops
+/// it, so later boots of the entry are a plain live system. The script comes with the overlay,
+/// which nothing orders the command line's unit after.
+pub(crate) const LIVE_MIGRATE: &str = "fspec.migrate systemd.run=\"/bin/sh -c 'systemctl start \
+                            fspec-live-overlay.service; exec /bin/sh /etc/fspec-live/migrate'\" \
+                            systemd.run_success_action=none systemd.run_failure_action=none \
+                            systemd.wants=kernel-command-line.service";
+
+/// What `disk migrate --stage` needs to boot the live ISO once and migrate the running NixOS
+/// root `root` from it.
+pub struct Stage<'a> {
+    pub root: &'a NixosRoot,
+    /// The root filesystem's UUID, which `btrfs-convert --uuid copy` keeps.
+    pub uuid: &'a str,
+    pub iso: &'a str,
+    /// A per-host tarball for the live system (network, ssh keys, `guard.conf`), uncompressed so
+    /// fspec can append to it.
+    pub overlay: Option<&'a str>,
+    /// A static fspec, which the live system runs instead of its own.
+    pub fspec: &'a str,
+    /// Where the running system mounts the ESP, and the ESP's filesystem UUID.
+    pub esp: &'a str,
+    pub esp_uuid: &'a str,
+    pub hostname: &'a str,
+    /// Options of the running kernel to keep, such as `console=`.
+    pub keep: &'a [String],
+}
+
+/// The guard the live system runs when the overlay brings none: wait ten minutes for sshd, arm
+/// the hardware watchdog, and bless the boot on the ESP.
+fn guard_conf(esp_uuid: &str) -> String {
+    format!("TIMEOUT=600\nWATCHDOG_SEC=30\nESP=UUID={esp_uuid}\n")
+}
+
+/// The script the staged entry starts through `systemd.run=`. It runs the migration once the
+/// guard has the machine reachable, keeps the log on the ESP, and reboots unless an unfinished
+/// journal is left, which needs someone on ssh. A boot without `fspec.migrate` and without a
+/// journal is a plain live system.
+fn migrate_script(s: &Stage) -> String {
+    let (dev, sys, esp_uuid) = (s.root.device.as_str(), s.root.system.as_str(), s.esp_uuid);
+    format!(
+        r#"#!/bin/sh
+journal=/run/fspec/esp/fspec/disk-journal/journal.json
+m=$(mktemp -d); j=
+if mount -o ro UUID={esp_uuid} "$m"; then [ -e "$m/fspec/disk-journal/journal.json" ] && j=1; umount "$m"; fi
+rmdir "$m"
+grep -qw fspec.migrate /proc/cmdline || [ -n "$j" ] || exit 0
+if [ -f /etc/fspec-live/guard.conf ]; then
+	until systemctl -q is-active fspec-live-guard.service; do
+		systemctl -q is-failed fspec-live-guard.service && break
+		sleep 5
+	done
+fi
+dev=$(readlink -f /dev/disk/by-uuid/{uuid})
+[ -b "$dev" ] || dev={dev}
+log=/run/fspec-migrate.log
+echo "fspec-live: migrating $dev" > /dev/kmsg
+printf '%s\n' "$dev" | /usr/local/bin/fspec disk migrate "$dev" --nixos-system {sys} --no-backup > "$log" 2>&1
+echo "exit $?" >> "$log"
+mkdir -p /run/fspec/esp
+mountpoint -q /run/fspec/esp || mount UUID={esp_uuid} /run/fspec/esp
+mkdir -p /run/fspec/esp/fspec
+cp "$log" /run/fspec/esp/fspec/migrate.log
+sync -f /run/fspec/esp/fspec
+if [ -e "$journal" ]; then
+	echo "fspec-live: the migration left $journal; staying up" > /dev/kmsg
+	exit 1
+fi
+systemctl reboot
+"#,
+        uuid = s.uuid,
+    )
+}
+
+/// The steps that, on the running NixOS root on ext4, stage the live ISO and a one-shot
+/// `fspec-live` entry that migrates this root on the next boot: the ISO and an overlay with a
+/// static fspec and the migration script go to [`LIVE_DIR`], the live kernel and initrd to the
+/// ESP. The entry boots toram, so the root is unmounted while it converts, and has three boot
+/// tries, so a live boot that fails or never comes online falls back to the default entry.
+pub fn stage_live(paths: &Paths, s: &Stage) -> Plan {
+    let live = s_path(paths, LIVE_DIR);
+    let iso = format!("{live}/{LIVE_ISO}");
+    let overlay = format!("{live}/overlay.tar");
+    let work = s_path(paths, "/run/fspec/stage");
+    let files = format!("{work}/files");
+    let mnt = format!("{work}/iso");
+    let esp = s_path(paths, s.esp);
+    let mut plan = Plan::default();
+    plan.expect(
+        Cmd::new("test")
+            .arg("-e")
+            .arg(s_path(paths, "/sys/firmware/efi/efivars/LoaderEntryDefault-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f")),
+        false,
+        "the EFI variable LoaderEntryDefault outranks loader.conf; clear it with `bootctl set-default \"\"` first",
+    );
+    // The migration finds the ISO by its path from the root of the ext4 filesystem.
+    plan.expect(
+        Cmd::new("sh").args(["-c", r#"[ "$(findmnt -nvo SOURCE -T "$1")" = "$2" ]"#, "sh", "/var/lib", &s.root.device]),
+        true,
+        format!("/var/lib is not on {}, so the live system would not find the ISO there", s.root.device),
+    );
+    plan.run(Cmd::new("install").args(["-d", "-m", "0700", &live]));
+    plan.run(Cmd::new("install").args(["-m", "0600", s.iso, &iso]));
+    plan.run(Cmd::new("mkdir").arg("-p").arg(format!("{files}/usr/local/bin")).arg(format!("{files}/etc/fspec-live")));
+    plan.cleanup.push(Cmd::new("rm").args(["-rf", &work]));
+    plan.run(Cmd::new("install").args(["-m", "0755", s.fspec, &format!("{files}/usr/local/bin/fspec")]));
+    plan.run(
+        Cmd::new("sh")
+            .args(["-c", r#"cat > "$1" && chmod 0700 "$1""#, "sh", &format!("{files}/etc/fspec-live/migrate")])
+            .stdin(migrate_script(s)),
+    );
+    let tar = |c: Cmd| c.args(["--owner=0", "--group=0", "-C", &files, "usr", "etc"]);
+    match s.overlay {
+        Some(o) => {
+            // A guard.conf of the host's own wins; tar extracts a later member over an earlier one.
+            plan.run(
+                Cmd::new("sh")
+                    .args([
+                        "-c",
+                        r#"tar -tf "$1" | grep -qE '^(\./)?etc/fspec-live/guard\.conf$' || cat > "$2""#,
+                        "sh",
+                        o,
+                        &format!("{files}/etc/fspec-live/guard.conf"),
+                    ])
+                    .stdin(guard_conf(s.esp_uuid)),
+            );
+            plan.run(Cmd::new("install").args(["-m", "0600", o, &overlay]));
+            plan.run(tar(Cmd::new("tar").args(["-rf", &overlay])));
+        }
+        None => {
+            plan.run(
+                Cmd::new("sh")
+                    .args(["-c", r#"cat > "$1""#, "sh", &format!("{files}/etc/fspec-live/guard.conf")])
+                    .stdin(guard_conf(s.esp_uuid)),
+            );
+            plan.run(tar(Cmd::new("tar").args(["-cf", &overlay])));
+            plan.run(Cmd::new("chmod").args(["0600", &overlay]));
+        }
+    }
+    plan.run(Cmd::new("mkdir").arg("-p").arg(&mnt));
+    plan.run(Cmd::new("mount").args(["-o", "loop,ro", &iso, &mnt]));
+    plan.cleanup.insert(0, Cmd::new("umount").arg(&mnt));
+    plan.run(Cmd::new("install").args(["-d", &format!("{esp}/fspec-live")]));
+    for f in ["vmlinuz", "initrd.img"] {
+        plan.run(Cmd::new("install").args([
+            "-m",
+            "0644",
+            &format!("{mnt}/live/{f}"),
+            &format!("{esp}/fspec-live/{f}"),
+        ]));
+    }
+    let mut options = vec![
+        "boot=live".to_string(),
+        "components".into(),
+        format!("findiso={LIVE_DIR}/{LIVE_ISO}"),
+        format!("fspec.overlay={LIVE_DIR}/overlay.tar"),
+        "username=root".into(),
+        format!("hostname={}-live", s.hostname),
+        "locales=en_US.UTF-8".into(),
+        "keyboard-layouts=us".into(),
+        // live-boot copies the ISO into RAM and unmounts the root, which is then free to convert.
+        "toram".into(),
+        // live-boot drops to a shell when it cannot find the ISO; this reboots out of it instead.
+        "panic=20".into(),
+    ];
+    options.extend(s.keep.iter().cloned());
+    options.push(LIVE_MIGRATE.into());
+    let entry = format!(
+        "title   FormalSpec live\nlinux   /fspec-live/vmlinuz\ninitrd  /fspec-live/initrd.img\noptions {}\n",
+        options.join(" ")
+    );
+    plan.run(
+        Cmd::new("sh")
+            .args([
+                "-c",
+                r#"set -e; e="$1/loader/entries"; rm -f "$e"/fspec-live*.conf; cat > "$e/fspec-live.fspec-tmp"
+sync "$e/fspec-live.fspec-tmp"; mv "$e/fspec-live.fspec-tmp" "$e/fspec-live+3.conf"; sync -f "$e""#,
+                "sh",
+                &esp,
+            ])
+            .stdin(entry),
+    );
+    plan.run(Cmd::new("ln").args(["-sfn", &s.root.system, &s_path(paths, STAGED_ROOT)]));
+    plan.run(Cmd::new("sync"));
+    plan.run(Cmd::new("bootctl").args(["set-oneshot", "fspec-live.conf"]));
+    plan
+}
+
+fn s_path(paths: &Paths, p: &str) -> String {
+    s(&paths.system(p))
 }
