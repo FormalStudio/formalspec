@@ -1874,6 +1874,10 @@ back with the rest of the generation. `/usr/local/bin/fspec` is the path
 `fspec switch` and `fspec disk init` install, and the one timers and remote
 applies run, so all of them follow the lock. A host whose fspec predates the
 engine package gets it from a remote apply ([Remote hosts](#remote-hosts)).
+Until the lock pins the engine, plan and apply leave it and its link out and
+the host keeps the fspec it runs: the repo the installer writes has no
+`fspec.lock`, and its first apply runs in the new root before any
+`fspec update`.
 
 macOS hosts are left out: the macbook's fspec comes from Nix.
 

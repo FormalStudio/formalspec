@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use fspec_core::apply::{apply_scope, desired_from_generation, plan_scope, state_dir};
+use fspec_core::engine;
 use fspec_core::facts::{Facts, local_hostname};
 use fspec_core::fetch::LiveFetch;
 use fspec_core::resource::{Pkg, Source, System};
@@ -1406,7 +1407,12 @@ fn plan_local(paths: &Paths, spec_path: &Path, host: &Host, scope: Option<ScopeA
             continue;
         }
         let state = State::load(&state_dir(paths, scope).join("state.json"))?;
-        plans.push(plan_scope(&env.cx(scope, &state), &backends::all(), &host.desired(), &state)?);
+        plans.push(plan_scope(
+            &env.cx(scope, &state),
+            &backends::all(),
+            &engine::unless_unlocked(host.desired(), &env.lock),
+            &state,
+        )?);
     }
     Ok(merge(plans))
 }
@@ -1496,7 +1502,8 @@ fn apply_local(paths: &Paths, spec_path: &Path, spec_dir: &Path, host: &Host, sc
             continue;
         }
         let state = State::load(&state_dir(paths, scope).join("state.json"))?;
-        let plan = apply_scope(&env.cx(scope, &state), &backends::all(), &host.desired())?;
+        let plan =
+            apply_scope(&env.cx(scope, &state), &backends::all(), &engine::unless_unlocked(host.desired(), &env.lock))?;
         println!("{plan}");
     }
     Ok(())

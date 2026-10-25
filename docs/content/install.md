@@ -69,8 +69,9 @@ If that fails with `command not found`, link the binary somewhere on the default
 sudo ln -s ~/.cargo/bin/fspec /usr/local/bin/fspec
 ```
 
-From its first apply on, a Linux host keeps fspec current itself: every Linux host carries an
-`fspec` package pinned in `fspec.lock`, and `/usr/local/bin/fspec` links to it. A remote host
+Once `fspec update` has locked it, a Linux host keeps fspec current itself: every Linux host
+carries an `fspec` package pinned in `fspec.lock`, and `/usr/local/bin/fspec` links to it. Until
+then the host keeps the fspec it runs. A remote host
 with an older fspec gets the locked one installed over ssh before the apply, once CI has built
 it and `fspec update --cache` recorded it. Without that build it refuses with `fspec on <host>
 is older than this one`.

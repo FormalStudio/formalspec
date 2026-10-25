@@ -42,9 +42,9 @@ fn plan_against_seeded_state() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(text.contains("~ pkg:fd  github:sharkdp/fd [source]"), "{text}");
     assert!(text.contains("- pkg:jq  aqua:jq"), "{text}");
-    assert!(text.contains("+ pkg:fspec  git:https://github.com/FormalStudio/formalspec@main"), "{text}");
-    assert!(text.contains("+ file:/usr/local/bin/fspec  link"), "{text}");
-    assert!(text.contains("12 to add, 1 to change, 1 to remove"), "{text}");
+    // The example's lock does not pin the engine, so the host keeps the fspec it runs.
+    assert!(!text.contains("pkg:fspec") && !text.contains("/usr/local/bin/fspec"), "{text}");
+    assert!(text.contains("10 to add, 1 to change, 1 to remove"), "{text}");
 }
 
 #[test]

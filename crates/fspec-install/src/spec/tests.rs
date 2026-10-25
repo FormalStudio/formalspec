@@ -176,3 +176,37 @@ fn a_restore_writes_nothing() {
     assert!(files(&c).is_empty());
     assert!(write_repo(Path::new("/nonexistent"), &c).is_err());
 }
+
+/// The first apply runs in the new root with the repo exactly as written, before any `fspec
+/// update`, so nothing it declares may need a lock entry the repo does not have.
+#[test]
+fn every_combination_applies_without_a_lock() {
+    use fspec_core::resource::Source;
+    for (distro, preset, desktop) in combinations() {
+        let what = format!("{} {} {:?}", distro.id, preset.id(), desktop);
+        let dir = tempfile::tempdir().unwrap();
+        write_repo(dir.path(), &choices(distro.id, preset, desktop)).unwrap();
+        let spec = fspec_eval::evaluate(&dir.path().join("spec.star")).unwrap();
+        let lock = fspec_core::Lock::load(&dir.path().join("fspec.lock")).unwrap();
+        for d in fspec_core::engine::unless_unlocked(spec.host("lab").unwrap().desired(), &lock) {
+            let Resource::Pkg(p) = &d.resource else { continue };
+            // What the store installs, and only from a lock entry.
+            let stored = matches!(
+                p.source,
+                Source::Aqua { .. }
+                    | Source::Github { .. }
+                    | Source::Npm { .. }
+                    | Source::Cargo { .. }
+                    | Source::Git { .. }
+                    | Source::Nix { .. }
+                    | Source::Url { .. }
+                    | Source::Python
+            );
+            assert!(
+                !stored || lock.pkg(&p.name, &p.source.to_string()).is_some(),
+                "{what}: pkg {} needs fspec.lock",
+                p.name
+            );
+        }
+    }
+}
