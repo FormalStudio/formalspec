@@ -1642,6 +1642,7 @@ with Secure Boot on through Debian's signed shim. The ISO carries a static
 `fspec`, the installer `fspec-install`, and every bootstrapper `disk init`
 calls: debootstrap, dnf, pacman with arch-install-scripts, a static xbps, a
 static moss and podman.
+`installer/iso/build.sh` builds the ISO; `installer/iso/vm.sh` boots it in a libvirt VM and opens virt-manager.
 
 `fspec-install` is a full-screen terminal program (ratatui). On a machine
 with a GPU it runs inside `foot` under a bare `sway` session, which
