@@ -135,7 +135,14 @@ pub fn bootstrap(t: &Target, boot: Boot, luks: bool, root: &str, esp: &str) -> R
             let key = format!(
                 "https://src.fedoraproject.org/rpms/fedora-repos/raw/rawhide/f/RPM-GPG-KEY-fedora-{rel}-primary"
             );
-            let mut dnf = Cmd::new("dnf").args(["--installroot", root, "--releasever", rel, "-y"]);
+            let mut dnf = Cmd::new("dnf").args([
+                "--installroot",
+                root,
+                "--releasever",
+                rel,
+                "-y",
+                "--setopt=max_parallel_downloads=10",
+            ]);
             for (id, path) in [
                 ("fedora", format!("releases/{rel}/Everything/{arch}/os")),
                 ("updates", format!("updates/{rel}/Everything/{arch}")),

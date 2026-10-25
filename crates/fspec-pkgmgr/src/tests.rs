@@ -394,11 +394,11 @@ fn dnf_installs_by_name_and_detects_drift() {
         w.take(),
         [
             "rpm -q --qf %{VERSION}-%{RELEASE} htop",
-            "dnf install -y htop",
+            "dnf install -y --setopt=max_parallel_downloads=10 htop",
             "rpm -q --qf %{VERSION}-%{RELEASE} htop",
             "rpm -q --qf %{VERSION}-%{RELEASE} jq",
             "rpm -q --qf %{VERSION}-%{RELEASE} ripgrep",
-            "dnf install -y jq ripgrep",
+            "dnf install -y --setopt=max_parallel_downloads=10 jq ripgrep",
             "rpm -q --qf %{VERSION}-%{RELEASE} jq",
             "rpm -q --qf %{VERSION}-%{RELEASE} ripgrep",
         ]
@@ -439,7 +439,7 @@ fn dnf_caches_the_locked_rpm_and_installs_the_file() {
     w.apply(Scope::System, &want).unwrap();
     let cached = w.paths.root.join("var/cache/fspec/pkgs/htop-3.3-1.fc42.x86_64.rpm");
     assert_eq!(fs::read(&cached).unwrap(), b"rpm one");
-    assert_eq!(w.take()[1], format!("dnf install -y {}", cached.display()));
+    assert_eq!(w.take()[1], format!("dnf install -y --setopt=max_parallel_downloads=10 {}", cached.display()));
     assert_eq!(w.state(Scope::System).entries[&want[0].resource.key()].record["file"], "htop-3.3-1.fc42.x86_64.rpm");
     assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
 }
@@ -462,16 +462,22 @@ fn dnf_lock_bump_installs_the_new_rpm_and_journals_the_old_one() {
     assert!(is_drift(&plan), "{plan}");
 
     // zzz fails after htop upgraded, so the old cached RPM goes back on.
-    w.answer("dnf install -y zzz", 1, "");
+    w.answer("dnf install -y --setopt=max_parallel_downloads=10 zzz", 1, "");
     assert!(w.apply(Scope::System, &want).is_err());
     let dir = w.paths.root.join("var/cache/fspec/pkgs");
     let lines: Vec<_> = w.take().into_iter().filter(|l| !l.starts_with("rpm -q")).collect();
     assert_eq!(
         lines,
         [
-            format!("dnf install -y {}", dir.join("htop-3.4-1.fc42.x86_64.rpm").display()),
-            "dnf install -y zzz".to_string(),
-            format!("dnf install -y {}", dir.join("htop-3.3-1.fc42.x86_64.rpm").display()),
+            format!(
+                "dnf install -y --setopt=max_parallel_downloads=10 {}",
+                dir.join("htop-3.4-1.fc42.x86_64.rpm").display()
+            ),
+            "dnf install -y --setopt=max_parallel_downloads=10 zzz".to_string(),
+            format!(
+                "dnf install -y --setopt=max_parallel_downloads=10 {}",
+                dir.join("htop-3.3-1.fc42.x86_64.rpm").display()
+            ),
         ]
     );
 }
@@ -488,10 +494,10 @@ fn dnf_rejects_a_bad_hash_before_touching_the_system() {
 #[test]
 fn dnf_failure_rolls_back_the_earlier_install() {
     let w = World::linux();
-    w.answer("dnf install -y b", 1, "");
+    w.answer("dnf install -y --setopt=max_parallel_downloads=10 b", 1, "");
     assert!(w.apply(Scope::System, &[dnf("a", &[], "pinned"), dnf("b", &[], "pinned")]).is_err());
     let lines = w.take();
-    assert_eq!(&lines[lines.len() - 2..], ["dnf install -y b", "dnf remove -y a"]);
+    assert_eq!(&lines[lines.len() - 2..], ["dnf install -y --setopt=max_parallel_downloads=10 b", "dnf remove -y a"]);
 }
 
 #[test]
@@ -564,7 +570,7 @@ const FAMS: [Fam; 5] = [
     Fam {
         distro: "fedora",
         kind: "dnf",
-        install: "dnf install -y",
+        install: "dnf install -y --setopt=max_parallel_downloads=10",
         remove: "dnf remove -y",
         version: "rpm -q --qf %{VERSION}-%{RELEASE}",
         printed: "3.3-1",
@@ -622,7 +628,7 @@ impl Fam {
         let dir = w.paths.root.join("var/cache/fspec/pkgs");
         let path = dir.join(file);
         match self.kind {
-            "dnf" => vec![format!("dnf install -y {}", path.display())],
+            "dnf" => vec![format!("dnf install -y --setopt=max_parallel_downloads=10 {}", path.display())],
             "pacman" => vec![format!("pacman -U --noconfirm --needed {}", path.display())],
             "apt" => vec![format!("apt-get install -y {}", path.display())],
             "zypper" => vec![format!("{} {}", self.install, path.display())],

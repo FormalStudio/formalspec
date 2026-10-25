@@ -1872,6 +1872,7 @@ fn fedora_bootstrap_keeps_weak_dependencies() {
     let dnf = cmds.iter().find(|c| c.program == "dnf").unwrap();
     // systemd-pam is only a Recommends of systemd; without it GDM gets no logind session.
     assert!(!dnf.args.iter().any(|a| a.contains("install_weak_deps")), "{:?}", dnf.args);
+    assert!(dnf.args.iter().any(|a| a == "--setopt=max_parallel_downloads=10"), "{:?}", dnf.args);
 }
 
 /// The third argument of the boot step's script that points the fspec-live entry at @fspec/live.

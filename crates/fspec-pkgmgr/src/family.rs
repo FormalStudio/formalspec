@@ -53,7 +53,7 @@ impl Family {
 
     pub fn install_names(self, names: &[String]) -> Vec<Cmd> {
         vec![match self {
-            Family::Dnf => Cmd::new("dnf").args(["install", "-y"]).args(names),
+            Family::Dnf => dnf_install().args(names),
             Family::Pacman => Cmd::new("pacman").args(["-S", "--noconfirm", "--needed"]).args(names),
             Family::Apt => apt("install").args(names),
             Family::Xbps => Cmd::new("xbps-install").arg("-y").args(names),
@@ -67,7 +67,7 @@ impl Family {
     pub fn install_file(self, file: &Path, names: &[String]) -> Vec<Cmd> {
         let file = file.display().to_string();
         match self {
-            Family::Dnf => vec![Cmd::new("dnf").args(["install", "-y"]).arg(file)],
+            Family::Dnf => vec![dnf_install().arg(file)],
             Family::Pacman => vec![Cmd::new("pacman").args(["-U", "--noconfirm", "--needed"]).arg(file)],
             Family::Apt => vec![apt("install").arg(file)],
             Family::Xbps => {
@@ -148,6 +148,12 @@ pub(crate) fn zypper<'a>(args: impl IntoIterator<Item = &'a str>) -> Cmd {
 
 fn zypper_install() -> Cmd {
     zypper(["install", "--auto-agree-with-licenses"])
+}
+
+/// dnf fetches three packages at a time by default, which leaves a desktop's first install
+/// waiting on one round trip per package.
+fn dnf_install() -> Cmd {
+    Cmd::new("dnf").args(["install", "-y", "--setopt=max_parallel_downloads=10"])
 }
 
 fn apt(verb: &str) -> Cmd {
