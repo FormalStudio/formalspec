@@ -665,7 +665,9 @@ fn main() -> Result<()> {
                 } else {
                     State::load(&dir.join("generations").join(format!("{n}.json")))?
                 };
-                env.lock = fspec_store::lock_from_state(&past);
+                // The generation records its packages; the rest of the lock, such as the
+                // Tumbleweed snapshot and the image digests, stays as the lock has it.
+                env.lock.pkg = fspec_store::lock_from_state(&past).pkg;
                 let plan = apply_scope(&env.cx(scope, &state), &backends::all(), &desired)?;
                 println!("{plan}");
             }

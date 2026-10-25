@@ -526,8 +526,10 @@ did not put there. `apps` is macOS only.
 
 Each pkg's record keeps the store path, version, linked bins and the lock entry
 it was installed from. `fspec rollback [gen]` re-applies that generation's
-resources with a lock rebuilt from those records, as a new generation, so the
-old store paths are reused and no download happens. The live `fspec.lock` is
+resources with the lock's packages rebuilt from those records, as a new
+generation, so the old store paths are reused and no download happens. The
+rest of the lock (the Tumbleweed snapshot, image digests) is the live one's,
+since a generation records only its packages. The live `fspec.lock` is
 untouched: until it is reverted too, `plan` reports the newer locked version as
 drift. A `pinned` pkg whose locked artifact differs from the record is drift
 (that is how a bumped lock reaches `apply`); a `self_managed` pkg is installed

@@ -145,3 +145,25 @@ fn forget_needs_a_live_disk_and_rejects_unknown_distros() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("only runs on a live system"));
     assert!(!fspec(dir.path(), &["forget", "gentoo"]).status.success());
 }
+
+#[test]
+fn rollback_keeps_the_locked_tumbleweed_snapshot() {
+    let dir = tempfile::tempdir().unwrap();
+    // A pkg("fspec") of its own keeps the engine, which would need a lock entry, out of the plan.
+    let spec = r#"hosts = [host(name = "tw", platform = "x86_64-linux", system = tumbleweed(),
+    modules = [pkg("fspec", source = zypper("jq")), file("/etc/one", content = "one\n")])]
+"#;
+    fs::write(dir.path().join("spec.star"), spec).unwrap();
+    let mut lock = Lock::default();
+    lock.zypper.insert("tw".into(), LockedZypper { snapshot: "20261020".into() });
+    lock.save(&dir.path().join("fspec.lock")).unwrap();
+    let run = |args: &[&str]| {
+        let out = fspec(dir.path(), args);
+        assert!(out.status.success(), "{args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    };
+    run(&["apply", "--host", "tw"]);
+    fs::write(dir.path().join("spec.star"), spec.replace("\"one\\n\"", "\"two\\n\"")).unwrap();
+    run(&["apply", "--host", "tw"]);
+    run(&["rollback", "--host", "tw"]);
+    assert_eq!(fs::read_to_string(dir.path().join("root/etc/one")).unwrap(), "one\n");
+}
