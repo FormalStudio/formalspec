@@ -53,6 +53,8 @@ on:
   push:
     branches: [main]
     paths: ["{dir}fspec.lock", "{dir}patches/**"]
+  pull_request:
+    paths: ["{dir}fspec.lock", "{dir}patches/**"]
   workflow_dispatch:
 
 permissions:
@@ -62,6 +64,9 @@ permissions:
 jobs:
   build:
     name: ${{{{ matrix.pkg }}}} (${{{{ matrix.platform }}}})
+    # Builds the nightly lock update before it merges, so the cache holds its artifacts. Other
+    # pull requests run without package write access.
+    if: github.event_name != 'pull_request' || github.head_ref == 'fspec/update-lock'
     runs-on: ${{{{ matrix.runner }}}}
     strategy:
       fail-fast: false

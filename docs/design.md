@@ -1798,6 +1798,26 @@ host and forgets the bases, so the next sync merges from scratch.
 and `fspec sync --watch [seconds]` syncs again every 60 seconds (or the given
 interval) until stopped, for a user `service(...)` to run.
 
+## The engine
+
+fspec installs itself. Evaluation adds one package to every Linux host that
+does not declare a `pkg("fspec")` of its own: `git(...)` of this repository at
+`main`, built static against musl in a pinned `rust:alpine` image so one
+binary runs on every distro, with a link from `/usr/local/bin/fspec` to
+`/opt/fspec/current/bin/fspec`. Nothing in a spec adds it, so nothing in a
+spec can drop it by accident.
+
+It is an ordinary `git(...)` package from there on. `fspec update` locks the
+newest commit of `main`, `fspec ci packages` gives it a CI job, `--cache`
+records its OCI digest, and `apply` installs it, so a host runs the engine
+the lock names from its next apply on, and `fspec rollback` takes the engine
+back with the rest of the generation. `/usr/local/bin/fspec` is the path
+`fspec switch` and `fspec disk init` install, and the one timers and remote
+applies run, so all of them follow the lock. A host whose fspec predates the
+engine package gets it from a remote apply ([Remote hosts](#remote-hosts)).
+
+macOS hosts are left out: the macbook's fspec comes from Nix.
+
 ## Remote hosts
 
 A host is remote when its name is not this machine's short host name. It is
@@ -1817,8 +1837,11 @@ through the `Runner`:
    prints the remote fspec's engine number, raised with every builtin, field
    or lock key a spec can use; one lower than this fspec's fails the same way
    (`fspec on g815 is older than this one (engine 0 < 1)`), since it may
-   reject the spec or ignore lock keys it does not know. Nothing ships it a
-   newer fspec: the driving binary may not run there.
+   reject the spec or ignore lock keys it does not know, unless the lock holds
+   a CI build of [the engine](#the-engine) for the remote's platform. Then the
+   driving fspec pulls it, streams it to `~/.cache/fspec/engine.new` and runs
+   `ssh -t h sudo install` to put it at `/usr/local/bin/fspec`, probes again
+   and carries on. It never ships its own binary, which may not run there.
 2. Refuse a dirty spec tree. Hosts that apply the same commit end up with the
    same software, so uncommitted changes under the spec directory stop the
    apply unless `--dirty` is passed.

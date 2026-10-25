@@ -103,6 +103,22 @@ pub fn apply(alias: &str, dest: &str, spec_file: &str, host: &str, scope: Option
     Cmd::new("ssh").args(["-t", alias]).arg(fspec(dest, spec_file, &args)).interactive()
 }
 
+/// Where [`upload_engine`] leaves the engine for [`install_engine`] to move into place.
+const ENGINE_UPLOAD: &str = "\"$HOME/.cache/fspec/engine.new\"";
+
+pub fn upload_engine(alias: &str, file: &Path) -> Cmd {
+    batch(alias).arg(format!("mkdir -p \"$HOME/.cache/fspec\" && cat > {ENGINE_UPLOAD}")).stdin_file(file)
+}
+
+/// Interactive, since sudo may ask for a password.
+pub fn install_engine(alias: &str) -> Cmd {
+    let bin = fspec_core::engine::BIN;
+    Cmd::new("ssh")
+        .args(["-t", alias])
+        .arg(format!("sudo install -D -m 0755 {ENGINE_UPLOAD} {bin} && rm -f {ENGINE_UPLOAD}"))
+        .interactive()
+}
+
 pub fn plan(alias: &str, dest: &str, spec_file: &str, host: &str) -> Cmd {
     batch(alias).arg(fspec(dest, spec_file, &["plan", "--json", "--local", "--host", host]))
 }

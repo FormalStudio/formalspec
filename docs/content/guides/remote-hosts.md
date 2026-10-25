@@ -229,9 +229,11 @@ A host that asks for a password fails here; set up key authentication.
 The login worked and the shell found no `fspec`. Install it on the host, or link it into a
 directory on the default path such as `/usr/local/bin`.
 
-**`fspec on server is older than this one (engine 2 < 3) and may not read this spec; install a current fspec there first`**
+**`fspec on server is older than this one (engine 2 < 3) and fspec.lock has no CI build of fspec for x86_64-linux to install; ...`**
 
-Update fspec on the host to at least the version you drive the apply with.
+An apply hands an older Linux host the fspec the lock pins before it ships the spec, and this
+lock has no CI build of it yet. Run `fspec update --cache` once CI has built the `fspec`
+package, or update fspec on the host by hand.
 
 **`host server is declared as x86_64-linux/debian but the machine is x86_64-linux/fedora`**
 

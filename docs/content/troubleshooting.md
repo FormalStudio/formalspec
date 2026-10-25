@@ -168,14 +168,16 @@ See [Install fspec](install.md#make-it-reachable-over-ssh).
 ## fspec on a remote host is older
 
 ```
-Error: fspec on server is older than this one (engine 2 < 3) and may not read this spec; install a current fspec there first
+Error: fspec on server is older than this one (engine 2 < 3) and fspec.lock has no CI build of fspec for x86_64-linux to install; run `fspec update --cache`, or install a current fspec there first
 ```
 
 **Cause.** Every release that adds a builtin, an argument or a lock key raises the engine
-number. A host with an older fspec would misread the spec, so it is refused before anything is
-shipped.
+number. A host with an older fspec would misread the spec. `fspec apply` installs the fspec the
+lock pins on an older Linux host before shipping the spec, and stops here when the lock has no
+CI build of it for that platform.
 
-**Fix.** Update fspec on that host the same way you installed it, for example:
+**Fix.** Run `fspec update --cache` once CI has built the `fspec` package, then apply again.
+Or update fspec on that host the same way you installed it, for example:
 
 ```sh
 ssh server cargo install --git https://github.com/FormalStudio/formalspec --locked fspec

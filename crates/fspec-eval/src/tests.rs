@@ -438,3 +438,32 @@ hosts = [host(name = "a", platform = "aarch64-darwin", modules = [wallpaper],
         eval_str(r#"sync("x", peers = ["a", "b"], keys = json_keys("~/s.json", ["k"]), on_receive = "{nope}")"#, &[]);
     assert!(format!("{:#}", bad.unwrap_err()).contains("{nope}"));
 }
+
+#[test]
+fn every_linux_host_carries_the_engine_once() {
+    let spec = eval_str(
+        r#"
+hosts = [
+    host("box", platform = "x86_64-linux", system = fedora()),
+    host("own", platform = "x86_64-linux", system = fedora(), modules = [pkg("fspec", source = github("me/fspec"))]),
+    host("mac", platform = "aarch64-darwin"),
+]
+"#,
+        &[],
+    )
+    .unwrap();
+    let engines = |name: &str| -> Vec<Source> {
+        let host = spec.host(name).unwrap();
+        host.resources
+            .iter()
+            .filter_map(|r| match r {
+                Resource::Pkg(p) if p.name == "fspec" => Some(p.source.clone()),
+                _ => None,
+            })
+            .collect()
+    };
+    assert_eq!(engines("box"), [fspec_core::engine::pkg().source]);
+    assert_eq!(engines("own").len(), 1);
+    assert!(!matches!(engines("own")[0], Source::Git { .. }));
+    assert!(engines("mac").is_empty());
+}

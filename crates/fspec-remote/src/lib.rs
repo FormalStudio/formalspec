@@ -6,6 +6,7 @@ pub mod cmd;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result, bail};
+use fspec_core::engine;
 use fspec_core::lock::{Lock, SHIPPED_LOADS, loads_cache};
 use fspec_core::runner::{Output, Runner};
 use fspec_core::{Facts, Host, Plan};
@@ -16,7 +17,7 @@ pub use cmd::{Target, target};
 /// What this fspec can read, compared against the remote's before shipping it a spec. Bump it
 /// with every builtin, builtin argument, resource field or lock key a spec can use, since an
 /// older fspec fails on them, or worse, ignores an unknown lock key.
-pub const ENGINE: u32 = 4;
+pub const ENGINE: u32 = 5;
 
 /// What `fspec facts --json` prints: the machine as it is, to compare against its declaration.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -74,6 +75,13 @@ pub fn current(alias: &str, probe: &Probe) -> Result<()> {
     Ok(())
 }
 
+/// The CI build of the locked engine for `platform`, which an older remote gets before it is
+/// handed the spec. Its own applies keep it current from then on.
+pub fn locked_engine<'l>(lock: &'l Lock, platform: &str) -> Option<&'l str> {
+    let source = engine::pkg().source.to_string();
+    lock.named(engine::NAME).find(|p| p.source == source)?.artifacts.get(platform)?.oci.as_deref()
+}
+
 pub enum Reach {
     Reachable(Probe),
     Unreachable(String),
@@ -116,9 +124,31 @@ impl Remote<'_> {
     /// what this one does.
     fn reach(&self, host: &Host, alias: &str) -> Result<Reach> {
         let reach = probe(self.runner, alias)?;
-        if let Reach::Reachable(probe) = &reach {
-            verify(host, probe)?;
-            current(alias, probe)?;
+        let Reach::Reachable(found) = &reach else { return Ok(reach) };
+        verify(host, found)?;
+        if found.engine >= ENGINE {
+            return Ok(reach);
+        }
+        let lock = Lock::load(&self.spec_dir.join("fspec.lock"))?;
+        let Some(reference) = locked_engine(&lock, &found.platform) else {
+            bail!(
+                "fspec on {alias} is older than this one (engine {} < {ENGINE}) and fspec.lock has no CI build of fspec for {} to install; run `fspec update --cache`, or install a current fspec there first",
+                found.engine,
+                found.platform
+            );
+        };
+        eprintln!("fspec: {alias} runs engine {}, installing the locked fspec there first", found.engine);
+        let tmp = tempfile::tempdir()?;
+        let dest = tmp.path().join("pkg");
+        fspec_store::pull_built(self.runner, reference, &tmp.path().join("oci"), &dest, engine::NAME)?;
+        self.runner.check(&cmd::upload_engine(alias, &dest.join(engine::NAME)))?;
+        let out = self.runner.run(&cmd::install_engine(alias))?;
+        if out.status != 0 {
+            bail!("installing fspec on {alias} exited {}", out.status);
+        }
+        let reach = probe(self.runner, alias)?;
+        if let Reach::Reachable(found) = &reach {
+            current(alias, found)?;
         }
         Ok(reach)
     }

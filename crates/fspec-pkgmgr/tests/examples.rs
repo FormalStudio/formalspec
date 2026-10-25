@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use fspec_core::apply::{Backend, Cx, apply_scope, plan_scope, state_dir};
+use fspec_core::engine;
 use fspec_core::fetch::MapFetch;
 use fspec_core::resource::{Resource, Scope};
 use fspec_core::runner::RecordingRunner;
@@ -8,12 +9,17 @@ use fspec_core::{Lock, Paths, State};
 use fspec_pkgmgr::{BrewBackend, DnfBackend, FlatpakBackend};
 
 /// Applies `examples/pkgmgr/<spec>.star` for `host` in `scope` against a recording runner.
-/// The distro resource itself belongs to the system layer, which is not built yet.
+/// The distro resource itself belongs to the system layer, which is not built yet, and the engine
+/// package to the store.
 fn run(spec: &str, host: &str, scope: Scope) -> (Vec<String>, usize) {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../examples/pkgmgr");
     let spec = fspec_eval::evaluate(&dir.join(format!("{spec}.star"))).unwrap();
     let host = spec.host(host).unwrap();
-    let want: Vec<_> = host.desired().into_iter().filter(|d| !matches!(d.resource, Resource::Distro(_))).collect();
+    let want: Vec<_> = host
+        .desired()
+        .into_iter()
+        .filter(|d| !matches!(d.resource, Resource::Distro(_)) && !engine::is_engine(&d.resource))
+        .collect();
     let facts = fspec_core::Facts::declared(&host.name, &host.platform, host.system.as_ref()).unwrap();
     let tmp = tempfile::tempdir().unwrap();
     let paths = Paths::new(tmp.path().into(), tmp.path().join("home/u"));

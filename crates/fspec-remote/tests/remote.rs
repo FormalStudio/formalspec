@@ -240,3 +240,96 @@ fn ship_carries_the_cached_gh_load_files() {
     let into = format!("{dest}/.fspec/loads");
     assert_eq!(calls.last().unwrap().to_string(), format!("{PROBE} 'mkdir -p {into} && tar -xf - -C {into}'"));
 }
+
+/// An older remote, then the current one once `sudo install` ran; `oras` serves `body`.
+struct Bootstrap {
+    calls: std::sync::Mutex<Vec<String>>,
+    body: Vec<u8>,
+    installed: std::sync::atomic::AtomicBool,
+}
+
+impl fspec_core::runner::Runner for Bootstrap {
+    fn run(&self, cmd: &fspec_core::runner::Cmd) -> anyhow::Result<Output> {
+        use sha2::{Digest, Sha256};
+        use std::sync::atomic::Ordering;
+        let line = cmd.to_string();
+        self.calls.lock().unwrap().push(line.clone());
+        if line.contains("fspec facts --json") {
+            let engine = if self.installed.load(Ordering::SeqCst) { ENGINE } else { 3 };
+            return Ok(ok(
+                &json!({"hostname": "g815", "platform": "x86_64-linux", "distro": "bazzite", "engine": engine})
+                    .to_string(),
+            ));
+        }
+        if line.starts_with("oras pull") {
+            fs::write(Path::new(cmd.args.last().unwrap()).join("fspec"), &self.body)?;
+        }
+        if line.starts_with("oras manifest fetch") {
+            let digest: String = Sha256::digest(&self.body).iter().map(|b| format!("{b:02x}")).collect();
+            let layer = json!({"digest": format!("sha256:{digest}"), "annotations": {"org.opencontainers.image.title": "fspec"}});
+            return Ok(ok(&json!({"layers": [layer]}).to_string()));
+        }
+        if line.contains("sudo install") {
+            self.installed.store(true, Ordering::SeqCst);
+        }
+        if line.starts_with("git ") && line.contains("ls-files") && !line.contains("--others") {
+            return Ok(ok("spec.star\n"));
+        }
+        if line.contains("rev-parse") {
+            return Ok(ok("abc123\n"));
+        }
+        if line.contains("plan --json") {
+            return Ok(ok(r#"{"host":"g815","changes":[]}"#));
+        }
+        Ok(Output::default())
+    }
+}
+
+#[test]
+fn an_older_remote_gets_the_locked_engine_before_the_spec() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fspec_core::engine::pkg().source.to_string();
+    let oci = "ghcr.io/o/fspec-cache/fspec@sha256:0123";
+    fs::write(
+        dir.path().join("fspec.lock"),
+        format!(
+            "[[pkg]]\nname = \"fspec\"\nsource = \"{source}\"\nrev = \"abc\"\n\n[pkg.x86_64-linux]\noci = \"{oci}\"\n"
+        ),
+    )
+    .unwrap();
+    let runner =
+        Bootstrap { calls: Default::default(), body: b"\x7fELF engine".to_vec(), installed: Default::default() };
+    let h = host("g815", "x86_64-linux", "bazzite");
+    let r = Remote {
+        runner: &runner,
+        spec_dir: dir.path().into(),
+        spec_file: "spec.star".into(),
+        dirty: false,
+        loads_cache: None,
+    };
+    r.plan(&h, "g815").unwrap();
+
+    let calls = runner.calls.lock().unwrap();
+    let at = |needle: &str| {
+        calls.iter().position(|c| c.contains(needle)).unwrap_or_else(|| panic!("no {needle}: {calls:#?}"))
+    };
+    assert!(calls[at("oras pull")].contains(oci));
+    assert!(calls[at("engine.new")].contains("cat >"));
+    assert!(at("sudo install") < at("tar"), "{calls:#?}");
+    assert!(
+        calls[at("sudo install")].ends_with("/usr/local/bin/fspec && rm -f \"$HOME/.cache/fspec/engine.new\"'"),
+        "{calls:#?}"
+    );
+}
+
+#[test]
+fn an_older_remote_with_no_locked_engine_build_says_how_to_get_one() {
+    let (dir, runner) = fixture("");
+    runner.respond(
+        PROBE,
+        ok(&json!({"hostname": "g815", "platform": "x86_64-linux", "distro": "bazzite", "engine": 3}).to_string()),
+    );
+    let h = host("g815", "x86_64-linux", "bazzite");
+    let err = remote(dir.path(), &runner, false).plan(&h, "g815").err().unwrap();
+    assert!(err.to_string().contains("no CI build of fspec for x86_64-linux"), "{err}");
+}

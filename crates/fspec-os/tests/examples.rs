@@ -1,10 +1,12 @@
 //! Applies the hosts of `examples/os/spec.star` against a rooted temp dir with a recording runner.
-//! The `fedora` host's `distro` resource belongs to the package backends, so it is left out here.
+//! The `fedora` host's `distro` resource and the engine package every Linux host carries belong to
+//! the package backends, so they are left out here.
 
 use std::fs;
 use std::path::Path;
 
 use fspec_core::apply::{apply_scope, plan_scope, state_dir};
+use fspec_core::engine;
 use fspec_core::fetch::MapFetch;
 use fspec_core::runner::RecordingRunner;
 use fspec_core::{Backend, Cx, Desired, Facts, Lock, Paths, Resource, Scope, State};
@@ -21,8 +23,11 @@ fn apply(host: &str) -> Run {
     let spec = fspec_eval::evaluate(&spec_path).unwrap();
     let host = spec.host(host).unwrap();
     let facts = Facts::declared(&host.name, &host.platform, host.system.as_ref()).unwrap();
-    let desired: Vec<Desired> =
-        host.desired().into_iter().filter(|d| !matches!(d.resource, Resource::Distro(_))).collect();
+    let desired: Vec<Desired> = host
+        .desired()
+        .into_iter()
+        .filter(|d| !matches!(d.resource, Resource::Distro(_)) && !engine::is_engine(&d.resource))
+        .collect();
 
     let root = tempfile::tempdir().unwrap();
     let paths = Paths::new(root.path().into(), root.path().join("home/u"));

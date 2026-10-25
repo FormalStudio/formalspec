@@ -20,7 +20,7 @@ use fspec_core::facts::{Init, Os};
 use fspec_core::journal::{Journal, copy_any, remove_any};
 use fspec_core::lock::{Artifact, LockedPkg};
 use fspec_core::resource::{Pkg, PkgMode, Source};
-use fspec_core::runner::Cmd;
+use fspec_core::runner::{Cmd, Runner};
 use fspec_core::state::Entry;
 use fspec_core::{Backend, Cx, Lock, Op, Phase, Resource, State};
 use serde::{Deserialize, Serialize};
@@ -32,6 +32,13 @@ pub use archive::sri_sha256;
 pub use dev::{Unpacked, unpack_for_project};
 
 pub struct StoreBackend;
+
+/// Pull a CI-built package by its locked OCI reference into `scratch` and unpack it into `dest`,
+/// outside any apply: how a remote apply hands an older host the locked engine.
+pub fn pull_built(runner: &dyn Runner, reference: &str, scratch: &Path, dest: &Path, name: &str) -> Result<()> {
+    let body = oci::pull(runner, reference, scratch)?;
+    archive::unpack(&body, dest, name)
+}
 
 /// What the state file keeps per package. `locked` is the lock entry as applied, which lets a
 /// rollback rebuild the lock of an old generation.

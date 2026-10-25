@@ -12,7 +12,8 @@ use std::path::{Path, PathBuf};
 use allocative::Allocative;
 use anyhow::{Context, anyhow, bail};
 use fspec_core::dev::Dev;
-use fspec_core::facts::Facts;
+use fspec_core::engine;
+use fspec_core::facts::{Facts, Os};
 use fspec_core::fetch::{Fetch, LiveFetch};
 use fspec_core::lock::{Lock, LockedLoad, SHIPPED_LOADS, loads_cache};
 use fspec_core::resource::{Host, Resource, Source, System};
@@ -510,6 +511,14 @@ fn host_<'v>(
     let facts_value = facts_struct(heap, &facts);
     let mut resources = Vec::new();
     expand(&what, modules, facts_value, eval, &mut resources)?;
+    // macOS hosts take fspec from their own package manager for now.
+    let declares_engine = resources.iter().any(|r| {
+        r.get("kind").and_then(Json::as_str) == Some("pkg")
+            && r.get("name").and_then(Json::as_str) == Some(engine::NAME)
+    });
+    if facts.os == Os::Linux && !declares_engine {
+        resources.push(serde_json::to_value(Resource::Pkg(engine::pkg()))?);
+    }
     let (mut synced, resources): (Vec<Json>, Vec<Json>) =
         resources.into_iter().partition(|r| r.get("kind").and_then(Json::as_str) == Some("sync"));
     if !synced.is_empty() {
