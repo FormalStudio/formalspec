@@ -157,7 +157,7 @@ pub struct Choices {
     pub disk: DiskChoice,
     pub system: SystemChoice,
     pub account: Account,
-    /// Enrol our own keys with sbctl and sign what the vendor did not.
+    /// Enrol our own keys with sbctl and sign the boot manager and the kernels with them.
     pub secure_boot: bool,
 }
 

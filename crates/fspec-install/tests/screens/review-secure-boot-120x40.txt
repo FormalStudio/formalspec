@@ -11,12 +11,12 @@
      Windows shrinks by 128 GB and stays in the boot menu.            │  hosts = [                                   │
                                                                       │      host(                                   │
   ▌ ━━●  Use Secure Boot with your own keys                           │          name = "kyan-fedora",               │
-         Fedora keeps booting through its vendor-signed shim.         │          platform = "x86_64-linux",          │
-         Measured boot and anti-cheat behind a chainloaded shim are   │          locale = "en_US.UTF-8",             │
-         not verified yet.                                            │          keymap = "us",                      │
-                                                                      │          timezone = "UTC",                   │
-    Install beside Windows                                            │          system = system("fedora"),          │
-                                                                      │          modules = modules("fedora"),        │
+         Fedora's boot manager and kernels are signed with your own   │          platform = "x86_64-linux",          │
+         key.                                                         │          locale = "en_US.UTF-8",             │
+         Measured boot and anti-cheat on a self-signed chain are      │          keymap = "us",                      │
+         not verified yet.                                            │          timezone = "UTC",                   │
+                                                                      │          system = system("fedora"),          │
+    Install beside Windows                                            │          modules = modules("fedora"),        │
                                                                       │          users = [user("kyan", uid = 1000,   │
                                                                       │              groups = ["wheel"])],           │
                                                                       │          protect = ["/home"],                │

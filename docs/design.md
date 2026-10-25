@@ -1689,15 +1689,24 @@ BIOS layout. Each command's output streams to the install screen and to
 `/var/log/fspec-install.log`.
 
 Secure Boot on the installed system is optional and off by default, since it
-needs the firmware in setup mode. Off, systemd-boot and the unified kernel
-images are unsigned. On, `sbctl` creates keys and enrols them with
-`--microsoft`, keeping the Microsoft UEFI CA: systemd-boot and the kernel
-images of distros without a signed kernel (Arch, Void, AerynOS) are signed
-with the machine's own key, and distros with a signed shim (Fedora, Ubuntu,
-Debian) keep booting through it, chainloaded from
-systemd-boot, so their vendor chain stays intact. The review screen says which
-roots end up vendor-signed. Measured boot and anti-cheat behind a chainloaded
-shim are unverified.
+needs the firmware in setup mode; the plan runs no `sbctl` otherwise. Off,
+systemd-boot and the unified kernel images are unsigned. On, the plan builds
+the new root, then `sbctl create-keys` runs in the live session, the root gets
+`sbctl` (the distro's package, or on Debian the ISO's binary) with the keys
+copied to `/var/lib/sbctl`, and systemd-boot and every UKI on the ESP (Void's
+copied kernel) are signed with `sbctl sign -s` inside the root, so its database
+holds the installed paths. `sbctl enroll-keys --microsoft` runs last, keeping
+the Microsoft UEFI CA, so a failed install leaves the firmware's keys alone.
+Every kernel here is a UKI built on the machine, so a vendor signature would
+not survive it: all distros are signed with the machine's key, and there is no
+shim chainload. Kernel updates stay signed through a kernel-install plugin
+(`91-sbctl.install`: Fedora, Debian, Ubuntu), a mkinitcpio post hook (Arch) or a
+kernel.d hook (Void), and a `systemd-boot-update.service` drop-in re-signs
+systemd-boot after `bootctl update`. Beside Windows, systemd-boot on Windows'
+ESP is signed once from the live session. AerynOS has no sbctl package and moss
+writes its own boot files, so its kernels are signed once at install and a
+kernel update leaves them unsigned. Measured boot and anti-cheat on a
+self-signed chain are unverified.
 
 
 ## Commands

@@ -8,5 +8,6 @@ pub mod demo;
 pub mod install;
 pub mod live;
 pub mod model;
+pub mod secure_boot;
 pub mod spec;
 pub mod ui;

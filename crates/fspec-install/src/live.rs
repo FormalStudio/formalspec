@@ -240,12 +240,14 @@ impl Live {
         };
         let exe = std::env::current_exe()?;
         let fspec = exe.with_file_name("fspec");
+        let firmware = firmware(Path::new("/sys"));
         let cmdline = std::fs::read_to_string("/proc/cmdline").unwrap_or_default();
         let setup = install::Setup {
             spec_dir: &spec_dir,
             host: &host,
             fspec: &fspec,
-            efi: Path::new("/sys/firmware/efi").is_dir(),
+            efi: firmware.efi,
+            setup_mode: firmware.setup_mode,
             cmdline: &cmdline,
             fedora_release: fedora.as_deref(),
             ids,

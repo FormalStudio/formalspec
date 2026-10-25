@@ -11,9 +11,9 @@
      Windows shrinks by 128 GB and stays in the boot menu.
 
   ▌ ━━●  Use Secure Boot with your own keys
-         Fedora keeps booting through its vendor-signed shim.
-         Measured boot and anti-cheat behind a chainloaded shim are not
-         verified yet.
+         Fedora's boot manager and kernels are signed with your own key.
+         Measured boot and anti-cheat on a self-signed chain are not verified
+         yet.
 
     Install beside Windows
 

@@ -171,8 +171,7 @@ path changed. AerynOS cannot be installed beside Windows.
 
 Choose the distro. Each row says whether it is rolling or fixed-release and whether it is classic
 or atomic, with one line about the selected distro underneath. Distros still in
-development are marked. The table below also lists init and kernel signing, which the review screen
-uses for the Secure Boot option.
+development are marked. The table below also lists init and kernel signing.
 
 | Distro | Updates | Init | Signed kernel | Kind |
 | --- | --- | --- | --- | --- |
@@ -266,12 +265,13 @@ must declare at least one user, and a system of `fedora()`, `arch()`, `debian()`
 The ISO boots with Secure Boot on. The installed system does not use Secure Boot unless you set it
 up: systemd-boot and the kernel images are unsigned.
 
-The review screen's Secure Boot option is designed to enrol your own keys with `sbctl`, keeping
-Microsoft's UEFI certificate, sign systemd-boot and the kernels of distros without a signed
-kernel (Arch, Void, AerynOS) with your key, and keep distros with a signed shim (Fedora,
-Ubuntu, Debian) booting through it. In this version the install records
-the choice but does not run `sbctl` yet. Measured boot and anti-cheat behind a chainloaded shim
-are not verified.
+The review screen's Secure Boot option enrols your own keys with `sbctl`, keeping Microsoft's UEFI
+certificate, and signs systemd-boot and every kernel image with your key. It needs the firmware in
+setup mode; otherwise the option is off and the installer runs no `sbctl`. Distros do not keep a
+vendor-signed boot chain: the kernel images are built on your machine, so they carry your signature
+whatever the distro. Kernel updates stay signed through hooks the installer adds, except on
+AerynOS, whose kernels are signed once at install. Measured boot and anti-cheat on a self-signed
+chain are not verified.
 
 ## What ends up on disk
 

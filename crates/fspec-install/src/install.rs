@@ -16,6 +16,7 @@ use fspec_switch::{Init, Kind, Plan, Step};
 
 use crate::catalog;
 use crate::model::{Choices, Progress};
+use crate::secure_boot;
 
 /// Everything `plan` needs besides the choices, read from the live session.
 pub struct Setup<'a> {
@@ -25,6 +26,8 @@ pub struct Setup<'a> {
     /// The static `fspec` binary the new root runs its first apply with.
     pub fspec: &'a Path,
     pub efi: bool,
+    /// The firmware is in Secure Boot setup mode, the only state sbctl can enrol keys from.
+    pub setup_mode: bool,
     /// The live session's kernel command line; only its `console=` options carry over.
     pub cmdline: &'a str,
     /// Fedora's release number, read from Fedora's release list at install time.
@@ -69,7 +72,14 @@ pub fn plan(paths: &Paths, c: &Choices, s: &Setup) -> Result<Plan> {
         passphrase: c.disk.encrypt.as_ref().map(|p| p.0.as_str()),
         windows: c.disk.windows.as_ref(),
     };
-    fspec_switch::init(paths, &init)
+    let mut plan = fspec_switch::init(paths, &init)?;
+    if c.secure_boot && s.efi && s.setup_mode {
+        let disk = Path::new(&root).parent().map_or_else(String::new, |p| p.display().to_string());
+        let loader = c.disk.windows.is_some().then(|| format!("{disk}/esp"));
+        let cmds = secure_boot::steps(distro, &root, &format!("{disk}/efi"), loader.as_deref());
+        plan.steps.extend(cmds.into_iter().map(Step::Run));
+    }
+    Ok(plan)
 }
 
 /// The stage a command belongs to, or `None` for setup commands like `mount` that continue the
@@ -86,6 +96,8 @@ fn stage_of(cmd: &Cmd, device: &str, distro: &str, luks: bool) -> Option<String>
         "btrfs" if arg("subvolume") || arg("mkswapfile") => "Creating subvolumes".into(),
         "bootctl" | "grub-install" | "efibootmgr" => "Installing the bootloader".into(),
         "dnf" | "pacstrap" | "debootstrap" | "xbps-install" => format!("Installing {name}"),
+        "sbctl" => "Setting up Secure Boot".into(),
+        "chroot" if cmd.args.iter().any(|a| a.contains("sbctl")) => "Setting up Secure Boot".into(),
         "chroot" if arg("apply") => "Applying your spec".into(),
         "chroot" if arg("chpasswd") => "Setting your password".into(),
         // The script that moves the copied fspec binary into place is setup, not the kernel step.
@@ -256,6 +268,11 @@ mod tests {
         }
     }
 
+    fn secure(mut c: Choices) -> Choices {
+        c.secure_boot = true;
+        c
+    }
+
     fn spec_dir() -> tempfile::TempDir {
         let d = tempfile::tempdir().unwrap();
         std::fs::write(
@@ -277,6 +294,7 @@ mod tests {
             host: "nova",
             fspec: Path::new("/usr/local/bin/fspec"),
             efi,
+            setup_mode: true,
             cmdline: "BOOT_IMAGE=/live/vmlinuz boot=live components quiet console=ttyS0,115200",
             fedora_release: Some("44"),
             ids,
@@ -301,6 +319,42 @@ mod tests {
         });
         let kernel = kernel.unwrap();
         assert!(kernel.contains("console=ttyS0,115200") && !kernel.contains("boot=live"), "{kernel}");
+    }
+
+    #[test]
+    fn secure_boot_signs_the_boot_files_and_enrols_the_keys_last() {
+        let dir = spec_dir();
+        let ids = ids();
+        let paths = Paths::new("/r".into(), "/r/root".into());
+        let plan = plan(&paths, &secure(choices(false)), &setup(dir.path(), &ids, true)).unwrap();
+        let lines = plan.lines();
+        let at = |p: &str| lines.iter().position(|l| l.starts_with(p)).unwrap_or_else(|| panic!("no `{p}`"));
+        let root = "chroot /r/run/fspec/disk/arch";
+        let sign =
+            lines.iter().position(|l| l.starts_with(root) && l.contains("sbctl sign -s /efi/EFI/systemd")).unwrap();
+        assert!(at("chroot /r/run/fspec/disk/arch chpasswd") < at("sbctl create-keys"));
+        assert!(at("sbctl create-keys") < at(&format!("{root} pacman -S --noconfirm --needed sbctl")));
+        assert!(at("cp -a /var/lib/sbctl /r/run/fspec/disk/arch/var/lib/sbctl") < sign);
+        assert!(lines.iter().any(|l| l.contains("sbctl sign -s /efi/EFI/systemd/systemd-bootx64.efi")));
+        assert!(lines.iter().any(|l| l.starts_with("tee /r/run/fspec/disk/arch/etc/initcpio/post/sbctl")));
+        let enrol = at("sbctl enroll-keys --microsoft");
+        assert!(sign < enrol);
+        assert!(lines[enrol + 1..].iter().all(|l| l.starts_with("umount")), "{lines:#?}");
+        let (titles, _) = stages(&plan, "/dev/vdb", "arch");
+        assert_eq!(titles[titles.len() - 2], "Setting up Secure Boot");
+    }
+
+    #[test]
+    fn secure_boot_off_or_outside_setup_mode_runs_no_sbctl() {
+        let dir = spec_dir();
+        let ids = ids();
+        let paths = Paths::new("/r".into(), "/r/root".into());
+        let none = |p: &fspec_switch::Plan| !p.lines().iter().any(|l| l.contains("sbctl"));
+        assert!(none(&plan(&paths, &choices(false), &setup(dir.path(), &ids, true)).unwrap()));
+        let mut s = setup(dir.path(), &ids, true);
+        s.setup_mode = false;
+        assert!(none(&plan(&paths, &secure(choices(false)), &s).unwrap()));
+        assert!(none(&plan(&paths, &secure(choices(false)), &setup(dir.path(), &ids, false)).unwrap()));
     }
 
     #[test]

@@ -163,12 +163,11 @@ impl Review {
                 false,
             ));
         } else if on {
-            if self.summary.distro.is_some_and(|d| d.signed_kernel) {
-                notes.push((format!("{name} keeps booting through its vendor-signed shim."), false));
-            } else {
-                notes.push((format!("{name} is signed with your own key."), false));
+            notes.push((format!("{name}'s boot manager and kernels are signed with your own key."), false));
+            if self.summary.distro.is_some_and(|d| d.id == "aerynos") {
+                notes.push(("Its kernels are signed once; a kernel update leaves them unsigned.".into(), false));
             }
-            notes.push(("Measured boot and anti-cheat behind a chainloaded shim are not verified yet.".into(), true));
+            notes.push(("Measured boot and anti-cheat on a self-signed chain are not verified yet.".into(), true));
         }
         for (text, faint) in notes {
             for l in wrap(&text, note_w) {
