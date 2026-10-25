@@ -117,8 +117,10 @@ Pick **Install a new system**.
 
 ### Language
 
-Choose the language, the keyboard layout and the time zone. Type in a column to filter it. The
-**Test your keyboard** field checks the layout before you type a password.
+Choose the language, the keyboard layout and the time zone. Type in a column to filter it; the
+keyboard column matches layout codes and names, so `es` and `spanish` both find Spanish. The layout
+loads when you leave the keyboard column, and the **Test your keyboard** field checks it before you
+type a password.
 
 ### Disk
 

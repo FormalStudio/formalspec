@@ -104,16 +104,20 @@ fn native_name(line: &str) -> Option<(String, String)> {
     })
 }
 
-/// XKB layout names, `us`, `de`, from the `! layout` section of the XKB rules.
-pub fn keymaps(rules: &str) -> Vec<String> {
-    let mut maps: Vec<String> = rules
+/// XKB layouts with their descriptions, `("us", "English (US)")`, from the `! layout` section of
+/// the XKB rules, sorted by description.
+pub fn keymaps(rules: &str) -> Vec<(String, String)> {
+    let mut maps: Vec<(String, String)> = rules
         .lines()
         .skip_while(|l| l.trim() != "! layout")
         .skip(1)
         .take_while(|l| !l.starts_with('!'))
-        .filter_map(|l| l.split_whitespace().next().map(str::to_string))
+        .filter_map(|l| {
+            let (name, desc) = l.trim().split_once(char::is_whitespace)?;
+            Some((name.to_string(), desc.trim().to_string()))
+        })
         .collect();
-    maps.sort();
+    maps.sort_by(|a, b| a.1.cmp(&b.1));
     maps
 }
 
@@ -255,7 +259,7 @@ impl Backend for Live {
         locales(&LiveRunner)
     }
 
-    fn keymaps(&self) -> Vec<String> {
+    fn keymaps(&self) -> Vec<(String, String)> {
         keymaps(&std::fs::read_to_string("/usr/share/X11/xkb/rules/base.lst").unwrap_or_default())
     }
 
@@ -353,7 +357,7 @@ mod tests {
     #[test]
     fn reads_layouts_and_zones() {
         let rules = "! model\n  pc105 Generic\n\n! layout\n  us              English (US)\n  de              German\n\n! variant\n  intl us: x\n";
-        assert_eq!(keymaps(rules), ["de", "us"]);
+        assert_eq!(keymaps(rules), [("us".into(), "English (US)".into()), ("de".into(), "German".into())]);
         let tab = "# comment\nES\t+4024-00341\tEurope/Madrid\nNL,BE\t+5222+00454\tEurope/Brussels\tBelgium\n";
         assert_eq!(timezones(tab), ["Europe/Brussels", "Europe/Madrid", "UTC"]);
     }

@@ -14,7 +14,8 @@ const TEST: usize = 3;
 pub struct Language {
     locales: Vec<(String, String)>,
     labels: Vec<String>,
-    keymaps: Vec<String>,
+    keymaps: Vec<(String, String)>,
+    keymap_labels: Vec<String>,
     zones: Vec<String>,
     lists: [FilterList; 3],
     focus: usize,
@@ -28,17 +29,28 @@ impl Language {
         let keymaps = sh.be.keymaps();
         let zones = sh.be.timezones();
         let labels = locales.iter().map(|(l, n)| format!("{n} {l}")).collect();
+        let keymap_labels = keymaps.iter().map(|(k, d)| format!("{k} {d}")).collect();
         let mut lists = [FilterList::new(locales.len()), FilterList::new(keymaps.len()), FilterList::new(zones.len())];
         if let Some(i) = locales.iter().position(|(l, _)| l == "en_US.UTF-8") {
             lists[0].select_item(i);
         }
-        if let Some(i) = keymaps.iter().position(|k| k == "us") {
+        if let Some(i) = keymaps.iter().position(|(k, _)| k == "us") {
             lists[1].select_item(i);
         }
         if let Some(i) = zones.iter().position(|z| z == "UTC") {
             lists[2].select_item(i);
         }
-        Language { locales, labels, keymaps, zones, lists, focus: 0, test: TextInput::default(), height: 10 }
+        Language {
+            locales,
+            labels,
+            keymaps,
+            keymap_labels,
+            zones,
+            lists,
+            focus: 0,
+            test: TextInput::default(),
+            height: 10,
+        }
     }
 
     pub fn value(&self) -> Locale {
@@ -46,7 +58,7 @@ impl Language {
         Locale {
             locale: pick(&self.lists[0], self.locales.len())
                 .map_or_else(|| "en_US.UTF-8".into(), |i| self.locales[i].0.clone()),
-            keymap: pick(&self.lists[1], self.keymaps.len()).map_or_else(|| "us".into(), |i| self.keymaps[i].clone()),
+            keymap: pick(&self.lists[1], self.keymaps.len()).map_or_else(|| "us".into(), |i| self.keymaps[i].0.clone()),
             timezone: pick(&self.lists[2], self.zones.len()).map_or_else(|| "UTC".into(), |i| self.zones[i].clone()),
         }
     }
@@ -68,12 +80,23 @@ impl Language {
     fn refilter(&mut self, col: usize) {
         match col {
             0 => self.lists[0].refilter(self.labels.iter().map(String::as_str)),
-            1 => self.lists[1].refilter(self.keymaps.iter().map(String::as_str)),
+            1 => self.lists[1].refilter(self.keymap_labels.iter().map(String::as_str)),
             _ => self.lists[2].refilter(self.zones.iter().map(String::as_str)),
         }
     }
 
+    /// The layout loads when focus leaves the keyboard column or the step, never while typing in
+    /// its filter: loading it mid-filter would remap the very keys being typed.
     pub fn key(&mut self, k: &KeyEvent, sh: &mut Shared) -> Flow {
+        let was = self.focus;
+        let flow = self.key_inner(k);
+        if was == 1 && (self.focus != 1 || matches!(flow, Flow::Next)) {
+            self.apply_keymap(sh);
+        }
+        flow
+    }
+
+    fn key_inner(&mut self, k: &KeyEvent) -> Flow {
         if let Some(f) = tab_focus(k, self.focus, 4) {
             self.focus = f;
             return Flow::Stay;
@@ -106,12 +129,8 @@ impl Language {
             }
             _ => {
                 let col = self.focus;
-                let before = self.lists[col].selected();
                 if !self.lists[col].nav(k, self.height, false, &|_| true) && self.lists[col].edit_filter(k) {
                     self.refilter(col);
-                }
-                if col == 1 && before != self.lists[1].selected() {
-                    self.apply_keymap(sh);
                 }
             }
         }
@@ -119,6 +138,9 @@ impl Language {
     }
 
     pub fn click(&mut self, h: Hit, sh: &Shared) -> Flow {
+        if self.focus == 1 && h.w != 1 {
+            self.apply_keymap(sh);
+        }
         if h.w as usize == TEST {
             self.focus = TEST;
             return Flow::Stay;
@@ -179,7 +201,7 @@ impl Language {
                 row_chrome(c, row, sel, focused);
                 let label = match col {
                     0 => self.locales[*item].1.as_str(),
-                    1 => self.keymaps[*item].as_str(),
+                    1 => self.keymaps[*item].1.as_str(),
                     _ => self.zones[*item].as_str(),
                 };
                 let st = if sel { Style::new().fg(th.ink).add_modifier(Modifier::BOLD) } else { fg(th.ink) };
