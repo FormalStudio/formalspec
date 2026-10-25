@@ -73,10 +73,10 @@ pub fn plan(paths: &Paths, c: &Choices, s: &Setup) -> Result<Plan> {
         windows: c.disk.windows.as_ref(),
     };
     let mut plan = fspec_switch::init(paths, &init)?;
-    if c.secure_boot && s.efi && s.setup_mode {
+    if c.secure_boot && s.efi && s.setup_mode && distro != "aerynos" {
         let disk = Path::new(&root).parent().map_or_else(String::new, |p| p.display().to_string());
         let loader = c.disk.windows.is_some().then(|| format!("{disk}/esp"));
-        let cmds = secure_boot::steps(distro, &root, &format!("{disk}/efi"), loader.as_deref());
+        let cmds = secure_boot::steps(distro, &root, loader.as_deref());
         plan.steps.extend(cmds.into_iter().map(Step::Run));
     }
     Ok(plan)
@@ -355,6 +355,21 @@ mod tests {
         s.setup_mode = false;
         assert!(none(&plan(&paths, &secure(choices(false)), &s).unwrap()));
         assert!(none(&plan(&paths, &secure(choices(false)), &setup(dir.path(), &ids, false)).unwrap()));
+    }
+
+    #[test]
+    fn aerynos_never_gets_sbctl() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("spec.star"),
+            "hosts = [host(\"nova\", platform = \"x86_64-linux\", system = aerynos(packages = []), \
+             users = [user(\"kyan\", uid = 1000)])]\n",
+        )
+        .unwrap();
+        let ids = ids();
+        let paths = Paths::new("/r".into(), "/r/root".into());
+        let plan = plan(&paths, &secure(choices(false)), &setup(dir.path(), &ids, true)).unwrap();
+        assert!(!plan.lines().iter().any(|l| l.contains("sbctl")));
     }
 
     #[test]

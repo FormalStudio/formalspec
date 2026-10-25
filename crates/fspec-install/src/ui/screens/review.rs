@@ -49,8 +49,13 @@ impl Review {
         false
     }
 
-    fn can_toggle(sh: &Shared) -> bool {
-        sh.firmware.efi && sh.firmware.setup_mode
+    /// AerynOS has no sbctl hooks, so its first kernel update would boot unsigned.
+    fn is_aerynos(&self) -> bool {
+        self.summary.distro.is_some_and(|d| d.id == "aerynos")
+    }
+
+    fn can_toggle(&self, sh: &Shared) -> bool {
+        sh.firmware.efi && sh.firmware.setup_mode && !self.is_aerynos()
     }
 
     fn target(&self, n: usize, sh: &Shared) -> Step {
@@ -79,7 +84,7 @@ impl Review {
     pub fn key(&mut self, k: &KeyEvent, sh: &mut Shared) -> Flow {
         match k.code {
             KeyCode::Char(c @ '1'..='4') => return Flow::Jump(self.target(c as usize - '1' as usize, sh)),
-            KeyCode::Char(' ') if Self::can_toggle(sh) => self.secure_boot = !self.secure_boot,
+            KeyCode::Char(' ') if self.can_toggle(sh) => self.secure_boot = !self.secure_boot,
             KeyCode::Tab | KeyCode::Down | KeyCode::Up | KeyCode::BackTab => self.focus = 1 - self.focus,
             KeyCode::Enter => return self.erase(),
             KeyCode::Esc => return Flow::Back,
@@ -93,7 +98,7 @@ impl Review {
             W_GROUP => return Flow::Jump(self.target(h.i, sh)),
             W_TOGGLE => {
                 self.focus = 0;
-                if Self::can_toggle(sh) {
+                if self.can_toggle(sh) {
                     self.secure_boot = !self.secure_boot;
                 }
             }
@@ -140,7 +145,7 @@ impl Review {
             }
             y += 1;
         }
-        let enabled = Self::can_toggle(sh);
+        let enabled = self.can_toggle(sh);
         let on = self.secure_boot && enabled;
         toggle(
             c,
@@ -162,11 +167,13 @@ impl Review {
                 "To turn this on, open your firmware settings, clear the Secure Boot keys to enter setup mode, then start the installer again.".into(),
                 false,
             ));
+        } else if self.is_aerynos() {
+            notes.push((
+                "AerynOS cannot use Secure Boot with your own keys: its kernel updates would not be signed.".into(),
+                false,
+            ));
         } else if on {
             notes.push((format!("{name}'s boot manager and kernels are signed with your own key."), false));
-            if self.summary.distro.is_some_and(|d| d.id == "aerynos") {
-                notes.push(("Its kernels are signed once; a kernel update leaves them unsigned.".into(), false));
-            }
             notes.push(("Measured boot and anti-cheat on a self-signed chain are not verified yet.".into(), true));
         }
         for (text, faint) in notes {

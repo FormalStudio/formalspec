@@ -24,17 +24,17 @@ const VOID_HOOK: &str = "#!/bin/sh\nsbctl sign -s /efi/void/vmlinuz >/dev/null\n
 /// `bootctl update` replaces systemd-boot with the unsigned copy from the package.
 const BOOT_UPDATE_DROPIN: &str = "[Service]\nExecStartPost=-/bin/sh -c 'sbctl sign-all'\n";
 
-const AERYNOS_SIGN: &str = "cd \"$1\" && find . -type f \\( -iname '*.efi' -o -name 'kernel*' -o -name 'vmlinuz*' \\) \
-                            -not -path '*/Microsoft/*' -exec sbctl sign {} +";
+/// Beside Windows, `bootctl update` rewrites systemd-boot on Windows' ESP, mounted at `/boot/efi`
+/// in the new root. It is not in sbctl's database until this signs it with `-s`.
+const WINDOWS_ESP_SIGN: &str = "ExecStartPost=-/bin/sh -c 'sbctl sign -s /boot/efi/EFI/systemd/systemd-bootx64.efi'\n";
 
 /// What the install runs after the new root is built, in order: sign everything on the ESP, then
 /// enrol the keys last, so a failed install leaves the firmware's keys alone.
 ///
-/// `root` is the mounted new root, `efi` its ESP as mounted in the live session, and `loader` the
-/// Windows ESP holding systemd-boot when installing beside Windows. AerynOS has no sbctl package
-/// and moss writes its own boot files, so its kernels are signed once from the live session and a
-/// kernel update leaves them unsigned.
-pub fn steps(distro: &str, root: &str, efi: &str, loader: Option<&str>) -> Vec<Cmd> {
+/// `root` is the mounted new root and `loader` the Windows ESP, as mounted in the live session,
+/// holding systemd-boot when installing beside Windows. Not for AerynOS: moss writes its own boot
+/// files and has no sbctl package, so its first kernel update would boot unsigned.
+pub fn steps(distro: &str, root: &str, loader: Option<&str>) -> Vec<Cmd> {
     let chroot = |args: &[&str]| {
         Cmd::new("chroot")
             .arg(root)
@@ -56,49 +56,42 @@ pub fn steps(distro: &str, root: &str, efi: &str, loader: Option<&str>) -> Vec<C
     };
     let mut cmds = vec![Cmd::new("sbctl").arg("create-keys")];
 
-    if distro == "aerynos" {
-        cmds.push(Cmd::new("sh").args(["-c", AERYNOS_SIGN, "sh", efi]));
-    } else {
-        cmds.extend(match distro {
-            "arch" => vec![chroot(&["pacman", "-S", "--noconfirm", "--needed", "sbctl"])],
-            "fedora" => vec![chroot(&["dnf", "-y", "install", "sbctl"])],
-            "ubuntu" => vec![chroot(&["apt-get", "install", "-y", "sbctl"])],
-            "void" => vec![chroot(&["xbps-install", "-Sy", "sbctl"])],
-            // Debian has no sbctl package; the live session's build links Debian's own libc.
-            _ => vec![
-                Cmd::new("install")
-                    .args(["-D", "-m", "0755", "/usr/local/bin/sbctl"])
-                    .arg(format!("{root}/usr/local/bin/sbctl")),
-                chroot(&["apt-get", "install", "-y", "libpcsclite1"]),
-            ],
-        });
-        cmds.push(Cmd::new("mkdir").arg("-p").arg(format!("{root}/var/lib")));
-        cmds.push(Cmd::new("cp").arg("-a").arg("/var/lib/sbctl").arg(format!("{root}/var/lib/sbctl")));
+    cmds.extend(match distro {
+        "arch" => vec![chroot(&["pacman", "-S", "--noconfirm", "--needed", "sbctl"])],
+        "fedora" => vec![chroot(&["dnf", "-y", "install", "sbctl"])],
+        "ubuntu" => vec![chroot(&["apt-get", "install", "-y", "sbctl"])],
+        "void" => vec![chroot(&["xbps-install", "-Sy", "sbctl"])],
+        // Debian has no sbctl package; the live session's build links Debian's own libc.
+        _ => vec![
+            Cmd::new("install")
+                .args(["-D", "-m", "0755", "/usr/local/bin/sbctl"])
+                .arg(format!("{root}/usr/local/bin/sbctl")),
+            chroot(&["apt-get", "install", "-y", "libpcsclite1"]),
+        ],
+    });
+    cmds.push(Cmd::new("mkdir").arg("-p").arg(format!("{root}/var/lib")));
+    cmds.push(Cmd::new("cp").arg("-a").arg("/var/lib/sbctl").arg(format!("{root}/var/lib/sbctl")));
 
-        match distro {
-            "arch" => cmds.extend(write("/etc/initcpio/post/sbctl", MKINITCPIO_HOOK, true)),
-            "void" => cmds.extend(write("/etc/kernel.d/post-install/70-fspec-sbctl", VOID_HOOK, true)),
-            _ => cmds.extend(write("/etc/kernel/install.d/91-sbctl.install", KERNEL_INSTALL_PLUGIN, true)),
-        }
-        if distro != "void" {
-            cmds.extend(write(
-                "/etc/systemd/system/systemd-boot-update.service.d/sbctl.conf",
-                BOOT_UPDATE_DROPIN,
-                false,
-            ));
-        }
-
-        let mut sign = String::from("set -e\n");
-        if loader.is_none() {
-            sign += "sbctl sign -s /efi/EFI/systemd/systemd-bootx64.efi\nsbctl sign -s /efi/EFI/BOOT/BOOTX64.EFI\n";
-        }
-        if distro == "void" {
-            sign += "sbctl sign -s /efi/void/vmlinuz\n";
-        } else {
-            sign += "for f in /efi/EFI/Linux/*.efi; do if [ -e \"$f\" ]; then sbctl sign -s \"$f\"; fi; done\n";
-        }
-        cmds.push(chroot(&["sh", "-c", &sign]));
+    match distro {
+        "arch" => cmds.extend(write("/etc/initcpio/post/sbctl", MKINITCPIO_HOOK, true)),
+        "void" => cmds.extend(write("/etc/kernel.d/post-install/70-fspec-sbctl", VOID_HOOK, true)),
+        _ => cmds.extend(write("/etc/kernel/install.d/91-sbctl.install", KERNEL_INSTALL_PLUGIN, true)),
     }
+    if distro != "void" {
+        let dropin = format!("{BOOT_UPDATE_DROPIN}{}", if loader.is_some() { WINDOWS_ESP_SIGN } else { "" });
+        cmds.extend(write("/etc/systemd/system/systemd-boot-update.service.d/sbctl.conf", &dropin, false));
+    }
+
+    let mut sign = String::from("set -e\n");
+    if loader.is_none() {
+        sign += "sbctl sign -s /efi/EFI/systemd/systemd-bootx64.efi\nsbctl sign -s /efi/EFI/BOOT/BOOTX64.EFI\n";
+    }
+    if distro == "void" {
+        sign += "sbctl sign -s /efi/void/vmlinuz\n";
+    } else {
+        sign += "for f in /efi/EFI/Linux/*.efi; do if [ -e \"$f\" ]; then sbctl sign -s \"$f\"; fi; done\n";
+    }
+    cmds.push(chroot(&["sh", "-c", &sign]));
     // Beside Windows, systemd-boot sits on Windows' ESP, outside the new root.
     if let Some(loader) = loader {
         cmds.push(Cmd::new("sbctl").arg("sign").arg(format!("{loader}/EFI/systemd/systemd-bootx64.efi")));
@@ -112,7 +105,7 @@ mod tests {
     use super::*;
 
     fn lines(distro: &str, loader: Option<&str>) -> Vec<String> {
-        steps(distro, "/r/arch", "/r/efi", loader).iter().map(ToString::to_string).collect()
+        steps(distro, "/r/arch", loader).iter().map(ToString::to_string).collect()
     }
 
     #[test]
@@ -134,16 +127,18 @@ mod tests {
     }
 
     #[test]
-    fn aerynos_is_signed_once_from_the_live_session() {
-        let l = lines("aerynos", None);
-        assert!(l.iter().all(|x| !x.starts_with("chroot")), "{l:#?}");
-        assert!(l.iter().any(|x| x.contains("sbctl sign {} +") && x.ends_with("/r/efi")));
-    }
-
-    #[test]
     fn beside_windows_the_boot_manager_on_its_esp_is_signed_from_the_live_session() {
         let l = lines("arch", Some("/r/esp"));
         assert!(l.contains(&"sbctl sign /r/esp/EFI/systemd/systemd-bootx64.efi".to_string()));
         assert!(!l.iter().any(|x| x.contains("systemd-bootx64.efi") && x.starts_with("chroot")));
+        let dropin = l.iter().find(|x| x.starts_with("tee /r/arch/etc/systemd/system/systemd-boot-update")).unwrap();
+        assert!(!dropin.contains("/boot/efi"), "tee prints the path only");
+        let text = steps("arch", "/r/arch", Some("/r/esp"))
+            .iter()
+            .find_map(|c| c.stdin.clone().filter(|s| s.contains("[Service]")));
+        assert!(text.unwrap().contains("sbctl sign -s /boot/efi/EFI/systemd/systemd-bootx64.efi"));
+        let plain =
+            steps("arch", "/r/arch", None).iter().find_map(|c| c.stdin.clone().filter(|s| s.contains("[Service]")));
+        assert!(!plain.unwrap().contains("/boot/efi"));
     }
 }

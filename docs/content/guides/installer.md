@@ -269,8 +269,8 @@ The review screen's Secure Boot option enrols your own keys with `sbctl`, keepin
 certificate, and signs systemd-boot and every kernel image with your key. It needs the firmware in
 setup mode; otherwise the option is off and the installer runs no `sbctl`. Distros do not keep a
 vendor-signed boot chain: the kernel images are built on your machine, so they carry your signature
-whatever the distro. Kernel updates stay signed through hooks the installer adds, except on
-AerynOS, whose kernels are signed once at install. Measured boot and anti-cheat on a self-signed
+whatever the distro. Kernel updates stay signed through hooks the installer adds. AerynOS cannot
+use the option, since it has no such hook and its first kernel update would not boot. Measured boot and anti-cheat on a self-signed
 chain are not verified.
 
 ## What ends up on disk

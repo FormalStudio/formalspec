@@ -1703,9 +1703,11 @@ shim chainload. Kernel updates stay signed through a kernel-install plugin
 (`91-sbctl.install`: Fedora, Debian, Ubuntu), a mkinitcpio post hook (Arch) or a
 kernel.d hook (Void), and a `systemd-boot-update.service` drop-in re-signs
 systemd-boot after `bootctl update`. Beside Windows, systemd-boot on Windows'
-ESP is signed once from the live session. AerynOS has no sbctl package and moss
-writes its own boot files, so its kernels are signed once at install and a
-kernel update leaves them unsigned. Measured boot and anti-cheat on a
+ESP is signed from the live session, and the drop-in also signs it at
+`/boot/efi` with `-s` after each update. AerynOS cannot use the option: moss
+writes its own boot files and there is no sbctl package, so its first kernel
+update would boot unsigned. The review screen says so and the plan runs no
+`sbctl` for it. Measured boot and anti-cheat on a
 self-signed chain are unverified.
 
 
