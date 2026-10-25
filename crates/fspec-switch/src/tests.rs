@@ -1847,3 +1847,11 @@ fn classify_reads_the_layout_beside_windows_and_boot_follows_loader_conf_there()
     // The 100 MiB ESP is not what the recipes check: the kernels go to the 2 GiB XBOOTLDR.
     assert_eq!(crate::misfit(crate::recipe("fedora").unwrap(), &m.layout, &Firmware::Efi), None);
 }
+
+#[test]
+fn fedora_bootstrap_keeps_weak_dependencies() {
+    let cmds = crate::recipe::bootstrap(&target("fedora"), crate::recipe::Boot::Esp, false, "/r", "/dev/vda1").unwrap();
+    let dnf = cmds.iter().find(|c| c.program == "dnf").unwrap();
+    // systemd-pam is only a Recommends of systemd; without it GDM gets no logind session.
+    assert!(!dnf.args.iter().any(|a| a.contains("install_weak_deps")), "{:?}", dnf.args);
+}

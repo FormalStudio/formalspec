@@ -128,19 +128,14 @@ pub fn bootstrap(t: &Target, boot: Boot, luks: bool, root: &str, esp: &str) -> R
         "fedora" => {
             let Some(rel) = t.release else { bail!("fedora needs --release <number>, the Fedora release to install") };
             // dnf reads repositories from the installroot, which has none yet, so they are named here.
-            // Arch's dnf is dnf 4 and Fedora's is dnf5; both take these options.
+            // Arch's dnf is dnf 4 and Fedora's is dnf5; both take these options. Weak dependencies
+            // stay on as in a Fedora install: systemd-pam (pam_systemd, so logind sessions and the
+            // user bus exist) and systemd-resolved are only Recommends of systemd.
             let mirror = "https://download.fedoraproject.org/pub/fedora/linux";
             let key = format!(
                 "https://src.fedoraproject.org/rpms/fedora-repos/raw/rawhide/f/RPM-GPG-KEY-fedora-{rel}-primary"
             );
-            let mut dnf = Cmd::new("dnf").args([
-                "--installroot",
-                root,
-                "--releasever",
-                rel,
-                "-y",
-                "--setopt=install_weak_deps=False",
-            ]);
+            let mut dnf = Cmd::new("dnf").args(["--installroot", root, "--releasever", rel, "-y"]);
             for (id, path) in [
                 ("fedora", format!("releases/{rel}/Everything/{arch}/os")),
                 ("updates", format!("updates/{rel}/Everything/{arch}")),
