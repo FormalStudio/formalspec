@@ -38,6 +38,15 @@ pub struct Host {
     /// App data this host syncs with the other hosts that list an item of the same name.
     #[serde(default)]
     pub sync: Vec<SyncItem>,
+    /// `LANG` for the whole system, e.g. `en_US.UTF-8`, generated where the distro needs it.
+    #[serde(default)]
+    pub locale: Option<String>,
+    /// The keyboard layout, e.g. `us` or `de`, for the console and the desktop.
+    #[serde(default)]
+    pub keymap: Option<String>,
+    /// A zoneinfo name such as `Europe/Madrid`.
+    #[serde(default)]
+    pub timezone: Option<String>,
 }
 
 /// `sync(...)`: app data that moves between the user's hosts with `fspec sync`.
@@ -188,6 +197,11 @@ impl Host {
             Some(System::Distro(d)) => push(Resource::Distro(d.clone()), None),
             None => {}
         }
+        if self.locale.is_some() || self.keymap.is_some() || self.timezone.is_some() {
+            let l =
+                Locale { locale: self.locale.clone(), keymap: self.keymap.clone(), timezone: self.timezone.clone() };
+            push(Resource::Locale(l), None);
+        }
         for u in &self.users {
             push(Resource::User(u.clone()), None);
         }
@@ -231,6 +245,18 @@ pub struct Distro {
     pub kernel_args: Vec<String>,
 }
 
+/// The host's `locale`, `keymap` and `timezone`, applied as one resource.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Locale {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locale: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub keymap: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timezone: Option<String>,
+}
+
 /// A third-party package repository on a zypper distro, e.g. 1Password's or Packman.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -262,6 +288,7 @@ pub enum Resource {
     Image(Image),
     Distro(Distro),
     Repo(Repo),
+    Locale(Locale),
 }
 
 /// Where a resource's record lives: the system state file or the user one.
@@ -286,6 +313,7 @@ impl Resource {
             Resource::Image(_) => "image",
             Resource::Distro(_) => "distro",
             Resource::Repo(_) => "repo",
+            Resource::Locale(_) => "locale",
         }
     }
 
@@ -301,7 +329,7 @@ impl Resource {
             Resource::Defaults(d) => format!("{} {}", d.target(), d.key),
             Resource::Setting(s) => format!("{} {}", s.tool.name(), s.key),
             Resource::Repo(r) => r.name.clone(),
-            Resource::Image(_) | Resource::Distro(_) => "system".into(),
+            Resource::Image(_) | Resource::Distro(_) | Resource::Locale(_) => "system".into(),
         };
         Key { kind: self.kind().into(), id }
     }

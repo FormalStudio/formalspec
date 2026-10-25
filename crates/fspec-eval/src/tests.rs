@@ -232,6 +232,31 @@ hosts = [host(
 }
 
 #[test]
+fn locale_keymap_and_timezone_become_one_system_resource() {
+    let spec = eval_str(
+        r#"
+hosts = [host(
+    name = "lab",
+    platform = "x86_64-linux",
+    locale = "en_US.UTF-8",
+    keymap = "us",
+    timezone = "Europe/Madrid",
+    system = arch(),
+)]
+"#,
+        &[],
+    )
+    .unwrap();
+    let host = spec.host("lab").unwrap();
+    let want = fspec_core::resource::Locale {
+        locale: Some("en_US.UTF-8".into()),
+        keymap: Some("us".into()),
+        timezone: Some("Europe/Madrid".into()),
+    };
+    assert!(host.desired().iter().any(|d| d.resource == Resource::Locale(want.clone())));
+}
+
+#[test]
 fn recipients_come_from_secrets_star() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("secrets.star");

@@ -137,31 +137,22 @@ subvolumes for the system, `@home`, `@swap`, `@snapshots` and `@fspec`. The
 
 ### System
 
-Choose the distro. Each row says whether it is rolling or fixed-release and whether it is classic,
-atomic or a bootc image, with one line about the selected distro underneath. Distros still in
+Choose the distro. Each row says whether it is rolling or fixed-release and whether it is classic
+or atomic, with one line about the selected distro underneath. Distros still in
 development are marked. The table below also lists init and kernel signing, which the review screen
 uses for the Secure Boot option.
 
 | Distro | Updates | Init | Signed kernel | Kind |
 | --- | --- | --- | --- | --- |
 | Fedora | Releases | systemd | Yes | Classic |
-| Bazzite | Releases | systemd | Yes | Image |
-| Fedora Atomic | Releases | systemd | Yes | Image |
-| Aurora | Releases | systemd | Yes | Image |
 | Arch Linux | Rolling | systemd | No | Classic |
-| CachyOS | Rolling | systemd | No | Classic |
 | Ubuntu | Releases | systemd | Yes | Classic |
 | Debian | Releases | systemd | Yes | Classic |
 | Void Linux | Rolling | runit | No | Classic |
-| Void Linux (musl) | Rolling | runit | No | Classic |
-| openSUSE Tumbleweed | Rolling | systemd | Yes | Classic |
-| openSUSE Leap | Releases | systemd | Yes | Classic |
-| openSUSE Aeon | Rolling | systemd | Yes | Atomic, release candidate |
-| openSUSE Kalpa | Rolling | systemd | Yes | Atomic, alpha |
 | AerynOS | Rolling | systemd | No | Atomic, alpha |
 
-Image distros and AerynOS need a machine that booted with UEFI. Not every distro listed installs
-yet; see [Limits](#limits). [The system layer](system-layer.md) compares the kinds in depth.
+These are the distros `fspec disk init` can bootstrap. AerynOS needs a machine that booted with
+UEFI. [The system layer](system-layer.md) compares the kinds in depth.
 
 ### Preset
 
@@ -233,7 +224,8 @@ Restore installs a machine exactly as an existing spec declares it, instead of w
 7. Review and install.
 
 The host is installed with the distro, packages, users and files its declaration names. The host
-must declare at least one user.
+must declare at least one user, and a system of `fedora()`, `arch()`, `debian()`, `ubuntu()`,
+`void()` or `aerynos()`.
 
 ## Secure Boot
 
@@ -242,8 +234,8 @@ up: systemd-boot and the kernel images are unsigned.
 
 The review screen's Secure Boot option is designed to enrol your own keys with `sbctl`, keeping
 Microsoft's UEFI certificate, sign systemd-boot and the kernels of distros without a signed
-kernel (Arch, CachyOS, Void, AerynOS) with your key, and keep distros with a signed shim (Fedora,
-Ubuntu, Debian, openSUSE, Universal Blue) booting through it. In this version the install records
+kernel (Arch, Void, AerynOS) with your key, and keep distros with a signed shim (Fedora,
+Ubuntu, Debian) booting through it. In this version the install records
 the choice but does not run `sbctl` yet. Measured boot and anti-cheat behind a chainloaded shim
 are not verified.
 
@@ -294,7 +286,8 @@ hosts = [
 ```
 
 `system(...)` and `modules(...)` come from the preset's module. On Debian and Ubuntu the admin
-group is `sudo` instead of `wheel`.
+group is `sudo` instead of `wheel`. `locale`, `keymap` and `timezone` are your choices from the
+Language screen; the first apply writes them into the new system, and every later apply keeps them.
 
 ## After the first login
 
@@ -335,19 +328,6 @@ group is `sudo` instead of `wheel`.
 
 From here, [Your first spec](../first-spec.md) and the guides apply as on any machine.
 
-## Limits
-
-- Image distros (Bazzite, Fedora Atomic, Aurora) are listed but stop with
-  `<distro> is a bootc image host; the installer cannot install those yet`.
-- CachyOS, Void Linux (musl), openSUSE Leap, Aeon and Kalpa are listed, but the spec the
-  installer writes for them uses builtins this fspec does not have yet. openSUSE Tumbleweed has no
-  bootstrapper in `fspec disk init` yet.
-- A fresh install sets `locale`, `keymap` and `timezone` on the host, which this fspec does not
-  accept yet, so a fresh install stops when it evaluates the spec. Restore from git is not
-  affected.
-- Restore installs hosts that declare `fedora()`, `arch()`, `debian()`, `ubuntu()`, `void()` or
-  `aerynos()`.
-
 ## Try it without a machine
 
 `fspec-install --demo` runs the installer against a made-up machine and writes nothing anywhere.
@@ -369,10 +349,6 @@ can read the repository.
 
 Every host in the spec is for another platform, or declares no `system`. The ISO installs
 `x86_64-linux` hosts.
-
-**`host(<name>)(): unknown field `locale`, ...`**
-
-A fresh install wrote a host field this fspec does not read yet. See [Limits](#limits).
 
 **`fedora needs --release <number>, the Fedora release to install`**
 

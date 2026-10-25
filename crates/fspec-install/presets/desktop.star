@@ -1,20 +1,6 @@
 # GNOME or KDE Plasma with a browser, audio, printing and Flatpak.
 
-load("//modules/minimal.star", base_modules = "modules", base_system = "system", family = "family")
-
-# Aeon and Kalpa are one desktop each, defined by their base pattern, which brings the desktop,
-# audio, printing and Flatpak with Flathub.
-TRANSACTIONAL = {
-    "aeon": {"gnome": "patterns-aeon-base"},
-    "kalpa-desktop": {"kde": "patterns-kalpa-base"},
-}
-
-# The image already carries the desktop, audio, printing and Flatpak.
-IMAGES = {
-    "bazzite": {"kde": "ghcr.io/ublue-os/bazzite:stable", "gnome": "ghcr.io/ublue-os/bazzite-gnome:stable"},
-    "fedora-atomic": {"gnome": "quay.io/fedora/fedora-silverblue:44", "kde": "quay.io/fedora/fedora-kinoite:44"},
-    "aurora": {"kde": "ghcr.io/ublue-os/aurora:stable"},
-}
+load("//modules/minimal.star", base_modules = "modules", base_system = "system")
 
 GNOME = {
     "fedora": ["gdm", "gnome-shell", "gnome-session-wayland-session", "nautilus", "gnome-control-center", "ptyxis", "gnome-text-editor", "xdg-desktop-portal-gnome"],
@@ -23,8 +9,6 @@ GNOME = {
     "ubuntu": ["gdm3", "gnome-shell", "gnome-session", "nautilus", "gnome-control-center", "gnome-console", "gnome-text-editor", "xdg-desktop-portal-gnome", "gnome-keyring"],
     "void": ["gnome-core", "gdm"],
     "aerynos": ["pkgset-aeryn-gnome-recommended", "gdm"],
-    # gdm.service lives in gdm-systemd, which gdm only suggests.
-    "opensuse": ["patterns-gnome-gnome_basic", "gdm", "gdm-systemd"],
 }
 
 KDE = {
@@ -34,7 +18,6 @@ KDE = {
     "ubuntu": ["kde-plasma-desktop", "sddm"],
     "void": ["kde-plasma", "sddm", "konsole", "dolphin"],
     "aerynos": ["pkgset-aeryn-plasma-recommended", "sddm"],
-    "opensuse": ["patterns-kde-kde_plasma", "sddm-qt6"],
 }
 
 # Only AerynOS offers COSMIC here.
@@ -60,7 +43,6 @@ AUDIO = {
     "void": ["pipewire", "wireplumber"],
     # pkgset-aeryn-base-desktop, which every desktop pkgset pulls in, carries PipeWire.
     "aerynos": [],
-    "opensuse": ["pipewire", "pipewire-pulseaudio", "pipewire-alsa", "wireplumber"],
 }
 
 # Fonts the desktop packages do not pull in, and the session manager Void's GNOME and KDE need.
@@ -96,30 +78,18 @@ def chosen(desktop):
 
 def system(distro, desktop = None, extra = []):
     de = chosen(desktop)
-    if distro in IMAGES:
-        return image(base = IMAGES[distro][desktop])
-    if distro == "aeon":
-        return aeon(packages = [TRANSACTIONAL[distro][desktop]])
-    if distro == "kalpa-desktop":
-        return kalpa(packages = [TRANSACTIONAL[distro][desktop]])
-    f = family(distro)
-    return base_system(distro, extra = de[f] + AUDIO[f] + PRINTING + FLATPAK + EXTRA.get(f, []) + extra)
+    return base_system(distro, extra = de[distro] + AUDIO[distro] + PRINTING + FLATPAK + EXTRA.get(distro, []) + extra)
 
 def modules(distro, desktop = None):
     chosen(desktop)
-    if distro in IMAGES:
-        return []
-    if distro in TRANSACTIONAL:
-        return [service("NetworkManager")]
-    f = family(distro)
     found = base_modules(distro) + [
-        service(DISPLAY_MANAGER[desktop].get(f, DEFAULT_MANAGER[desktop])),
-        service("cupsd" if f == "void" else "cups"),
+        service(DISPLAY_MANAGER[desktop].get(distro, DEFAULT_MANAGER[desktop])),
+        service("cupsd" if distro == "void" else "cups"),
         # Flatpak ships no remote, and it imports this file on first use.
         file("/etc/flatpak/remotes.d/flathub.flatpakrepo", src = "files/flathub.flatpakrepo"),
         # The browser updates itself from Flathub, so it needs no lock entry.
         pkg("org.mozilla.firefox", source = flatpak("org.mozilla.firefox"), mode = "self_managed"),
     ]
-    if f == "void":
+    if distro == "void":
         found = found + [service("elogind")] + VOID_AUDIO
     return found

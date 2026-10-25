@@ -3,22 +3,22 @@
 
   Choose a system
 
-    Fedora                   fixed    classic
-    Bazzite                  fixed    image
-  ▌ Fedora Atomic            fixed    image
-    Aurora                   fixed    image
-    Arch Linux               rolling  classic
-    CachyOS                  rolling  classic
-    Ubuntu                   fixed    classic
-    Debian                   fixed    classic
-    Void Linux               rolling  classic
-    Void Linux (musl)        rolling  classic
-    openSUSE Tumbleweed      rolling  classic
-    openSUSE Leap            fixed    classic
-    openSUSE Aeon  RC        rolling  atomic
-    openSUSE Kalpa  alpha    rolling  atomic
-    AerynOS  alpha           rolling  atomic
+    Fedora            fixed    classic
+    Arch Linux        rolling  classic
+  ▌ Ubuntu            fixed    classic
+    Debian            fixed    classic
+    Void Linux        rolling  classic
+    AerynOS  alpha    rolling  atomic
 
-  Fedora Atomic
-  Fedora as an image, with the last one kept to boot back.
+  Ubuntu
+  Long-term support with broad hardware support.
+
+
+
+
+
+
+
+
+
   ↑↓ Move  Enter Continue  Esc Back  ? Keys  s Spec

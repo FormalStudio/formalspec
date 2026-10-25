@@ -185,6 +185,9 @@ mod tests {
             builders: vec![],
             sync: vec![],
             ssh: None,
+            locale: None,
+            keymap: None,
+            timezone: None,
         }
     }
 

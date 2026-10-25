@@ -103,7 +103,7 @@ A config evaluates to a list of resources:
 
 | Resource | What it is |
 | --- | --- |
-| `host` | Name, `platform`, `system`, users, modules |
+| `host` | Name, `platform`, `system`, users, modules, and `locale`, `keymap` and `timezone` |
 | `pkg` | A package from some source, pinned in the lock, with the files, services and timers that belong to it |
 | `file` | A file FormalSpec writes, links, seeds or patches |
 | `service` | A system or user service, rendered for the host's init |
@@ -123,6 +123,18 @@ pkg("syncthing", source = github("syncthing/syncthing"),
     services = [service("syncthing", exec = "syncthing serve", user = True)],
     files = [file("~/.config/syncthing/config.xml", src = "files/syncthing.xml")])
 ```
+
+A host's `locale`, `keymap` and `timezone` apply as one `locale` resource on
+Linux. fspec writes the files `localectl` and `timedatectl` would, since an
+install runs the first apply in a chroot where neither works: `LANG` in
+`/etc/locale.conf` (`/etc/default/locale` on Debian and Ubuntu), `KEYMAP` and
+`XKBLAYOUT` in `/etc/vconsole.conf` (`KEYMAP` in `/etc/rc.conf` on Void,
+`XKBLAYOUT` also in `/etc/default/keyboard` on Debian and Ubuntu), and
+`/etc/localtime` as a link into `/usr/share/zoneinfo`. A changed locale is
+then built the distro's way: `locale-gen` from `/etc/locale.gen` on Arch and
+Debian, `locale-gen <locale>` on Ubuntu, `xbps-reconfigure -f glibc-locales`
+from `/etc/default/libc-locales` on Void, and `glibc-langpack-<lang>` on
+Fedora. Removing the fields leaves the files as they are.
 
 A `file`, `service` or `timer` declared on its own is its own resource and is
 removed when its own line disappears. Two declarations of the same file path,
@@ -1586,8 +1598,8 @@ The installer puts a FormalSpec-managed system on a blank machine. It is a
 Debian live ISO, built with live-build under `installer/iso/`, so it boots
 with Secure Boot on through Debian's signed shim. The ISO carries a static
 `fspec`, the installer `fspec-install`, and every bootstrapper `disk init`
-calls: debootstrap, dnf, pacman with arch-install-scripts, a static xbps, and
-podman for bootc images.
+calls: debootstrap, dnf, pacman with arch-install-scripts, a static xbps, a
+static moss and podman.
 
 `fspec-install` is a full-screen terminal program (ratatui). On a machine
 with a GPU it runs inside `foot` under the `cage` kiosk compositor, which
@@ -1599,15 +1611,20 @@ serial console, which headless servers and VM tests need.
 The flow is language and keyboard, disk, distro, preset, account, review,
 install. The right side of the screen shows the `spec.star` being written as
 choices are made. The disk gets the default layout above, with LUKS2 when
-asked. The distros are Fedora, Bazzite, Fedora Atomic, Aurora, Arch, CachyOS,
-Ubuntu, Debian and Void (glibc and musl), each tagged with its release model,
-init system, whether its kernel is vendor-signed, and whether it is an image.
+asked. The distros are the ones `disk init` can bootstrap: Fedora, Arch, Ubuntu,
+Debian, Void and AerynOS, each tagged with its release model, init system and
+whether its kernel is vendor-signed. A distro joins the list only once
+`disk init` installs it, which a test over every distro, preset and desktop
+checks.
 The presets are minimal, desktop (GNOME or KDE Plasma), gaming and server,
 each a Starlark module in `crates/fspec-install/presets/`. The installer
-writes a spec repo (`spec.star`, `modules/<preset>.star`, the lock) with one
-host named after the machine, commits it, and installs from it; the repo ends
-up in `~/spec` of the new user, so `fspec plan` and `fspec apply` work from
-the first login.
+writes a spec repo (`spec.star`, `modules/<preset>.star`) with one host named
+after the machine and its locale, keymap and timezone, commits it, and
+installs from it. It writes no `fspec.lock`: the presets declare only base
+packages, which stay unpinned, and Flathub apps that update themselves, so
+the first `fspec update` writes one when the spec gains a pinned package.
+The repo ends up in `~/spec` of the new user, so `fspec plan` and
+`fspec apply` work from the first login.
 
 Restore from git clones an existing spec instead (an SSH key file or an HTTPS
 token, which is sent as a header for that one clone and never stored), lists
@@ -1626,9 +1643,9 @@ Secure Boot on the installed system is optional and off by default, since it
 needs the firmware in setup mode. Off, systemd-boot and the unified kernel
 images are unsigned. On, `sbctl` creates keys and enrols them with
 `--microsoft`, keeping the Microsoft UEFI CA: systemd-boot and the kernel
-images of distros without a signed kernel (Arch, CachyOS, Void) are signed
+images of distros without a signed kernel (Arch, Void, AerynOS) are signed
 with the machine's own key, and distros with a signed shim (Fedora, Ubuntu,
-Debian, Universal Blue) keep booting through it, chainloaded from
+Debian) keep booting through it, chainloaded from
 systemd-boot, so their vendor chain stays intact. The review screen says which
 roots end up vendor-signed. Measured boot and anti-cheat behind a chainloaded
 shim are unverified.

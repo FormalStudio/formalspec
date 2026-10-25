@@ -2,8 +2,8 @@ use fspec_core::Backend;
 use fspec_files::FileBackend;
 use fspec_image::ImageBackend;
 use fspec_os::{
-    DefaultsBackend, DinitBackend, LaunchdBackend, OpenrcBackend, RunitBackend, S6Backend, SettingBackend,
-    SystemdBackend, UsersBackend,
+    DefaultsBackend, DinitBackend, LaunchdBackend, LocaleBackend, OpenrcBackend, RunitBackend, S6Backend,
+    SettingBackend, SystemdBackend, UsersBackend,
 };
 use fspec_pkgmgr::{
     AptBackend, BrewBackend, DistroBackend, DnfBackend, FlatpakBackend, MossBackend, PacmanBackend, XbpsBackend,
@@ -34,6 +34,7 @@ pub fn all() -> Vec<&'static dyn Backend> {
         &LaunchdBackend,
         &DefaultsBackend,
         &SettingBackend,
+        &LocaleBackend,
         &ImageBackend,
     ]
 }

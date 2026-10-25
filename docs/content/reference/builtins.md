@@ -30,7 +30,8 @@ covers `gh:` loads.
 
 ```starlark
 host(name, platform, system = None, users = [], modules = [], ssh = name,
-     protect = [], persist = [], release_age = None, builders = [], sync = [])
+     protect = [], persist = [], release_age = None, builders = [], sync = [],
+     locale = None, keymap = None, timezone = None)
 ```
 
 | Argument | Type | Default | Meaning |
@@ -46,6 +47,9 @@ host(name, platform, system = None, users = [], modules = [], ssh = name,
 | `release_age` | string | none | Resolve packages to the newest release at least this old: `3d`, `12h`, `2w` (units `m`, `h`, `d`, `w`) |
 | `builders` | list of `builder(...)` | `[]` | Machines that build `git(...)` packages for this host |
 | `sync` | list of `sync(...)` | `[]` | App data this host syncs with its peers |
+| `locale` | string | none | `LANG` for the system, with a character set: `en_US.UTF-8`. fspec generates it where the distro needs that. Linux only |
+| `keymap` | string | none | Keyboard layout for the console and the desktop: `us`, `de`. Linux with systemd, or Void |
+| `timezone` | string | none | A zoneinfo name: `Europe/Madrid`. `/etc/localtime` links to it. Linux only |
 
 A function in `modules` receives a struct with:
 

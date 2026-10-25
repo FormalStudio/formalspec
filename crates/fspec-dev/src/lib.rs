@@ -118,6 +118,9 @@ pub fn update(project: &Project, only: &[String], cx: &fspec_sources::Cx, paths:
             builders: vec![],
             sync: vec![],
             ssh: None,
+            locale: None,
+            keymap: None,
+            timezone: None,
         })
         .collect();
     let old = Lock::load(&project.lock_path())?;

@@ -4,18 +4,7 @@ use fspec_core::resource::{Resource, System};
 
 use super::*;
 use crate::catalog::DISTROS;
-use crate::model::{Account, Delivery, Desktop, DiskChoice, Distro, Locale, Secret};
-
-/// Eval errors from builtins that have not landed on this branch yet. A combination that fails
-/// with one of these is skipped; any other error fails the test.
-const PENDING: &[&str] = &[
-    "unknown field `locale`",
-    "unknown field `libc`",
-    "Variable `cachyos` not found",
-    "Variable `leap` not found",
-    "Variable `aeon` not found",
-    "Variable `kalpa` not found",
-];
+use crate::model::{Account, Desktop, DiskChoice, Distro, Locale, Secret};
 
 fn locale() -> Locale {
     Locale { locale: "en_US.UTF-8".into(), keymap: "us".into(), timezone: "Europe/Madrid".into() }
@@ -53,10 +42,6 @@ fn combinations() -> Vec<(&'static Distro, Preset, Option<Desktop>)> {
     all
 }
 
-fn pending(err: &str) -> bool {
-    PENDING.iter().any(|p| err.contains(p))
-}
-
 fn services(host: &fspec_core::resource::Host) -> Vec<&str> {
     host.resources
         .iter()
@@ -83,11 +68,7 @@ fn every_combination_writes_a_spec_that_evaluates() {
         let what = format!("{} {} {:?}", distro.id, preset.id(), desktop);
         let dir = tempfile::tempdir().unwrap();
         write_repo(dir.path(), &choices(distro.id, preset, desktop)).unwrap();
-        let spec = match fspec_eval::evaluate(&dir.path().join("spec.star")) {
-            Ok(s) => s,
-            Err(e) if pending(&format!("{e:#}")) => continue,
-            Err(e) => panic!("{what}: {e:#}"),
-        };
+        let spec = fspec_eval::evaluate(&dir.path().join("spec.star")).unwrap_or_else(|e| panic!("{what}: {e:#}"));
         let host = spec.host("lab").expect(&what);
         assert_eq!(host.users.len(), 1, "{what}");
         assert_eq!(host.users[0].name, "kyan", "{what}");
@@ -95,20 +76,15 @@ fn every_combination_writes_a_spec_that_evaluates() {
         let admin = if matches!(distro.id, "debian" | "ubuntu") { "sudo" } else { "wheel" };
         assert_eq!(host.users[0].groups, [admin], "{what}");
         assert_eq!(host.protect, ["/home"], "{what}");
+        assert_eq!(host.locale.as_deref(), Some("en_US.UTF-8"), "{what}");
+        assert_eq!(host.timezone.as_deref(), Some("Europe/Madrid"), "{what}");
 
         let svc = services(host);
-        match (&host.system, distro.delivery) {
-            (Some(System::Image(i)), Delivery::Image) => {
-                let want = match (distro.id, preset) {
-                    ("bazzite", Preset::Gaming) => "bazzite-deck",
-                    (id, _) => id.split('-').next().unwrap(),
-                };
-                assert!(i.base.contains(want), "{what}: {}", i.base);
-                assert_eq!(i.distro(), distro.id.split('-').next().unwrap(), "{what}");
-                assert!(svc.is_empty(), "{what}");
-            }
-            (Some(System::Distro(d)), Delivery::Classic | Delivery::Atomic) => {
-                assert_eq!(d.distro, distro.id.trim_end_matches("-musl"), "{what}");
+        match &host.system {
+            Some(System::Distro(d)) => {
+                assert_eq!(d.distro, distro.id, "{what}");
+                assert!(fspec_switch::DISTROS.contains(&d.distro.as_str()), "{what}: disk init cannot bootstrap it");
+                fspec_switch::recipe(&d.distro).expect(&what);
                 assert!(!d.packages.is_empty(), "{what}");
                 assert!(svc.contains(&"NetworkManager"), "{what}: {svc:?}");
                 let dm = match (desktop, distro.id) {
@@ -132,7 +108,7 @@ fn every_combination_writes_a_spec_that_evaluates() {
                     assert!(svc.iter().any(|s| matches!(*s, "firewalld" | "nftables")), "{what}: {svc:?}");
                 }
             }
-            (other, _) => panic!("{what}: unexpected system {other:?}"),
+            other => panic!("{what}: unexpected system {other:?}"),
         }
     }
 }

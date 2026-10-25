@@ -115,6 +115,9 @@ fn detail(r: &Resource) -> String {
         Resource::Image(i) => i.base.clone(),
         Resource::Distro(d) => d.distro.clone(),
         Resource::Repo(r) => r.url.clone(),
+        Resource::Locale(l) => {
+            [&l.locale, &l.keymap, &l.timezone].into_iter().flatten().cloned().collect::<Vec<_>>().join(" ")
+        }
     }
 }
 

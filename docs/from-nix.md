@@ -64,6 +64,7 @@ the store-wide build graph and hand-written hashes.
 | `fileSystems.<path>` | a `.mount` (and `.automount`) unit as a `file(...)` plus `service(...)` |
 | `programs.ssh.knownHosts` | `file("/etc/ssh/ssh_known_hosts", ...)` |
 | `networking.firewall` | firewalld zone files in `/etc/firewalld/zones` |
+| `i18n.defaultLocale`, `console.keyMap`, `time.timeZone` | `host(locale = ..., keymap = ..., timezone = ...)` |
 | `nix.gc.automatic` | `timer(...)` running `fspec gc --older-than` |
 | a Home Manager `if host == ...` | a `<host>/home/` tree overlaid on the shared `home/` |
 | `nix-collect-garbage --delete-older-than` | `fspec gc --older-than` |

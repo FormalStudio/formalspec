@@ -1,6 +1,6 @@
 # SSH, a firewall and automatic security updates. No desktop.
 
-load("//modules/minimal.star", base_modules = "modules", base_system = "system", family = "family")
+load("//modules/minimal.star", base_modules = "modules", base_system = "system")
 
 SSH = {
     "fedora": ["openssh-server"],
@@ -8,27 +8,24 @@ SSH = {
     "debian": ["openssh-server"],
     "ubuntu": ["openssh-server"],
     "void": ["openssh"],
-    "opensuse": ["openssh-server"],
 }
 
 SSH_SERVICE = {"debian": "ssh", "ubuntu": "ssh"}
 
-# firewalld's default zone lets ssh in. Void's glibc repo has no firewalld, so both Void
-# builds use an nftables ruleset that does the same.
+# firewalld's default zone lets ssh in. Void's repo has no firewalld, so Void uses an
+# nftables ruleset that does the same.
 FIREWALL = {
     "fedora": ["firewalld"],
     "arch": ["firewalld"],
     "debian": ["firewalld"],
     "ubuntu": ["firewalld"],
     "void": ["nftables"],
-    "opensuse": ["firewalld"],
 }
 
 # Rolling distros get no unattended upgrades: a partial upgrade breaks them, so updating
-# stays a deliberate `pacman -Syu`, `xbps-install -Su` or `zypper dup`.
+# stays a deliberate `pacman -Syu` or `xbps-install -Su`.
 UPDATES = {
     "fedora": ["dnf5-plugin-automatic"],
-    "opensuse-leap": ["os-update"],
     "debian": ["unattended-upgrades"],
     "ubuntu": ["unattended-upgrades"],
 }
@@ -55,24 +52,20 @@ APT::Periodic::Unattended-Upgrade "1";
 """
 
 def system(distro, desktop = None):
-    f = family(distro)
-    return base_system(distro, extra = SSH[f] + FIREWALL[f] + UPDATES.get(distro, UPDATES.get(f, [])))
+    return base_system(distro, extra = SSH[distro] + FIREWALL[distro] + UPDATES.get(distro, []))
 
 def modules(distro, desktop = None):
-    f = family(distro)
     found = base_modules(distro) + [
-        service(SSH_SERVICE.get(f, "sshd")),
-        service("nftables" if f == "void" else "firewalld"),
+        service(SSH_SERVICE.get(distro, "sshd")),
+        service("nftables" if distro == "void" else "firewalld"),
     ]
-    if f == "void":
+    if distro == "void":
         found.append(file("/etc/nftables.conf", content = NFTABLES))
-    if f == "fedora":
+    if distro == "fedora":
         found += [
             file("/etc/dnf/automatic.conf", format = "ini", content = {"commands": {"upgrade_type": "security", "apply_updates": True}}),
             service("dnf5-automatic.timer"),
         ]
-    if distro == "opensuse-leap":
-        found.append(service("os-update.timer"))
-    if f in ["debian", "ubuntu"]:
+    if distro in ["debian", "ubuntu"]:
         found.append(file("/etc/apt/apt.conf.d/20auto-upgrades", content = APT_PERIODIC))
     return found

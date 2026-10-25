@@ -3,24 +3,24 @@
 
   Choose a system                                                     ╭─ spec.star ──────────────────────────────────╮
                                                                       │  # This machine's spec. `fspec plan` shows   │
-    Fedora                   fixed    classic                         │      what a change would do, `fspec apply`   │
-    Bazzite                  fixed    image                           │      makes it so.                            │
-  ▌ Fedora Atomic            fixed    image                           │  load("//modules/desktop.star", "modules",   │
-    Aurora                   fixed    image                           │      "system")                               │
-    Arch Linux               rolling  classic                         │                                              │
-    CachyOS                  rolling  classic                         │  hosts = [                                   │
-    Ubuntu                   fixed    classic                         │      host(                                   │
-    Debian                   fixed    classic                         │          platform = "x86_64-linux",          │
-    Void Linux               rolling  classic                         │          locale = "en_US.UTF-8",             │
-    Void Linux (musl)        rolling  classic                         │          keymap = "us",                      │
-    openSUSE Tumbleweed      rolling  classic                         │          timezone = "UTC",                   │
-    openSUSE Leap            fixed    classic                         │          system = system("fedora-atomic",    │
-    openSUSE Aeon  RC        rolling  atomic                          │              desktop = "gnome"),             │
-    openSUSE Kalpa  alpha    rolling  atomic                          │          modules = modules("fedora-atomic",  │
-    AerynOS  alpha           rolling  atomic                          │              desktop = "gnome"),             │
+    Fedora            fixed    classic                                │      what a change would do, `fspec apply`   │
+    Arch Linux        rolling  classic                                │      makes it so.                            │
+  ▌ Ubuntu            fixed    classic                                │  load("//modules/minimal.star", "modules",   │
+    Debian            fixed    classic                                │      "system")                               │
+    Void Linux        rolling  classic                                │                                              │
+    AerynOS  alpha    rolling  atomic                                 │  hosts = [                                   │
+                                                                      │      host(                                   │
+  Ubuntu                                                              │          platform = "x86_64-linux",          │
+  Long-term support with broad hardware support.                      │          locale = "en_US.UTF-8",             │
+                                                                      │          keymap = "us",                      │
+                                                                      │          timezone = "UTC",                   │
+                                                                      │          system = system("ubuntu"),          │
+                                                                      │          modules = modules("ubuntu"),        │
                                                                       │          protect = ["/home"],                │
-  Fedora Atomic                                                       │      ),                                      │
-  Fedora as an image, with the last one kept to boot back.            │  ]                                           │
+                                                                      │      ),                                      │
+                                                                      │  ]                                           │
+                                                                      │                                              │
+                                                                      │                                              │
                                                                       │                                              │
                                                                       │                                              │
                                                                       │                                              │
