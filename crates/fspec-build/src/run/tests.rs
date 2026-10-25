@@ -209,3 +209,15 @@ fn a_checkout_without_a_build_system_fails() {
     let fake = Fake { checkout: BTreeMap::from([("README", "")]), ..Default::default() };
     assert!(build(&fake, &job(&p, spec.path(), out.path())).is_err());
 }
+
+#[test]
+fn a_relative_spec_dir_applies_patches_by_absolute_path() {
+    let out = tempfile::tempdir().unwrap();
+    let p = pkg(serde_json::json!({"patches": ["patches/one.patch"]}));
+    let fake = Fake { checkout: BTreeMap::from([("Cargo.toml", "")]), ..Default::default() };
+    let _ = build(&fake, &job(&p, Path::new(""), out.path()));
+
+    let calls = fake.calls.lock().unwrap();
+    let cwd = std::env::current_dir().unwrap().join("patches/one.patch");
+    assert!(calls[4].ends_with(&format!("apply {}", cwd.display())), "{calls:?}");
+}

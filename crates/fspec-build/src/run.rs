@@ -43,7 +43,9 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
         runner.check(&cmd)?;
     }
     for patch in &job.pkg.patches {
-        let file = patch_path(job.spec_dir, patch)?;
+        // `git -C` resolves a relative path against the checkout, and a builder's spec_dir is the
+        // job file's own relative directory.
+        let file = std::path::absolute(patch_path(job.spec_dir, patch)?)?;
         runner
             .check(&Cmd::new("git").args(["-C", &src, "apply"]).arg(file.display().to_string()))
             .with_context(|| format!("applying {patch}"))?;
