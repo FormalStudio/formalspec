@@ -285,6 +285,20 @@ impl fspec_core::runner::Runner for Bootstrap {
     }
 }
 
+/// A gzipped tar holding `bin/fspec`, the shape the engine's build recipe packs.
+fn engine_tar() -> Vec<u8> {
+    let mut tar = tar::Builder::new(Vec::new());
+    let body = b"\x7fELF engine";
+    let mut h = tar::Header::new_gnu();
+    h.set_size(body.len() as u64);
+    h.set_mode(0o755);
+    h.set_cksum();
+    tar.append_data(&mut h, "bin/fspec", &body[..]).unwrap();
+    let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::default());
+    std::io::Write::write_all(&mut gz, &tar.into_inner().unwrap()).unwrap();
+    gz.finish().unwrap()
+}
+
 #[test]
 fn an_older_remote_gets_the_locked_engine_before_the_spec() {
     let dir = tempfile::tempdir().unwrap();
@@ -297,8 +311,7 @@ fn an_older_remote_gets_the_locked_engine_before_the_spec() {
         ),
     )
     .unwrap();
-    let runner =
-        Bootstrap { calls: Default::default(), body: b"\x7fELF engine".to_vec(), installed: Default::default() };
+    let runner = Bootstrap { calls: Default::default(), body: engine_tar(), installed: Default::default() };
     let h = host("g815", "x86_64-linux", "bazzite");
     let r = Remote {
         runner: &runner,

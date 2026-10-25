@@ -142,7 +142,12 @@ impl Remote<'_> {
         let dest = tmp.path().join("pkg");
         fspec_store::pull_built(self.runner, reference, &tmp.path().join("oci"), &dest, engine::NAME)
             .context("pulling the locked fspec, which needs oras on this machine's PATH")?;
-        self.runner.check(&cmd::upload_engine(alias, &dest.join(engine::NAME)))?;
+        // A build recipe installs into $FSPEC_OUT/bin, a detected one packs at the top.
+        let exe = [dest.join("bin").join(engine::NAME), dest.join(engine::NAME)]
+            .into_iter()
+            .find(|p| p.is_file())
+            .with_context(|| format!("the locked fspec build {reference} holds no {} executable", engine::NAME))?;
+        self.runner.check(&cmd::upload_engine(alias, &exe))?;
         let out = self.runner.run(&cmd::install_engine(alias))?;
         if out.status != 0 {
             bail!("installing fspec on {alias} exited {}", out.status);
