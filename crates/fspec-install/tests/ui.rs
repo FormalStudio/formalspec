@@ -612,6 +612,55 @@ fn golden_disk_encrypted() {
 }
 
 #[test]
+fn golden_disk_erase_and_bitlocker() {
+    let mut r = Rig::demo();
+    r.to(Step::Disk);
+    r.press(KeyCode::Tab);
+    r.press(KeyCode::Right);
+    shots(&mut r, "disk-erase");
+    let mut r = Rig::new(Arc::new(DemoBackend::instant().bitlocker()), (120, 40), false);
+    r.to(Step::Disk);
+    shots(&mut r, "disk-bitlocker");
+}
+
+#[test]
+fn beside_windows_is_the_default_and_the_picker_sets_what_linux_takes() {
+    let mut r = Rig::demo();
+    r.to(Step::Disk);
+    r.press(KeyCode::Tab);
+    r.press(KeyCode::Tab);
+    r.press(KeyCode::Right);
+    let d = r.app.draft().disk.unwrap();
+    let w = d.windows.expect("beside Windows by default");
+    let sh = w.space.shrink.expect("no free space, so Windows shrinks");
+    assert_eq!((w.disk.windows.size - sh.to) / 1_000_000, 136_000);
+    for _ in 0..200 {
+        r.press(KeyCode::Right);
+    }
+    let most = w.disk.max_linux().unwrap();
+    let sh = r.app.draft().disk.unwrap().windows.unwrap().space.shrink.unwrap();
+    assert_eq!((w.disk.windows.size - sh.to) / 1_000_000, most / 1_000_000);
+    assert!(r.text((120, 40)).contains("Windows shrinks from"));
+    r.press(KeyCode::Up);
+    r.press(KeyCode::Right);
+    assert_eq!(r.app.draft().disk.unwrap().windows, None);
+    assert!(r.text((120, 40)).contains("will be erased"));
+}
+
+#[test]
+fn bitlocker_blocks_the_shrink_until_the_disk_is_erased_instead() {
+    let mut r = Rig::new(Arc::new(DemoBackend::instant().bitlocker()), (120, 40), false);
+    r.to(Step::Disk);
+    r.press(KeyCode::Enter);
+    assert_eq!(r.app.step(), Step::Disk);
+    assert!(r.text((120, 40)).contains("Disk Management"));
+    r.press(KeyCode::Right);
+    r.press(KeyCode::Enter);
+    assert_eq!(r.app.step(), Step::System);
+    assert_eq!(r.app.draft().disk.unwrap().windows, None);
+}
+
+#[test]
 fn golden_system() {
     let mut r = Rig::demo();
     r.to(Step::System);
@@ -651,6 +700,17 @@ fn golden_review() {
     r.press(KeyCode::Tab);
     r.press(KeyCode::Char(' '));
     shots(&mut r, "review-secure-boot");
+}
+
+#[test]
+fn golden_review_erase() {
+    let mut r = Rig::demo();
+    r.to(Step::Disk);
+    r.press(KeyCode::Tab);
+    r.press(KeyCode::Right);
+    r.press(KeyCode::Enter);
+    r.to(Step::Review);
+    shots(&mut r, "review-erase");
 }
 
 #[test]

@@ -1,0 +1,24 @@
+  FormalSpec    Language · Disk · System · Preset · Account · Review · Install
+  ────────────────────────────────────────────────────────────────────────────
+
+  Review
+
+  1  Language   English (United States) · us · UTC                      Change
+  2  Disk       Samsung SSD 980 PRO (1 TB) · 4 GB swap                  Change
+  3  System     Fedora · Minimal                                        Change
+  4  Account    Kyan de Sutter (kyan) on kyan-fedora                    Change
+
+    ●━━  Use Secure Boot with your own keys
+
+    Erase /dev/nvme0n1 and install
+
+
+
+
+
+
+
+
+
+
+  1-4 Change  Space Toggle  Tab Next  Enter Install  Esc Back  s Spec

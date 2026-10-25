@@ -6,6 +6,10 @@ use serde_json::Value;
 
 pub const ESP_TYPE: &str = "c12a7328-f81f-11d2-ba4b-00a0c93ec93b";
 pub const BIOS_GRUB_TYPE: &str = "21686148-6449-6e6f-744e-656564454649";
+/// The Extended Boot Loader partition systemd-boot reads entries and kernels from next to its ESP.
+pub const XBOOTLDR_TYPE: &str = "bc13c2ff-59e6-4262-a352-b275fd6f7172";
+/// Where every root mounts Windows' ESP when `/efi` is the XBOOTLDR partition beside it.
+pub const LOADER_ESP: &str = "/boot/efi";
 /// Where the BIOS layout mounts its shared boot partition in every root.
 pub const SHARED_BOOT: &str = "/var/lib/fspec/boot";
 /// The subvolumes every root of the default and BIOS layouts shares, besides the home.
@@ -54,8 +58,10 @@ pub struct Btrfs {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Layout {
     /// GPT, the ESP at `/efi` with systemd-boot, and btrfs (optionally in LUKS2) with a
-    /// subvolume per root plus the shared ones.
-    Default { esp: Part, btrfs: Btrfs },
+    /// subvolume per root plus the shared ones. Beside Windows, `esp` is an XBOOTLDR partition
+    /// holding the kernels and entries, and `loader` is Windows' own ESP at [`LOADER_ESP`], too
+    /// small for kernels, holding systemd-boot and `loader.conf`.
+    Default { esp: Part, btrfs: Btrfs, loader: Option<Box<Part>> },
     /// A pool with `<pool>/ROOT/<distro>` boot environments, booted by ZFSBootMenu from the ESP.
     Zfs { esp: Part, pool: String },
     /// GRUB in BIOS mode with a shared ext4 boot partition at [`SHARED_BOOT`], and btrfs.
@@ -71,6 +77,14 @@ impl Layout {
             Layout::Zfs { .. } => "zfs",
             Layout::Bios { .. } => "bios",
             Layout::Unsupported { .. } => "unsupported",
+        }
+    }
+
+    /// Where systemd-boot's `loader.conf` and binaries live in every root: `/efi`, or Windows' ESP.
+    pub fn loader_dir(&self) -> &'static str {
+        match self {
+            Layout::Default { loader: Some(_), .. } => LOADER_ESP,
+            _ => "/efi",
         }
     }
 
@@ -298,7 +312,13 @@ pub fn classify(f: &Facts, running: String, cmdline: String) -> Result<Machine> 
     let esp_at = |target: &str| {
         on_disk.iter().find(|d| text(d.v, "parttype").to_lowercase() == ESP_TYPE && mounted_at(d.v, target))
     };
-    let esp = esp_at("/efi").map(|d| part(d.v));
+    // Beside Windows, /efi is an XBOOTLDR partition and Windows' ESP is at LOADER_ESP.
+    let xbootldr = on_disk
+        .iter()
+        .find(|d| text(d.v, "parttype").to_lowercase() == XBOOTLDR_TYPE && mounted_at(d.v, "/efi"))
+        .map(|d| part(d.v));
+    let loader = xbootldr.as_ref().and_then(|_| esp_at(LOADER_ESP)).map(|d| Box::new(part(d.v)));
+    let esp = if loader.is_some() { xbootldr } else { esp_at("/efi").map(|d| part(d.v)) };
     let no_esp = || match ["/boot/efi", "/boot"].into_iter().find(|t| esp_at(t).is_some()) {
         Some(t) => format!("the ESP is mounted at {t}, not /efi"),
         None => "no ESP is mounted at /efi".into(),
@@ -343,7 +363,7 @@ pub fn classify(f: &Facts, running: String, cmdline: String) -> Result<Machine> 
                         reasons.push(no_esp());
                     }
                     match esp {
-                        Some(esp) if reasons.is_empty() => Layout::Default { esp, btrfs },
+                        Some(esp) if reasons.is_empty() => Layout::Default { esp, btrfs, loader },
                         _ => Layout::Unsupported { reasons },
                     }
                 }
@@ -420,7 +440,7 @@ pub fn assumed(running: &str) -> Machine {
     let btrfs = Btrfs { uuid: "00000000-0000-0000-0000-000000000000".into(), luks: None, home: "/@home".into() };
     Machine {
         parts: vec![esp.clone()],
-        layout: Layout::Default { esp, btrfs },
+        layout: Layout::Default { esp, btrfs, loader: None },
         root: format!("/@{running}"),
         running: running.into(),
         firmware: Firmware::Efi,
@@ -440,7 +460,7 @@ pub fn boot_owner(runner: &dyn Runner, paths: &Paths, m: &Machine) -> Result<Opt
     let read = |p: &str| std::fs::read_to_string(paths.system(p)).unwrap_or_default();
     Ok(match &m.layout {
         // fspec writes `default <distro>-*`; AerynOS's blsforme writes `default "aerynos*"`.
-        Layout::Default { .. } => read("/efi/loader/loader.conf")
+        Layout::Default { .. } => read(&format!("{}/loader/loader.conf", m.layout.loader_dir()))
             .lines()
             .find_map(|l| l.trim().strip_prefix("default"))
             .map(|d| d.trim().trim_matches('"'))

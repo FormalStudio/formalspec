@@ -248,16 +248,18 @@ pub fn boot_files(distro: &str, boot: Boot, luks: bool) -> Vec<File> {
             "ALL_kver=\"/boot/vmlinuz-linux\"\nPRESETS=('default')\ndefault_uki=\"/efi/EFI/Linux/arch-linux.efi\"\n",
             false,
         )),
+        // BOOT_ROOT skips kernel-install's search, which beside Windows would pick Windows' ESP
+        // at /boot/efi instead of the XBOOTLDR partition at /efi.
         ("fedora", Boot::Esp) => {
             files.push(file(
                 "/etc/kernel/install.conf",
-                "layout=uki\nuki_generator=ukify\ninitrd_generator=dracut\n",
+                "BOOT_ROOT=/efi\nlayout=uki\nuki_generator=ukify\ninitrd_generator=dracut\n",
                 false,
             ));
             files.push(file("/etc/kernel/entry-token", "fedora\n", false));
         }
         ("debian" | "ubuntu", Boot::Esp) => {
-            files.push(file("/etc/kernel/install.conf", "layout=uki\nuki_generator=ukify\n", false));
+            files.push(file("/etc/kernel/install.conf", "BOOT_ROOT=/efi\nlayout=uki\nuki_generator=ukify\n", false));
             files.push(file("/etc/kernel/entry-token", format!("{distro}\n"), false));
             files.push(file("/etc/kernel/postinst.d/zz-fspec-uki", DEBIAN_UKI_HOOK, true));
             files.push(file("/etc/initramfs/post-update.d/zz-fspec-uki", DEBIAN_UKI_HOOK, true));
@@ -359,6 +361,10 @@ pub fn misfit(r: &Recipe, layout: &Layout, firmware: &Firmware) -> Option<String
         Layout::Unsupported { reasons } => {
             Some(format!("this disk is not on a supported layout: {}; {disk_fix}", reasons.join("; ")))
         }
+        Layout::Default { loader: Some(_), .. } if r.distro == "aerynos" => Some(
+            "AerynOS's blsforme puts its kernels on the ESP, and beside Windows the ESP is Windows' own small one"
+                .into(),
+        ),
         Layout::Default { esp, .. } => {
             if mib(esp.size) < r.min_esp_mib {
                 return Some(format!(

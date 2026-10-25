@@ -1,0 +1,24 @@
+  FormalSpec    Language · Disk · System · Preset · Account · Review · Install
+  ────────────────────────────────────────────────────────────────────────────
+
+  Choose a disk
+
+  ▌ Samsung SSD 980 PRO    1 TB   nvme  Windows (ntfs), EFI (vfat)
+    WD Blue SA510        500 GB   sata  Empty
+    SanDisk Ultra         16 GB   usb   Installer USB
+
+  ▌  Install beside Windows   Erase the whole disk
+
+
+
+   EFI 2 GB   @system @home @swap @snapshots @fspec
+
+    Everything on Samsung SSD 980 PRO (1 TB) will be erased.
+
+    ●━━  Encrypt the disk
+    Swap size   ‹ 4 GB ›
+
+
+
+
+  ←→ Choose  Tab Next  Enter Continue  Esc Back  s Spec

@@ -67,6 +67,7 @@ pub fn plan(paths: &Paths, c: &Choices, s: &Setup) -> Result<Plan> {
         cmdline: &console,
         in_root: &in_root,
         passphrase: c.disk.encrypt.as_ref().map(|p| p.0.as_str()),
+        windows: c.disk.windows.as_ref(),
     };
     fspec_switch::init(paths, &init)
 }
@@ -77,6 +78,7 @@ fn stage_of(cmd: &Cmd, device: &str, distro: &str, luks: bool) -> Option<String>
     let arg = |a: &str| cmd.args.iter().any(|x| x == a);
     let name = catalog::distro(distro).map_or(distro, |d| d.name);
     Some(match cmd.program.as_str() {
+        "ntfsresize" | "sfdisk" => "Shrinking Windows".into(),
         "wipefs" | "sgdisk" => format!("Partitioning {device}"),
         "cryptsetup" if arg("luksFormat") => "Encrypting and formatting".into(),
         p if p.starts_with("mkfs") && luks => "Encrypting and formatting".into(),
@@ -218,6 +220,7 @@ mod tests {
                 device: "/dev/vdb".into(),
                 encrypt: encrypt.then(|| Secret("correct horse".into())),
                 swap_gib: 2,
+                windows: None,
             },
             system: SystemChoice::Fresh { distro: "arch", preset: Preset::Minimal, desktop: None },
             account: Account {

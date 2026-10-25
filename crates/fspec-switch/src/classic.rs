@@ -4,7 +4,7 @@ use anyhow::{Result, bail};
 use fspec_core::Paths;
 use fspec_core::runner::Cmd;
 
-use crate::machine::{BTRFS_OPTS, Layout, Machine, SHARED_BOOT};
+use crate::machine::{BTRFS_OPTS, LOADER_ESP, Layout, Machine, SHARED_BOOT};
 use crate::recipe::{Boot, boot_files, bootstrap, cmdline_file, misfit, populate, recipe};
 use crate::{Plan, subvol};
 
@@ -97,7 +97,13 @@ pub(crate) fn fstab(layout: &Layout, distro: &str) -> String {
         text.push_str("/swap/swapfile none swap defaults,nofail 0 0\n");
     }
     match layout {
-        Layout::Default { esp, .. } | Layout::Zfs { esp, .. } => {
+        Layout::Default { esp, loader, .. } => {
+            text.push_str(&format!("UUID={} /efi vfat umask=0077 0 2\n", esp.uuid));
+            if let Some(l) = loader {
+                text.push_str(&format!("UUID={} {LOADER_ESP} vfat umask=0077 0 2\n", l.uuid));
+            }
+        }
+        Layout::Zfs { esp, .. } => {
             text.push_str(&format!("UUID={} /efi vfat umask=0077 0 2\n", esp.uuid));
         }
         Layout::Bios { boot, .. } => {
@@ -374,7 +380,7 @@ pub fn switch_distro(paths: &Paths, m: &Machine, owner: Option<&str>, t: &Target
     // Until a root adopts boot, the running one stays the default.
     match &m.layout {
         Layout::Default { .. } if owner.is_none() => {
-            sd_default(&src.esp, &m.running).into_iter().for_each(|c| plan.run(c))
+            sd_default(&s(&paths.system(m.layout.loader_dir())), &m.running).into_iter().for_each(|c| plan.run(c))
         }
         Layout::Zfs { pool, .. } if owner.is_none() => {
             plan.run(Cmd::new("zpool").arg("set").arg(format!("bootfs={}", m.root)).arg(pool))

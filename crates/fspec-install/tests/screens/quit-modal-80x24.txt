@@ -7,16 +7,16 @@
     WD Blue SA510        500 GB   sata  Empty
     SanDi╭────────────────────────────────────────────────────────────╮
          │                                                            │
-         │  Quit the installer?                                       │
-   EFI 2 │                                                            │
+     Inst│  Quit the installer?                                       │
+    Linux│                                                            │
          │  Nothing has been written to the disk yet.                 │
-    Every│                                                            │
-         │    Quit      Keep installing                               │
-    ●━━  │                                                            │
-    Swap ╰────────────────────────────────────────────────────────────╯
+         │                                                            │
+   Window│    Quit      Keep installing                               │ap @sn…
+         │                                                            │
+    Windo╰────────────────────────────────────────────────────────────╯
 
-
-
+    ●━━  Encrypt the disk
+    Swap size   ‹ 4 GB ›
 
 
 

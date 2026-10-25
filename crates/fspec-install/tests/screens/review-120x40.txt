@@ -8,11 +8,11 @@
   3  System     Fedora · Minimal                             Change   │  load("//modules/minimal.star", "modules",   │
   4  Account    Kyan de Sutter (kyan) on kyan-fedora         Change   │      "system")                               │
                                                                       │                                              │
-    ●━━  Use Secure Boot with your own keys                           │  hosts = [                                   │
+     Windows shrinks by 128 GB and stays in the boot menu.            │  hosts = [                                   │
                                                                       │      host(                                   │
-    Erase /dev/nvme0n1 and install                                    │          name = "kyan-fedora",               │
+    ●━━  Use Secure Boot with your own keys                           │          name = "kyan-fedora",               │
                                                                       │          platform = "x86_64-linux",          │
-                                                                      │          locale = "en_US.UTF-8",             │
+    Install beside Windows                                            │          locale = "en_US.UTF-8",             │
                                                                       │          keymap = "us",                      │
                                                                       │          timezone = "UTC",                   │
                                                                       │          system = system("fedora"),          │

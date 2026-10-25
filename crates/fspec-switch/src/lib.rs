@@ -12,6 +12,7 @@ mod recipe;
 #[cfg(test)]
 mod tests;
 mod tumbleweed;
+mod windows;
 
 use anyhow::{Result, bail};
 use fspec_core::journal::{Journal, Undo};
@@ -24,12 +25,17 @@ pub use classic::{Target, switch_distro, title};
 pub use disk::*;
 pub use forget::forget;
 pub use machine::{
-    Btrfs, Facts, Firmware, Layout, Machine, Part, assumed, boot_owner, classify, detect, detect_device,
+    Btrfs, Facts, Firmware, GIB, LOADER_ESP, Layout, Machine, Part, XBOOTLDR_TYPE, assumed, boot_owner, classify,
+    detect, detect_device,
 };
 pub use recipe::{Recipe, caveats, misfit, recipe};
 pub use tumbleweed::{
     ESP_SYNC as TUMBLEWEED_ESP_SYNC, ESP_SYNC_PATH as TUMBLEWEED_ESP_SYNC_PATH, TUMBLEWEED_IMAGE, Tumbleweed,
     tumbleweed,
+};
+pub use windows::{
+    BesideWindows, GB, Gap, MIN_LINUX, Shrink, Space, WINDOWS_HEADROOM, WindowsDisk, XBOOTLDR_SIZE, ntfs_info,
+    read_windows, shrink_min, space,
 };
 
 /// The distros `fspec switch --distro` can bootstrap.

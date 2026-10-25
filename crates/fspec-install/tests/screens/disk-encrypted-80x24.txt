@@ -7,10 +7,13 @@
     WD Blue SA510        500 GB   sata  Empty
     SanDisk Ultra         16 GB   usb   Installer USB
 
-             LUKS2 ───────────────────────────────────────────────────────────
-   EFI 2 GB   @system @home @swap @snapshots @fspec
+     Install beside Windows   Erase the whole disk
+    Linux size  ‹ 128 GB ›
 
-    Everything on Samsung SSD 980 PRO (1 TB) will be erased.
+                                                     LUKS2 ───────────────────
+   Windows 870 GB                         boot 2 GB   @system @home @swap @sn…
+
+    Windows shrinks from 998 GB to 870 GB.
 
     ━━●  Encrypt the disk
   Passphrase                             Confirm passphrase
@@ -18,7 +21,4 @@
     Use at least 8 characters.
 
     Swap size   ‹ 4 GB ›
-
-
-
   Tab Next  Enter Continue  Esc Back

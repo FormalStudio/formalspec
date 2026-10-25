@@ -26,7 +26,7 @@ fn account() -> Account {
 }
 
 fn disk() -> DiskChoice {
-    DiskChoice { device: "/dev/vda".into(), encrypt: None, swap_gib: 8 }
+    DiskChoice { device: "/dev/vda".into(), encrypt: None, swap_gib: 8, windows: None }
 }
 
 fn choices(distro: &'static str, preset: Preset, desktop: Option<Desktop>) -> Choices {

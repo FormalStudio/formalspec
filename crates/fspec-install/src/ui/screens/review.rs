@@ -20,6 +20,15 @@ pub struct Summary {
     pub device: String,
     pub model: String,
     pub distro: Option<&'static Distro>,
+    /// What happens to Windows when installing beside it, and the confirm modal's sentence.
+    pub windows: Option<Windows>,
+}
+
+#[derive(Default, Clone)]
+pub struct Windows {
+    pub review: String,
+    pub confirm: String,
+    pub bitlocker: bool,
 }
 
 #[derive(Default)]
@@ -54,8 +63,17 @@ impl Review {
         }
     }
 
+    /// AerynOS's blsforme puts its kernels on the ESP, which beside Windows is Windows' own.
+    fn blocked(&self) -> bool {
+        self.summary.windows.is_some() && self.summary.distro.is_some_and(|d| d.id == "aerynos")
+    }
+
     fn erase(&self) -> Flow {
-        Flow::Modal(Modal::erase(&self.summary.device, &self.summary.model))
+        if self.blocked() {
+            return Flow::Stay;
+        }
+        let beside = self.summary.windows.as_ref().map(|w| w.confirm.clone());
+        Flow::Modal(Modal::erase(&self.summary.device, &self.summary.model, beside))
     }
 
     pub fn key(&mut self, k: &KeyEvent, sh: &mut Shared) -> Flow {
@@ -105,6 +123,23 @@ impl Review {
             c.hit(row, W_GROUP, i);
         }
         let mut y = 2 + self.summary.groups.len() as u16 + 1;
+        let note_w = (w as usize).saturating_sub(3);
+        if let Some(win) = &self.summary.windows {
+            let mut lines = vec![(win.review.clone(), th.ink)];
+            if win.bitlocker {
+                lines.push(("Have your BitLocker recovery key ready; Windows may ask for it once.".into(), th.muted));
+            }
+            if self.blocked() {
+                lines.push(("AerynOS cannot install beside Windows yet.".into(), th.amber));
+            }
+            for (text, color) in lines {
+                for l in wrap(&text, note_w) {
+                    c.text(a, 3, y, &l, fg(color));
+                    y += 1;
+                }
+            }
+            y += 1;
+        }
         let enabled = Self::can_toggle(sh);
         let on = self.secure_boot && enabled;
         toggle(
@@ -143,14 +178,11 @@ impl Review {
         }
         y += 1;
         let row = rect_in(a, 0, y, a.width, 1);
-        button(
-            c,
-            row,
-            0,
-            &format!("Erase {} and install", self.summary.device),
-            Kind::Amber,
-            self.focus == 1,
-            Hit { w: W_BUTTON, i: 0 },
-        );
+        let (label, kind) = match &self.summary.windows {
+            _ if self.blocked() => ("Install beside Windows".to_string(), Kind::Disabled),
+            Some(_) => ("Install beside Windows".to_string(), Kind::Primary),
+            None => (format!("Erase {} and install", self.summary.device), Kind::Amber),
+        };
+        button(c, row, 0, &label, kind, self.focus == 1, Hit { w: W_BUTTON, i: 0 });
     }
 }

@@ -1202,6 +1202,7 @@ fn disk(paths: &Paths, spec_path: &Path, cmd: &DiskCommand) -> Result<()> {
                 cmdline: &cmdline,
                 in_root: &[],
                 passphrase: None,
+                windows: None,
             };
             let plan = fspec_switch::init(paths, &init)?;
             confirm(device, &format!("This erases everything on {device}."))?;

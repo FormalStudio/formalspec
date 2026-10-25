@@ -1,0 +1,40 @@
+  FormalSpec installer                                  Language · Disk · System · Preset · Account · Review · Install
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Choose a disk                                                       ╭─ spec.star ──────────────────────────────────╮
+                                                                      │  # This machine's spec. `fspec plan` shows   │
+  ▌ Samsung SSD 980 PRO    1 TB   nvme  Windows (ntfs), EFI (vfat)    │      what a change would do, `fspec apply`   │
+    WD Blue SA510        500 GB   sata  Empty                         │      makes it so.                            │
+    SanDisk Ultra         16 GB   usb   Installer USB                 │                                              │
+                                                                      │  hosts = [                                   │
+  ▌  Install beside Windows   Erase the whole disk                    │      host(                                   │
+                                                                      │          platform = "x86_64-linux",          │
+                                                                      │          locale = "en_US.UTF-8",             │
+                                                                      │          keymap = "us",                      │
+   EFI 2 GB   @system @home @swap @snapshots @fspec                   │          timezone = "UTC",                   │
+                                                                      │          protect = ["/home"],                │
+    Everything on Samsung SSD 980 PRO (1 TB) will be erased.          │      ),                                      │
+                                                                      │  ]                                           │
+    ●━━  Encrypt the disk                                             │                                              │
+    Swap size   ‹ 4 GB ›                                              │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      ╰──────────────────────────────────────────────╯
+  ←→ Choose  Tab Next  Enter Continue  Esc Back

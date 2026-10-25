@@ -20,6 +20,7 @@ gdisk
 parted
 fdisk
 dosfstools
+ntfs-3g
 mtools
 btrfs-progs
 cryptsetup

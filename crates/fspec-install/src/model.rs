@@ -121,6 +121,8 @@ pub struct DiskChoice {
     /// Put the btrfs filesystem in LUKS2 with this passphrase.
     pub encrypt: Option<Secret>,
     pub swap_gib: u64,
+    /// Install into space beside Windows instead of erasing the disk.
+    pub windows: Option<fspec_switch::BesideWindows>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -218,6 +220,8 @@ pub struct DiskInfo {
     pub contents: Vec<String>,
     /// The live session booted from it, so it cannot be the target.
     pub live_medium: bool,
+    /// It holds Windows, which the install can keep.
+    pub windows: Option<fspec_switch::WindowsDisk>,
 }
 
 /// What the install reports while it runs, in order.

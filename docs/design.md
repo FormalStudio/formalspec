@@ -1203,6 +1203,25 @@ The default layout, the one `fspec disk init` creates and the one to use:
 - With LUKS, every root gets an `/etc/crypttab` line, `cryptsetup` in its
   initramfs and `rd.luks.name=` on its command line.
 
+Beside Windows the layout keeps Windows' ESP, which Windows' setup makes 100
+to 300 MB, too small for several unified kernel images, and cannot grow in
+place since `C:` or its reserved partition follows it. A 2 GiB XBOOTLDR
+partition (type `ea00`, FAT32) holds the kernels and entries instead and is
+mounted at `/efi`, so every recipe's kernel tooling writes where it always
+does. Windows' ESP is mounted at `/boot/efi` and holds systemd-boot and
+`loader.conf`, which systemd-boot reads only from its own ESP; it reads
+entries and UKIs from both partitions, and adds Windows Boot Manager from
+`EFI/Microsoft/Boot/bootmgfw.efi` on its ESP. fspec never writes under
+`EFI/Microsoft`. `bootctl install --esp-path --boot-path` puts its firmware
+entry first in `BootOrder` and keeps Windows' entry, and `loader.conf` gets
+`timeout 5` so the menu shows. `/etc/kernel/install.conf` sets
+`BOOT_ROOT=/efi`, since kernel-install's own search would find Windows' ESP
+at `/boot/efi` before the XBOOTLDR partition, which it looks for only at
+`/boot`. AerynOS is refused here: blsforme finds the ESP itself and puts its
+kernels on it. Two ESPs on one disk would avoid the second partition type,
+but systemd-boot cannot chainload Windows from another partition, and
+Windows' updates expect its own ESP.
+
 Two more layouts are supported:
 
 - ZFS: a pool `rpool` with `rpool/ROOT/<distro>` boot environments,
@@ -1302,6 +1321,18 @@ cannot satisfy is refused with the fix, usually a `fspec disk` command.
   installs the first root the same way `switch --distro` does. It refuses a
   partition, a disk with anything mounted, and a disk under 16 GiB. ZFS
   takes no `--luks`, since it encrypts datasets itself.
+- Beside Windows (`fspec_switch::init` with `windows`, which only the installer
+  sets so far), `init` leaves the partition table and Windows' partitions in
+  place and creates the XBOOTLDR and btrfs partitions in one space: the
+  largest free space when it holds 32 GB, or space shrunk off the end of
+  `C:`, the largest basic data partition holding NTFS. The shrink runs
+  `ntfsresize --no-action` as a probe, then `ntfsresize --size`, then
+  `sfdisk -N` with only the size, so the partition keeps its start, GUID,
+  name and boot sector. Linux takes 32 GB at least, and Windows keeps 20 GiB
+  more than `ntfsresize --info` says it needs. `ntfsresize` refuses a
+  hibernated volume (Fast Startup) and one marked for `chkdsk`; a BitLocker
+  volume cannot be resized from Linux at all, so it has to be shrunk in
+  Windows' Disk Management, leaving free space.
 
 Every destructive step asks for the device name to be typed back, refuses a
 mounted target unless the step is built for one (`btrfs filesystem resize`
@@ -1367,8 +1398,9 @@ plan`, run as root on a classic distro, prints which root owns boot.
 
 `fspec switch --adopt-boot`, run from the new root, makes it the owner:
 
-- Default layout: `default <distro>-*` in `/efi/loader/loader.conf`, and
-  `bootctl set-default ""` so no EFI variable outranks it.
+- Default layout: `default <distro>-*` in `/efi/loader/loader.conf` (beside
+  Windows, `/boot/efi/loader/loader.conf`), and `bootctl set-default ""` so no
+  EFI variable outranks it.
 - ZFS: `zpool set bootfs=rpool/ROOT/<distro> rpool`.
 - BIOS: `grub-install --target=i386-pc --boot-directory=/boot` (`grub2-install`
   on Fedora) to the disk's boot sector, and `grub-mkconfig`, whose
@@ -1599,7 +1631,13 @@ serial console, which headless servers and VM tests need.
 The flow is language and keyboard, disk, distro, preset, account, review,
 install. The right side of the screen shows the `spec.star` being written as
 choices are made. The disk gets the default layout above, with LUKS2 when
-asked. The distros are Fedora, Bazzite, Fedora Atomic, Aurora, Arch, CachyOS,
+asked. On a disk with Windows (an ESP and an NTFS or BitLocker basic data
+partition, read with `sfdisk --json` and `ntfsresize --info`), the disk screen
+offers "Install beside Windows", the default, or "Erase the whole disk";
+beside Windows it uses the free space, or shows a size picker in decimal GB
+(8 GB steps, 128 GB by default) for what Linux takes from `C:`, or the one-line
+reason Windows cannot be shrunk with what to do in Windows. The review screen
+says how much Windows shrinks, or that it is untouched. The distros are Fedora, Bazzite, Fedora Atomic, Aurora, Arch, CachyOS,
 Ubuntu, Debian and Void (glibc and musl), each tagged with its release model,
 init system, whether its kernel is vendor-signed, and whether it is an image.
 The presets are minimal, desktop (GNOME or KDE Plasma), gaming and server,

@@ -8,8 +8,18 @@ use crate::ui::widgets::input::{FIELD_ROWS, Field, TextInput, draw_field};
 use crate::ui::widgets::{Canvas, Hit, W_MODAL, rect_in, wrap};
 
 pub enum Modal {
-    Quit { focus: usize },
-    Erase { input: TextInput, focus: usize, device: String, model: String },
+    Quit {
+        focus: usize,
+    },
+    /// Confirms the install by its device path. `beside` is what happens to Windows when the
+    /// install keeps it; without it the disk is erased.
+    Erase {
+        input: TextInput,
+        focus: usize,
+        device: String,
+        model: String,
+        beside: Option<String>,
+    },
     Help,
 }
 
@@ -34,8 +44,8 @@ const HELP: &[(&str, &str)] = &[
 ];
 
 impl Modal {
-    pub fn erase(device: &str, model: &str) -> Modal {
-        Modal::Erase { input: TextInput::default(), focus: 0, device: device.into(), model: model.into() }
+    pub fn erase(device: &str, model: &str, beside: Option<String>) -> Modal {
+        Modal::Erase { input: TextInput::default(), focus: 0, device: device.into(), model: model.into(), beside }
     }
 
     pub fn quit() -> Modal {
@@ -126,9 +136,14 @@ impl Modal {
             Modal::Quit { .. } => {
                 ("Quit the installer?".into(), wrap("Nothing has been written to the disk yet.", inner_w), 0)
             }
-            Modal::Erase { device, model, .. } => (
+            Modal::Erase { device, model, beside: None, .. } => (
                 format!("Erase {model}?"),
                 wrap(&format!("Everything on {device} will be deleted. Type {device} to confirm."), inner_w),
+                FIELD_ROWS + 1,
+            ),
+            Modal::Erase { device, beside: Some(what), .. } => (
+                "Install beside Windows?".into(),
+                wrap(&format!("{what} Type {device} to confirm."), inner_w),
                 FIELD_ROWS + 1,
             ),
             Modal::Help => ("Keys".into(), Vec::new(), HELP.len() as u16 + 1),
@@ -166,8 +181,9 @@ impl Modal {
                 let bw = button(c, r, 0, "Quit", Kind::Secondary, *focus == 0, Hit { w: W_MODAL, i: 0 });
                 button(c, r, bw + 2, "Keep installing", Kind::Primary, *focus == 1, Hit { w: W_MODAL, i: 1 });
             }
-            Modal::Erase { input, focus, device, .. } => {
+            Modal::Erase { input, focus, device, beside, .. } => {
                 let ok = input.value == *device;
+                let action = if beside.is_some() { "Install" } else { "Erase and install" };
                 draw_field(
                     c,
                     Rect { y: a.y + row, height: FIELD_ROWS, ..inner },
@@ -187,7 +203,7 @@ impl Modal {
                     c,
                     r,
                     0,
-                    "Erase and install",
+                    action,
                     if ok { Kind::Amber } else { Kind::Disabled },
                     *focus == 1,
                     Hit { w: W_MODAL, i: 1 },
