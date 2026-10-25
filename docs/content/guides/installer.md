@@ -24,8 +24,8 @@ carries:
 - disk tools (gdisk, parted, btrfs-progs, cryptsetup, ntfs-3g), NetworkManager, git and an ssh
   client.
 
-On a machine with a GPU, the installer runs full screen in a terminal under a small Wayland
-compositor, with true colour, a proper font and the mouse. Without a GPU, or on a serial console,
+On a machine with a GPU, the installer runs full screen in a terminal under a bare sway
+session, with true colour, a proper font and the mouse. Without a GPU, or on a serial console,
 it runs on the console in 16 colours. Every screen works with the keyboard alone.
 
 ## Get the ISO

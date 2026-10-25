@@ -1644,7 +1644,7 @@ calls: debootstrap, dnf, pacman with arch-install-scripts, a static xbps, a
 static moss and podman.
 
 `fspec-install` is a full-screen terminal program (ratatui). On a machine
-with a GPU it runs inside `foot` under the `cage` kiosk compositor, which
+with a GPU it runs inside `foot` under a bare `sway` session, which
 gives it true colour, a proper font and the mouse for a few megabytes; without
 one, or on a serial console, it runs on the console itself in 16 colours. A
 graphical toolkit would have cost hundreds of megabytes of ISO and lost the
