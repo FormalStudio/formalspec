@@ -19,8 +19,8 @@ carries:
 
 - `fspec`, built static so it runs inside any freshly installed root;
 - `fspec-install`, the installer itself, a full-screen terminal program;
-- the tools each distro installs with: debootstrap, dnf, pacman with arch-install-scripts, a
-  static xbps, a static moss, and podman;
+- the tools each distro installs with: debootstrap, dnf, pacman with arch-install-scripts and
+  Arch's repositories, a static xbps, a static moss, and podman;
 - disk tools (gdisk, parted, btrfs-progs, cryptsetup, ntfs-3g), NetworkManager, git and an ssh
   client.
 

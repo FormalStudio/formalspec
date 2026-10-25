@@ -5,6 +5,7 @@ gnupg
 xz-utils
 zstd
 pacman-package-manager
+makepkg
 arch-install-scripts
 archlinux-keyring
 podman

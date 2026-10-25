@@ -1641,7 +1641,9 @@ Debian live ISO, built with live-build under `installer/iso/`, so it boots
 with Secure Boot on through Debian's signed shim. The ISO carries a static
 `fspec`, the installer `fspec-install`, and every bootstrapper `disk init`
 calls: debootstrap, dnf, pacman with arch-install-scripts, a static xbps, a
-static moss and podman.
+static moss and podman. Debian's pacman comes without repositories, so the ISO
+adds `[core]` and `[extra]` with a mirrorlist that pacstrap copies into the new
+root, and makes the pacman keyring at boot.
 `installer/iso/build.sh` builds the ISO; `installer/iso/vm.sh` boots it in a libvirt VM and opens virt-manager.
 
 `fspec-install` is a full-screen terminal program (ratatui). On a machine

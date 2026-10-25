@@ -1,0 +1,13 @@
+[Unit]
+Description=Make the pacman keyring pacstrap checks Arch packages against
+# Made at boot, not at build time, so copies of the ISO do not share its signing key.
+ConditionPathExists=!/etc/pacman.d/gnupg/trustdb.gpg
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/pacman-key --init
+ExecStart=/usr/bin/pacman-key --populate archlinux
+
+[Install]
+WantedBy=multi-user.target

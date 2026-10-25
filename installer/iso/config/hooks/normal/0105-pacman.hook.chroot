@@ -1,0 +1,16 @@
+#!/bin/sh
+set -eu
+
+# Debian's pacman names no repositories. pacstrap installs from these and copies the mirrorlist
+# into the new root, whose own pacman.conf includes it.
+cat >> /etc/pacman.conf <<'CONF'
+
+[core]
+Include = /etc/pacman.d/mirrorlist
+
+[extra]
+Include = /etc/pacman.d/mirrorlist
+CONF
+mkdir -p /etc/pacman.d
+echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' > /etc/pacman.d/mirrorlist
+systemctl enable fspec-pacman-init.service
