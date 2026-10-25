@@ -1412,9 +1412,13 @@ root and its kernel command line. Then it:
    `--release <n>`; the Fedora repositories are named on the command line,
    since a fresh root has none), `pacstrap -K`, `debootstrap` (`--release` is
    the suite, default `stable` on Debian and `noble` on Ubuntu) or
-   `xbps-install -r` (answering its repository key prompt). The bootstrap
-   includes the recipe's boot packages for the layout: UKI tooling, GRUB,
-   `cryptsetup` or ZFS.
+   `xbps-install -r` (answering its repository key prompt). dnf downloads ten
+   packages at a time (`max_parallel_downloads=10`, also on every apply's
+   `dnf install`). The bootstrap includes the recipe's boot packages for the
+   layout: UKI tooling, GRUB, `cryptsetup` or ZFS. Debian and Ubuntu get theirs from apt in the new
+   root right before the apply, along with the `-updates` and `-security`
+   pockets and a `full-upgrade`, so the apply installs current versions once
+   and records the versions that stay installed.
 4. Writes the new root's `fstab` (`/`, `/home`, `/efi`, `/opt/fspec`, the
    swapfile, and on BIOS the shared boot partition and the `/boot` bind),
    `crypttab`, `/etc/kernel/cmdline` and the recipe's kernel tooling config,
@@ -1708,8 +1712,10 @@ The presets are minimal, desktop (GNOME or KDE Plasma), gaming and server,
 each a Starlark module in `crates/fspec-install/presets/`. The installer
 writes a spec repo (`spec.star`, `modules/<preset>.star`) with one host named
 after the machine and its locale, keymap and timezone, commits it, and
-installs from it. It writes no `fspec.lock`: the presets declare only base
-packages, which stay unpinned, and Flathub apps that update themselves, so
+installs from it. The user gets `shell = "bash"`, since useradd's default is
+`/bin/sh` on Debian, Ubuntu and Void, and the full name from the account
+screen through `usermod -c`. It writes no `fspec.lock`: the presets declare
+only base packages, which stay unpinned, and Flathub apps that update themselves, so
 the first `fspec update` writes one when the spec gains a pinned package.
 The repo ends up in `~/spec` of the new user, so `fspec plan` and
 `fspec apply` work from the first login.

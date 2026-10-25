@@ -278,10 +278,13 @@ fn the_kernel_command_line_keeps_the_machine_options_and_adds_luks() {
         stdin_of(&plan, "tee /r/run/fspec/switch/debian/etc/crypttab"),
         "luks-cccc UUID=cccc none luks,discard,initramfs\n"
     );
-    let populate =
-        plan.lines().into_iter().find(|l| l.starts_with("chroot /r/run/fspec/switch/debian sh -c 'set -e")).unwrap();
-    assert!(populate.contains("systemd-ukify systemd-boot-efi cryptsetup cryptsetup-initramfs"), "{populate}");
-    assert!(populate.contains("update-initramfs -c -k"));
+    let lines = plan.lines();
+    let at = |p: &str| lines.iter().position(|l| l.contains(p)).unwrap_or_else(|| panic!("no `{p}`"));
+    assert!(
+        lines[at("apt-get full-upgrade")].contains("systemd-ukify systemd-boot-efi cryptsetup cryptsetup-initramfs")
+    );
+    // The apply installs from the upgraded lists, so nothing it installs moves past what it records.
+    assert!(at("apt-get full-upgrade") < at(" apply --local") && at(" apply --local") < at("update-initramfs -c -k"));
 }
 
 #[test]
@@ -1283,7 +1286,7 @@ fn inherit_copies_the_identity_without_printing_it() {
 }
 
 #[test]
-fn populate_adds_the_update_and_security_pockets() {
+fn upgrade_adds_the_update_and_security_pockets() {
     let dir = tempfile::tempdir().unwrap();
     let list = dir.path().join("sources.list");
     for (distro, release, security) in [
@@ -1295,7 +1298,7 @@ fn populate_adds_the_update_and_security_pockets() {
         ),
     ] {
         std::fs::write(&list, release).unwrap();
-        let script = crate::recipe::populate(distro, "x86_64", crate::recipe::Boot::Zbm, false);
+        let script = crate::recipe::upgrade(distro, "x86_64", crate::recipe::Boot::Zbm, false).unwrap();
         let sources =
             script.split("\nexport").next().unwrap().replace("/etc/apt/sources.list", &list.display().to_string());
         let out = std::process::Command::new("sh").arg("-c").arg(&sources).output().unwrap();

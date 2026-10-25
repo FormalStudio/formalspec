@@ -281,28 +281,37 @@ pub fn boot_files(distro: &str, boot: Boot, luks: bool) -> Vec<File> {
     files
 }
 
-/// Shell run inside the root once its files are written: installs what apt still has to and
-/// builds the initramfs and kernel files where the layout boots them.
-pub fn populate(distro: &str, arch: &str, boot: Boot, luks: bool) -> String {
+/// Shell run inside a Debian or Ubuntu root before its first apply: adds the update and security
+/// pockets, installs the boot packages and upgrades what debootstrap installed. Run after the
+/// apply, the upgrade would move every package the apply just installed past the version the
+/// apply recorded, and download it twice.
+pub fn upgrade(distro: &str, arch: &str, boot: Boot, luks: bool) -> Option<String> {
+    if !matches!(distro, "debian" | "ubuntu") {
+        return None;
+    }
+    let mut sh = vec!["set -e".to_string()];
+    // debootstrap leaves only the release pocket, without security fixes.
+    let security = if distro == "debian" { "http://security.debian.org/debian-security" } else { "$m" };
+    sh.push(format!(
+        "read -r _ m s c </etc/apt/sources.list\n\
+         printf 'deb %s %s %s\\ndeb %s %s-updates %s\\ndeb %s %s-security %s\\n' \"$m\" \"$s\" \"$c\" \"$m\" \"$s\" \"$c\" \
+         \"{security}\" \"$s\" \"$c\" >/etc/apt/sources.list"
+    ));
+    sh.push("export DEBIAN_FRONTEND=noninteractive".into());
+    sh.push("apt-get update".into());
+    // ukify and its kernel-install plugin come first: a kernel the upgrade installs without
+    // them gets 90-uki-copy.install's "missing .efi suffix" failure.
+    sh.push(format!("apt-get install -y --no-install-recommends {}", apt_packages(distro, arch, boot, luks).join(" ")));
+    sh.push("apt-get full-upgrade -y".into());
+    Some(sh.join("\n") + "\n")
+}
+
+/// Shell run inside the root once its packages are in: builds the initramfs and kernel files
+/// where the layout boots them.
+pub fn populate(distro: &str, boot: Boot, luks: bool) -> String {
     let mut sh = vec!["set -e".to_string()];
     let each = |cmd: &str| format!("for v in /lib/modules/*; do v=${{v##*/}}; {cmd}; done");
     if matches!(distro, "debian" | "ubuntu") {
-        // debootstrap leaves only the release pocket, without security fixes.
-        let security = if distro == "debian" { "http://security.debian.org/debian-security" } else { "$m" };
-        sh.push(format!(
-            "read -r _ m s c </etc/apt/sources.list\n\
-             printf 'deb %s %s %s\\ndeb %s %s-updates %s\\ndeb %s %s-security %s\\n' \"$m\" \"$s\" \"$c\" \"$m\" \"$s\" \"$c\" \
-             \"{security}\" \"$s\" \"$c\" >/etc/apt/sources.list"
-        ));
-        sh.push("export DEBIAN_FRONTEND=noninteractive".into());
-        sh.push("apt-get update".into());
-        // ukify and its kernel-install plugin come first: a kernel the upgrade installs without
-        // them gets 90-uki-copy.install's "missing .efi suffix" failure.
-        sh.push(format!(
-            "apt-get install -y --no-install-recommends {}",
-            apt_packages(distro, arch, boot, luks).join(" ")
-        ));
-        sh.push("apt-get full-upgrade -y".into());
         // debootstrap installs the kernel before initramfs-tools, so there may be no initramfs
         // to update yet.
         sh.push(each(

@@ -12,7 +12,7 @@ use crate::classic::{Sources, Target, create_root, fstab, grub_menu, install_roo
 use crate::machine::{
     BTRFS_OPTS, Btrfs, ESP_TYPE, Firmware, GIB, Layout, MIB, Machine, Part, SHARED_BOOT, SHARED_SUBVOLS, probe,
 };
-use crate::recipe::{Boot, boot_files, populate, recipe};
+use crate::recipe::{Boot, boot_files, populate, recipe, upgrade};
 use crate::windows::{self, BesideWindows, XBOOTLDR_SIZE};
 use crate::{Plan, subvol};
 
@@ -846,7 +846,10 @@ fn boot_setup(paths: &Paths, plan: &mut Plan, m: &Machine, layout: &Layout, new:
     if let Some(install) = install_packages(d, boot, luks) {
         plan.run(chroot(&install));
     }
-    plan.run(chroot(&populate(d, std::env::consts::ARCH, boot, luks)));
+    if let Some(sh) = upgrade(d, std::env::consts::ARCH, boot, luks) {
+        plan.run(chroot(&sh));
+    }
+    plan.run(chroot(&populate(d, boot, luks)));
     match layout {
         Layout::Default { .. } => {
             plan.run(Cmd::new("bootctl").arg(format!("--esp-path={}", src.esp)).arg("install"));

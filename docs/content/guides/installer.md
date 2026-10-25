@@ -223,7 +223,8 @@ the screen says how much Windows shrinks, or that it is untouched.
 
 The install runs in stages: shrinking Windows when it gives up space, partitioning, formatting
 (and encrypting), creating subvolumes,
-installing the bootloader, installing the distro, applying your spec, setting your password and
+installing the bootloader, installing the distro, updating it (Debian and Ubuntu), applying your
+spec, building the kernel image, setting your password and
 copying your spec. Each command's output streams to the screen. It cannot be interrupted; keep
 the machine powered on.
 

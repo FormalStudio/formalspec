@@ -5,7 +5,7 @@ use fspec_core::Paths;
 use fspec_core::runner::Cmd;
 
 use crate::machine::{BTRFS_OPTS, LOADER_ESP, Layout, Machine, SHARED_BOOT};
-use crate::recipe::{Boot, boot_files, bootstrap, cmdline_file, misfit, populate, recipe};
+use crate::recipe::{Boot, boot_files, bootstrap, cmdline_file, misfit, populate, recipe, upgrade};
 use crate::{Plan, subvol};
 
 /// What `switch --distro` builds. The host's `system` already declares `distro`, so the apply
@@ -329,8 +329,11 @@ pub(crate) fn install_root(
         .arg("--spec")
         .arg(format!("/var/lib/fspec/spec/{}", t.spec_file))
         .args(["apply", "--local", "--scope", "system", "--host", t.host]);
+    if let Some(sh) = upgrade(d, t.arch, boot, luks) {
+        plan.run(in_root(root, Cmd::new("sh").args(["-c", &sh])));
+    }
     plan.run(in_root(root, apply));
-    plan.run(in_root(root, Cmd::new("sh").args(["-c", &populate(d, t.arch, boot, luks)])));
+    plan.run(in_root(root, Cmd::new("sh").args(["-c", &populate(d, boot, luks)])));
     Ok(())
 }
 
