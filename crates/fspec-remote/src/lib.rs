@@ -140,7 +140,8 @@ impl Remote<'_> {
         eprintln!("fspec: {alias} runs engine {}, installing the locked fspec there first", found.engine);
         let tmp = tempfile::tempdir()?;
         let dest = tmp.path().join("pkg");
-        fspec_store::pull_built(self.runner, reference, &tmp.path().join("oci"), &dest, engine::NAME)?;
+        fspec_store::pull_built(self.runner, reference, &tmp.path().join("oci"), &dest, engine::NAME)
+            .context("pulling the locked fspec, which needs oras on this machine's PATH")?;
         self.runner.check(&cmd::upload_engine(alias, &dest.join(engine::NAME)))?;
         let out = self.runner.run(&cmd::install_engine(alias))?;
         if out.status != 0 {
