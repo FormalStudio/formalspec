@@ -7,16 +7,16 @@
     WD Blue SA510        500 GB   sata  Empty                         │      makes it so.                            │
     SanDisk Ultra         16 GB   usb   Installer USB                 │                                              │
                                                                       │  hosts = [                                   │
-                                                                      │      host(                                   │
-   EFI 2 GB   @system @home @swap @snapshots @fspec                   │          platform = "x86_64-linux",          │
+     Install beside Windows   Erase the whole disk                    │      host(                                   │
+    Linux size  ‹ 128 GB ›                                            │          platform = "x86_64-linux",          │
                                                                       │          locale = "en_US.UTF-8",             │
-    Everything on Samsung SSD 980 PRO (1 TB) will be erased.          │          keymap = "us",                      │
-                                                                      │          timezone = "UTC",                   │
-    ●━━  Encrypt the disk                                             │          protect = ["/home"],                │
-    Swap size   ‹ 4 GB ›                                              │      ),                                      │
+                                                                      │          keymap = "us",                      │
+   Windows 870 GB                   boot 2 GB   @system @home @swa…   │          timezone = "UTC",                   │
+                                                                      │          protect = ["/home"],                │
+    Windows shrinks from 998 GB to 870 GB.                            │      ),                                      │
                                                                       │  ]                                           │
-                                                                      │                                              │
-                                                                      │                                              │
+    ●━━  Encrypt the disk                                             │                                              │
+    Swap size   ‹ 4 GB ›                                              │                                              │
                                                                       │                                              │
                                                                       │                                              │
                                                                       │                                              │

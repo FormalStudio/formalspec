@@ -13,6 +13,7 @@ use crate::machine::{
     BTRFS_OPTS, Btrfs, ESP_TYPE, Firmware, GIB, Layout, MIB, Machine, Part, SHARED_BOOT, SHARED_SUBVOLS, probe,
 };
 use crate::recipe::{Boot, boot_files, populate, recipe};
+use crate::windows::{self, BesideWindows, XBOOTLDR_SIZE};
 use crate::{Plan, subvol};
 
 /// The ESP size the default layout gives a disk.
@@ -68,6 +69,8 @@ pub struct Init<'a> {
     pub in_root: &'a [Cmd],
     /// The LUKS passphrase, passed on stdin. Without one, cryptsetup asks on the terminal.
     pub passphrase: Option<&'a str>,
+    /// Install into space beside Windows instead of erasing the disk. Only the default layout.
+    pub windows: Option<&'a BesideWindows>,
 }
 
 /// Where `init` mounts the root of `distro` while it installs it.
@@ -139,15 +142,29 @@ pub fn init(paths: &Paths, i: &Init) -> Result<Plan> {
         bail!("--luks does not apply to the ZFS layout; ZFS encrypts datasets itself");
     }
     let dir = |x: &str| s(&paths.system(format!("{DISK}/{x}")));
-    let (top, efi, boot, zfs) = (dir("top"), dir("efi"), dir("boot"), dir("zfs"));
+    let (top, efi, boot, zfs, loader) = (dir("top"), dir("efi"), dir("boot"), dir("zfs"), dir("esp"));
     let dev = i.device;
     let ids = i.ids;
     let mut plan = Plan::default();
     let mut cleanup = Vec::new();
 
-    plan.run(Cmd::new("wipefs").args(["-a", dev]));
-    plan.run(Cmd::new("sgdisk").args(["--zap-all", dev]));
+    if i.windows.is_some() && i.kind != Kind::Default {
+        bail!("installing beside Windows needs the default layout");
+    }
+    let mut esp_n = 1;
+    let mut new_parts = Vec::new();
+    if i.windows.is_none() {
+        plan.run(Cmd::new("wipefs").args(["-a", dev]));
+        plan.run(Cmd::new("sgdisk").args(["--zap-all", dev]));
+    }
     let (data, layout) = match i.kind {
+        Kind::Default if i.windows.is_some() => {
+            let w = i.windows.expect("checked above");
+            let (b, r) = windows::partitions(&mut plan, w, if i.luks { "8309" } else { "8300" })?;
+            esp_n = b;
+            new_parts = vec![b, r];
+            (partition(dev, r), Kind::Default)
+        }
         Kind::Default | Kind::Zfs => {
             let code = if i.kind == Kind::Zfs {
                 "bf00"
@@ -176,17 +193,35 @@ pub fn init(paths: &Paths, i: &Init) -> Result<Plan> {
         }
     };
     plan.run(Cmd::new("udevadm").arg("settle"));
-    // The new partitions start where the old ones did, so their old signatures are still there.
-    let parts = if i.kind == Kind::Bios { 3 } else { 2 };
-    plan.run(Cmd::new("wipefs").arg("-a").args((1..=parts).map(|n| partition(dev, n))));
+    // The new partitions start where the old ones did, or in space Windows used, so old
+    // signatures are still there.
+    if new_parts.is_empty() {
+        new_parts = (1..=if i.kind == Kind::Bios { 3 } else { 2 }).collect();
+    }
+    plan.run(Cmd::new("wipefs").arg("-a").args(new_parts.iter().map(|&n| partition(dev, n))));
 
-    let esp_part = Part { uuid: ids.esp_uuid(), fstype: "vfat".into(), size: ESP_SIZE, ..Part::default() };
+    let esp_part = match i.windows {
+        Some(_) => Part {
+            uuid: ids.esp_uuid(),
+            parttype: crate::machine::XBOOTLDR_TYPE.into(),
+            fstype: "vfat".into(),
+            size: XBOOTLDR_SIZE,
+            ..Part::default()
+        },
+        None => Part { uuid: ids.esp_uuid(), fstype: "vfat".into(), size: ESP_SIZE, ..Part::default() },
+    };
     let boot_part = Part { uuid: ids.boot.clone(), fstype: "ext4".into(), size: BOOT_SIZE, ..Part::default() };
     if layout != Kind::Bios {
-        plan.run(Cmd::new("mkfs.vfat").args(["-F", "32", "-n", "EFI", "-i", &ids.serial]).arg(partition(dev, 1)));
+        let label = if i.windows.is_some() { "BOOT" } else { "EFI" };
+        plan.run(Cmd::new("mkfs.vfat").args(["-F", "32", "-n", label, "-i", &ids.serial]).arg(partition(dev, esp_n)));
         plan.run(Cmd::new("mkdir").arg("-p").arg(&efi));
-        plan.run(Cmd::new("mount").arg(partition(dev, 1)).arg(&efi));
+        plan.run(Cmd::new("mount").arg(partition(dev, esp_n)).arg(&efi));
         cleanup.push(Cmd::new("umount").arg(&efi));
+    }
+    if let Some(w) = i.windows {
+        plan.run(Cmd::new("mkdir").arg("-p").arg(&loader));
+        plan.run(Cmd::new("mount").arg(&w.disk.esp.dev).arg(&loader));
+        cleanup.push(Cmd::new("umount").arg(&loader));
     }
 
     let layout = match layout {
@@ -276,12 +311,17 @@ pub fn init(paths: &Paths, i: &Init) -> Result<Plan> {
                     Layout::Bios { boot: boot_part, btrfs }
                 }
                 _ => {
-                    let mut bootctl = Cmd::new("bootctl").arg(format!("--esp-path={efi}")).arg("install");
-                    if !i.efi_vars {
-                        bootctl = bootctl.arg("--no-variables");
+                    if let Some(w) = i.windows {
+                        windows::boot_manager(&mut plan, &w.disk, &loader, &efi, i.efi_vars);
+                        Layout::Default { esp: esp_part, btrfs, loader: Some(Box::new(w.disk.esp.clone())) }
+                    } else {
+                        let mut bootctl = Cmd::new("bootctl").arg(format!("--esp-path={efi}")).arg("install");
+                        if !i.efi_vars {
+                            bootctl = bootctl.arg("--no-variables");
+                        }
+                        plan.run(bootctl);
+                        Layout::Default { esp: esp_part, btrfs, loader: None }
                     }
-                    plan.run(bootctl);
-                    Layout::Default { esp: esp_part, btrfs }
                 }
             }
         }
@@ -307,7 +347,10 @@ pub fn init(paths: &Paths, i: &Init) -> Result<Plan> {
         i.in_root.iter().for_each(|c| plan.run(c.clone()));
         cleanup.splice(0..0, roots.cleanup);
         match &layout {
-            Layout::Default { .. } => sd_default(&efi, t.distro).into_iter().for_each(|c| plan.run(c)),
+            Layout::Default { loader: l, .. } => {
+                let conf = if l.is_some() { &loader } else { &efi };
+                sd_default(conf, t.distro).into_iter().for_each(|c| plan.run(c))
+            }
             Layout::Zfs { pool, .. } => {
                 plan.run(Cmd::new("zpool").arg("set").arg(format!("bootfs={pool}/ROOT/{}", t.distro)).arg(pool))
             }
@@ -486,7 +529,7 @@ pub fn migrate(paths: &Paths, m: &Machine, left: &Leftovers, ids: &Ids, swap_gib
                     part
                 }
             };
-            Layout::Default { esp: new, btrfs }
+            Layout::Default { esp: new, btrfs, loader: None }
         }
         Firmware::Bios => {
             let gpt_without_grub = m.parts.iter().any(|p| !p.partuuid.is_empty())

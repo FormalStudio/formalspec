@@ -5,16 +5,16 @@
 
   1  Lang╭────────────────────────────────────────────────────────────╮ Change
   2  Disk│                                                            │ Change
-  3  Syst│  Erase Samsung SSD 980 PRO?                                │ Change
+  3  Syst│  Install beside Windows?                                   │ Change
   4  Acco│                                                            │ Change
-         │  Everything on /dev/nvme0n1 will be deleted. Type          │
-    ●━━  │  /dev/nvme0n1 to confirm.                                  │
+         │  Windows on /dev/nvme0n1 shrinks to 870 GB. Type           │
+     Wind│  /dev/nvme0n1 to confirm.                                  │
          │                                                            │
-    Erase│  Device                                                    │
+    ●━━  │  Device                                                    │
          │  ▌ /dev/nvme                                               │
+    Insta│                                                            │
          │                                                            │
-         │                                                            │
-         │    Erase and install      Cancel                           │
+         │    Install      Cancel                                     │
          │                                                            │
          ╰────────────────────────────────────────────────────────────╯
 

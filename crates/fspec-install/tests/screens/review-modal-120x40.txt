@@ -8,21 +8,21 @@
   3  System     Fedora · Minimal                             Change   │  load("//modules/minimal.star", "modules",   │
   4  Account    Kyan de Sutter (kyan) on kyan-fedora         Change   │      "system")                               │
                                                                       │                                              │
-    ●━━  Use Secure Boot with your own keys                           │  hosts = [                                   │
+     Windows shrinks by 128 GB and stays in the boot menu.            │  hosts = [                                   │
                                                                       │      host(                                   │
-    Erase /dev/nvme0n1 and install                                    │          name = "kyan-fedora",               │
+    ●━━  Use Secure Boot with your own keys                           │          name = "kyan-fedora",               │
                              ╭────────────────────────────────────────────────────────────╮ "x86_64-linux",          │
-                             │                                                            │en_US.UTF-8",             │
-                             │  Erase Samsung SSD 980 PRO?                                │us",                      │
+    Install beside Windows   │                                                            │en_US.UTF-8",             │
+                             │  Install beside Windows?                                   │us",                      │
                              │                                                            │ "UTC",                   │
-                             │  Everything on /dev/nvme0n1 will be deleted. Type          │ystem("fedora"),          │
+                             │  Windows on /dev/nvme0n1 shrinks to 870 GB. Type           │ystem("fedora"),          │
                              │  /dev/nvme0n1 to confirm.                                  │modules("fedora"),        │
                              │                                                            │ser("kyan", uid = 1000,   │
                              │  Device                                                    │ = ["wheel"])],           │
                              │  ▌ /dev/nvme                                               │["/home"],                │
                              │                                                            │                          │
                              │                                                            │                          │
-                             │    Erase and install      Cancel                           │                          │
+                             │    Install      Cancel                                     │                          │
                              │                                                            │                          │
                              ╰────────────────────────────────────────────────────────────╯                          │
                                                                       │                                              │

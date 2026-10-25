@@ -107,7 +107,7 @@ fn position(lines: &[String], prefix: &str) -> usize {
 #[test]
 fn classify_reads_the_default_layout() {
     let m = default_arch();
-    let Layout::Default { esp, btrfs } = &m.layout else { panic!("{:?}", m.layout) };
+    let Layout::Default { esp, btrfs, .. } = &m.layout else { panic!("{:?}", m.layout) };
     assert_eq!((esp.dev.as_str(), esp.uuid.as_str(), esp.size), ("/dev/vda1", "EEEE-0001", 2 << 30));
     assert_eq!(btrfs, &Btrfs { uuid: UUID.into(), luks: None, home: "/@home".into() });
     assert_eq!((m.root.as_str(), m.disk.as_str(), m.firmware.clone()), ("/@arch", "/dev/vda", Firmware::Efi));
@@ -396,6 +396,7 @@ fn init_formats_the_default_layout_with_luks() {
         cmdline: "",
         in_root: &[],
         passphrase: None,
+        windows: None,
     };
     let plan = init(&paths(), &i).unwrap();
     assert_eq!(
@@ -458,6 +459,7 @@ fn init_with_a_distro_installs_the_first_root_onto_the_new_disk() {
         cmdline: "console=ttyS0",
         in_root: &[fspec_core::runner::Cmd::new("chroot").args(["/r/run/fspec/disk/arch", "chpasswd"])],
         passphrase: None,
+        windows: None,
     };
     let plan = init(&paths(), &i).unwrap();
     let lines = plan.lines();
@@ -1660,4 +1662,188 @@ fn the_zypp_plugin_acks_every_frame_and_syncs_after_the_commit() {
     assert!(out.status.success());
     assert_eq!(String::from_utf8(out.stdout).unwrap(), "ACK\n\n\0".repeat(5));
     assert_eq!(std::fs::read_to_string(&log).unwrap(), "/ /boot/efi tumbleweed\n");
+}
+
+fn windows_disk() -> crate::WindowsDisk {
+    let part = |dev: &str, partn, start, gib: u64, fstype: &str, uuid: &str| Part {
+        dev: dev.into(),
+        partn,
+        start,
+        size: gib << 30,
+        fstype: fstype.into(),
+        uuid: uuid.into(),
+        ..Part::default()
+    };
+    crate::WindowsDisk {
+        disk: "/dev/nvme0n1".into(),
+        sector: 512,
+        esp: part("/dev/nvme0n1p1", 1, 2048, 0, "vfat", "1234-ABCD"),
+        windows: part("/dev/nvme0n1p3", 3, 239616, 400, "ntfs", "0011"),
+        windows_limit: 239616 + (400 << 21),
+        gaps: vec![crate::Gap { start: 839100416, end: 976771072 }],
+        next_partn: 5,
+        shrink_min: Ok(100 << 30),
+    }
+}
+
+fn beside_windows(i: &Init) -> crate::Plan {
+    init(&paths(), i).unwrap()
+}
+
+#[test]
+fn init_beside_windows_shrinks_c_and_keeps_its_partition() {
+    let ids = ids();
+    let w = windows_disk();
+    let b = crate::BesideWindows { space: crate::space(&w, Some(64 << 30)).unwrap(), disk: w };
+    let i = Init {
+        device: "/dev/nvme0n1",
+        kind: Kind::Default,
+        luks: false,
+        ids: &ids,
+        swap_gib: 4,
+        efi_vars: true,
+        target: None,
+        cmdline: "",
+        in_root: &[],
+        passphrase: None,
+        windows: Some(&b),
+    };
+    let plan = beside_windows(&i);
+    let lines = plan.lines();
+    assert!(!lines.iter().any(|l| l.starts_with("wipefs -a /dev/nvme0n1 ") || l.contains("--zap-all")), "{lines:#?}");
+    let to = (400u64 << 30) - (64 << 30);
+    let at = |p: &str| position(&lines, p);
+    assert!(
+        at(&format!("ntfsresize --no-action --no-progress-bar --size {to} /dev/nvme0n1p3"))
+            < at("ntfsresize --no-progress-bar")
+    );
+    assert!(at("ntfsresize --no-progress-bar") < at("sfdisk --no-reread --wipe-partitions never -N 3 /dev/nvme0n1"));
+    assert_eq!(stdin_of(&plan, "sfdisk"), format!(", {}\n", to / 512));
+    let end = 239616 + to / 512;
+    assert_eq!(
+        lines[at("sgdisk")],
+        format!(
+            "sgdisk -n5:{end}:{} -t5:ea00 -c5:boot -n6:{}:{} -t6:8300 -c6:root /dev/nvme0n1",
+            end + (2 << 21) - 1,
+            end + (2 << 21),
+            239616 + (400u64 << 21) - 1
+        )
+    );
+    assert!(lines.contains(&"wipefs -a /dev/nvme0n1p5 /dev/nvme0n1p6".to_string()));
+    assert!(lines.contains(&"mkfs.vfat -F 32 -n BOOT -i ABCD1234 /dev/nvme0n1p5".to_string()));
+    assert!(!lines.iter().any(|l| l.contains("mkfs") && l.contains("nvme0n1p1")), "Windows' ESP is never formatted");
+}
+
+#[test]
+fn init_beside_windows_puts_systemd_boot_on_windows_esp_and_kernels_on_xbootldr() {
+    let ids = ids();
+    let w = windows_disk();
+    let b = crate::BesideWindows { space: crate::space(&w, None).unwrap(), disk: w };
+    let t = target("arch");
+    let i = Init {
+        device: "/dev/nvme0n1",
+        kind: Kind::Default,
+        luks: false,
+        ids: &ids,
+        swap_gib: 4,
+        efi_vars: true,
+        target: Some(&t),
+        cmdline: "",
+        in_root: &[],
+        passphrase: None,
+        windows: Some(&b),
+    };
+    let plan = beside_windows(&i);
+    let lines = plan.lines();
+    assert!(!lines.iter().any(|l| l.contains("ntfsresize")), "free space needs no shrink");
+    assert!(
+        lines.contains(
+            &"sgdisk -n5:839100416:843294719 -t5:ea00 -c5:boot -n6:843294720:976771071 -t6:8300 -c6:root /dev/nvme0n1"
+                .to_string()
+        )
+    );
+    let at = |p: &str| position(&lines, p);
+    assert!(
+        at("mount /dev/nvme0n1p1 /r/run/fspec/disk/esp")
+            < at("test -f /r/run/fspec/disk/esp/EFI/Microsoft/Boot/bootmgfw.efi")
+    );
+    assert!(at("test -f") < at("bootctl --esp-path=/r/run/fspec/disk/esp --boot-path=/r/run/fspec/disk/efi install"));
+    assert!(!lines.iter().any(|l| l.starts_with("bootctl") && l.contains("--no-variables")));
+    assert!(
+        !lines.iter().any(|l| l.contains("EFI/Microsoft") && !l.starts_with("test -f")),
+        "nothing writes EFI/Microsoft"
+    );
+    assert!(
+        lines.iter().any(|l| l.contains("echo 'timeout 5'") && l.ends_with("/r/run/fspec/disk/esp/loader/loader.conf"))
+    );
+    // The kernels go where they always do, /efi in the root, which is now the XBOOTLDR partition.
+    assert!(lines.contains(&"mount --rbind /r/run/fspec/disk/efi /r/run/fspec/disk/arch/efi".to_string()));
+    let fstab = stdin_of(&plan, "tee /r/run/fspec/disk/arch/etc/fstab");
+    assert!(
+        fstab.contains("UUID=ABCD-1234 /efi vfat umask=0077 0 2\nUUID=1234-ABCD /boot/efi vfat umask=0077 0 2\n"),
+        "{fstab}"
+    );
+    // Boot ownership lives in loader.conf on Windows' ESP.
+    let default = plan.steps.iter().find_map(|s| match s {
+        crate::Step::Run(c)
+            if c.args.iter().any(|a| a == "arch") && c.args.iter().any(|a| a.ends_with("loader.conf")) =>
+        {
+            c.args.iter().find(|a| a.ends_with("loader.conf")).cloned()
+        }
+        _ => None,
+    });
+    assert_eq!(default.as_deref(), Some("/r/run/fspec/disk/esp/loader/loader.conf"));
+    assert!(plan.cleanup.contains(&fspec_core::runner::Cmd::new("umount").arg("/r/run/fspec/disk/esp")));
+}
+
+#[test]
+fn beside_windows_refuses_the_zfs_and_bios_layouts_and_aerynos() {
+    let ids = ids();
+    let w = windows_disk();
+    let b = crate::BesideWindows { space: crate::space(&w, None).unwrap(), disk: w };
+    let base = Init {
+        device: "/dev/nvme0n1",
+        kind: Kind::Bios,
+        luks: false,
+        ids: &ids,
+        swap_gib: 4,
+        efi_vars: true,
+        target: None,
+        cmdline: "",
+        in_root: &[],
+        passphrase: None,
+        windows: Some(&b),
+    };
+    assert!(init(&paths(), &base).is_err());
+    let t = target("aerynos");
+    let i = Init { kind: Kind::Default, target: Some(&t), ..base };
+    assert!(init(&paths(), &i).unwrap_err().to_string().contains("blsforme"));
+}
+
+/// Arch beside Windows: the XBOOTLDR partition at /efi and Windows' ESP at /boot/efi.
+fn windows_arch() -> Machine {
+    let xbootldr = json!({"name": "/dev/vda5", "type": "part", "fstype": "vfat", "size": 2u64 << 30, "uuid": "ABCD-1234",
+        "parttype": "BC13C2FF-59E6-4262-A352-B275FD6F7172", "mountpoints": ["/efi"], "fsavail": 1u64 << 30, "partn": 5});
+    let l = lsblk(
+        "gpt",
+        vec![esp("/dev/vda1", 1, 100, &["/boot/efi"]), btrfs_part("/dev/vda2", 2, &["/", "/home"]), xbootldr],
+    );
+    classify(&facts("/@arch", l, true), "arch".into(), String::new()).unwrap()
+}
+
+#[test]
+fn classify_reads_the_layout_beside_windows_and_boot_follows_loader_conf_there() {
+    let m = windows_arch();
+    let Layout::Default { esp, loader: Some(loader), .. } = &m.layout else { panic!("{:?}", m.layout) };
+    assert_eq!((esp.dev.as_str(), loader.dev.as_str()), ("/dev/vda5", "/dev/vda1"));
+    assert_eq!(m.layout.loader_dir(), "/boot/efi");
+    let root = tempfile::tempdir().unwrap();
+    let p = Paths::new(root.path().into(), root.path().join("home"));
+    std::fs::create_dir_all(root.path().join("boot/efi/loader")).unwrap();
+    std::fs::write(root.path().join("boot/efi/loader/loader.conf"), "timeout 5\ndefault arch-*\n").unwrap();
+    assert_eq!(crate::boot_owner(&RecordingRunner::default(), &p, &m).unwrap().as_deref(), Some("arch"));
+    let plan = adopt_boot(&paths(), &m).unwrap();
+    assert!(plan.lines().iter().any(|l| l.contains("/r/boot/efi/loader/loader.conf")), "{:#?}", plan.lines());
+    // The 100 MiB ESP is not what the recipes check: the kernels go to the 2 GiB XBOOTLDR.
+    assert_eq!(crate::misfit(crate::recipe("fedora").unwrap(), &m.layout, &Firmware::Efi), None);
 }

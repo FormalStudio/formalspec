@@ -3,7 +3,7 @@ use fspec_core::Paths;
 use fspec_core::runner::Cmd;
 
 use crate::Plan;
-use crate::classic::{Sources, grub_menu, sd_default};
+use crate::classic::{Sources, grub_menu, s, sd_default};
 use crate::machine::{Layout, Machine};
 
 /// Make the running root own boot, so the root that owned it before can be forgotten: its entry
@@ -14,7 +14,9 @@ pub fn adopt_boot(paths: &Paths, m: &Machine) -> Result<Plan> {
     let here = &m.running;
     let mut plan = Plan::default();
     match &m.layout {
-        Layout::Default { .. } => sd_default(&src.esp, here).into_iter().for_each(|c| plan.run(c)),
+        Layout::Default { .. } => {
+            sd_default(&s(&paths.system(m.layout.loader_dir())), here).into_iter().for_each(|c| plan.run(c))
+        }
         Layout::Zfs { pool, .. } => plan.run(Cmd::new("zpool").arg("set").arg(format!("bootfs={}", m.root)).arg(pool)),
         Layout::Bios { boot, .. } => {
             let install = if here == "fedora" { "grub2-install" } else { "grub-install" };

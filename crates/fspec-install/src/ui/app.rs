@@ -232,6 +232,7 @@ impl App {
             device: disk.map(|i| i.path.clone()).unwrap_or_default(),
             model: disk.map(|i| i.model.clone()).unwrap_or_default(),
             distro: sh.distro,
+            windows: d.as_ref().and_then(|v| v.windows.as_ref()).map(windows_summary),
         }
     }
 
@@ -676,4 +677,20 @@ fn dim(buf: &mut Buffer, th: &Theme) {
             cell.modifier.insert(Modifier::DIM);
         }
     }
+}
+
+/// What the review and the confirm modal say happens to Windows.
+fn windows_summary(b: &fspec_switch::BesideWindows) -> super::screens::review::Windows {
+    let device = &b.disk.disk;
+    let (review, confirm) = match &b.space.shrink {
+        Some(sh) => (
+            format!("Windows shrinks by {} and stays in the boot menu.", fmt_size(b.disk.windows.size - sh.to)),
+            format!("Windows on {device} shrinks to {}.", fmt_size(sh.to)),
+        ),
+        None => (
+            "Windows is untouched and stays in the boot menu.".to_string(),
+            format!("Linux goes into free space on {device}."),
+        ),
+    };
+    super::screens::review::Windows { review, confirm, bitlocker: b.disk.bitlocker() }
 }

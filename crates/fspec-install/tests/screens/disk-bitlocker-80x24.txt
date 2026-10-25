@@ -1,0 +1,24 @@
+  FormalSpec    Language · Disk · System · Preset · Account · Review · Install
+  ────────────────────────────────────────────────────────────────────────────
+
+  Choose a disk
+
+  ▌ Samsung SSD 980 PRO    1 TB   nvme  Windows (BitLocker), EFI (vfat)
+    WD Blue SA510        500 GB   sata  Empty
+    SanDisk Ultra         16 GB   usb   Installer USB
+
+     Install beside Windows   Erase the whole disk
+    Windows is encrypted with BitLocker. In Windows, shrink C: in Disk
+    Management to free at least 32 GB.
+
+
+   Windows 998 GB
+
+
+
+    ●━━  Encrypt the disk
+    Swap size   ‹ 4 GB ›
+
+
+
+  ↑↓ Move  Space Encrypt  r Rescan  Enter Continue  Esc Back  ? Keys  s Spec

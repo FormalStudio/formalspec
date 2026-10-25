@@ -30,6 +30,7 @@ pub struct DemoBackend {
     stage_delay: Duration,
     fail_at: Option<usize>,
     efi: bool,
+    bitlocker: bool,
 }
 
 impl DemoBackend {
@@ -42,12 +43,19 @@ impl DemoBackend {
             stage_delay: Duration::from_millis(1700),
             fail_at: fail.then_some(5),
             efi: true,
+            bitlocker: false,
         }
     }
 
     /// No delays, for tests.
     pub fn instant() -> Self {
-        DemoBackend { clone_delay: Duration::ZERO, stage_delay: Duration::ZERO, fail_at: None, efi: true }
+        DemoBackend {
+            clone_delay: Duration::ZERO,
+            stage_delay: Duration::ZERO,
+            fail_at: None,
+            efi: true,
+            bitlocker: false,
+        }
     }
 
     pub fn with_stage_delay(mut self, d: Duration) -> Self {
@@ -58,6 +66,12 @@ impl DemoBackend {
     /// A machine that booted with BIOS.
     pub fn bios(mut self) -> Self {
         self.efi = false;
+        self
+    }
+
+    /// Windows on the first disk is BitLocker-encrypted, so it cannot be shrunk.
+    pub fn bitlocker(mut self) -> Self {
+        self.bitlocker = true;
         self
     }
 
@@ -82,6 +96,31 @@ fn disk(path: &str, model: &str, bytes: u64, transport: &str, contents: &[&str],
         removable: live,
         contents: contents.iter().map(|s| s.to_string()).collect(),
         live_medium: live,
+        windows: None,
+    }
+}
+
+/// Windows filling a 1 TB disk: a 100 MiB ESP, `C:` and its recovery partition at the end.
+fn windows(bitlocker: bool) -> fspec_switch::WindowsDisk {
+    let gib = fspec_switch::GIB;
+    let part = |dev: &str, partn, start, size, fstype: &str| fspec_switch::Part {
+        dev: dev.into(),
+        partn,
+        start,
+        size,
+        fstype: fstype.into(),
+        ..fspec_switch::Part::default()
+    };
+    let c_size = 1_000_204_886_016 - 2 * gib;
+    fspec_switch::WindowsDisk {
+        disk: "/dev/nvme0n1".into(),
+        sector: 512,
+        esp: part("/dev/nvme0n1p1", 1, 2048, 100 << 20, "vfat"),
+        windows: part("/dev/nvme0n1p3", 3, 239616, c_size, if bitlocker { "BitLocker" } else { "ntfs" }),
+        windows_limit: 239616 + c_size / 512,
+        gaps: Vec::new(),
+        next_partn: 5,
+        shrink_min: Ok(300_000_000_000),
     }
 }
 
@@ -114,15 +153,17 @@ hosts = [
 
 impl Backend for DemoBackend {
     fn disks(&self) -> Result<Vec<DiskInfo>> {
+        let mut win = disk(
+            "/dev/nvme0n1",
+            "Samsung SSD 980 PRO",
+            1_000_204_886_016,
+            "nvme",
+            &[if self.bitlocker { "Windows (BitLocker)" } else { "Windows (ntfs)" }, "EFI (vfat)"],
+            false,
+        );
+        win.windows = Some(windows(self.bitlocker));
         Ok(vec![
-            disk(
-                "/dev/nvme0n1",
-                "Samsung SSD 980 PRO",
-                1_000_204_886_016,
-                "nvme",
-                &["Windows (ntfs)", "EFI (vfat)"],
-                false,
-            ),
+            win,
             disk("/dev/sda", "WD Blue SA510", 500_107_862_016, "sata", &[], false),
             disk("/dev/sdb", "SanDisk Ultra", 16_008_609_792, "usb", &["FSPEC-LIVE (iso9660)"], true),
         ])

@@ -310,6 +310,15 @@ Each root keeps its own `/boot` for its packages, and its own kernel tooling wri
 Arch, a kernel hook fspec installs on Void, and blsforme on AerynOS. Each root's kernel command
 line comes from its `/etc/kernel/cmdline`.
 
+Beside Windows, the installer keeps Windows' own ESP, usually 100 to 300 MB, which is too small
+for several kernels. systemd-boot and `loader.conf` go onto it, next to `EFI/Microsoft`, which
+fspec never writes, and it is mounted at `/boot/efi` in every root. A new 2 GiB Extended Boot
+Loader (XBOOTLDR) partition takes the kernels and entries and is mounted at `/efi`, where every
+distro's kernel tooling already writes, so nothing else changes. systemd-boot reads entries from
+both partitions and lists Windows Boot Manager from its own ESP. `fspec switch --adopt-boot` and
+`fspec forget` edit `loader.conf` on Windows' ESP. AerynOS is refused there, since blsforme puts
+its kernels on the ESP itself.
+
 ### ZFS
 
 A pool `rpool` with `rpool/ROOT/<distro>` boot environments, `rpool/home` and `rpool/fspec`,

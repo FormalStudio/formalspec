@@ -8,14 +8,14 @@
   3  System     Fedora · Minimal                             Change   │  load("//modules/minimal.star", "modules",   │
   4  Account    Kyan de Sutter (kyan) on kyan-fedora         Change   │      "system")                               │
                                                                       │                                              │
-  ▌ ━━●  Use Secure Boot with your own keys                           │  hosts = [                                   │
-         Fedora keeps booting through its vendor-signed shim.         │      host(                                   │
-         Measured boot and anti-cheat behind a chainloaded shim are   │          name = "kyan-fedora",               │
-         not verified yet.                                            │          platform = "x86_64-linux",          │
-                                                                      │          locale = "en_US.UTF-8",             │
-    Erase /dev/nvme0n1 and install                                    │          keymap = "us",                      │
+     Windows shrinks by 128 GB and stays in the boot menu.            │  hosts = [                                   │
+                                                                      │      host(                                   │
+  ▌ ━━●  Use Secure Boot with your own keys                           │          name = "kyan-fedora",               │
+         Fedora keeps booting through its vendor-signed shim.         │          platform = "x86_64-linux",          │
+         Measured boot and anti-cheat behind a chainloaded shim are   │          locale = "en_US.UTF-8",             │
+         not verified yet.                                            │          keymap = "us",                      │
                                                                       │          timezone = "UTC",                   │
-                                                                      │          system = system("fedora"),          │
+    Install beside Windows                                            │          system = system("fedora"),          │
                                                                       │          modules = modules("fedora"),        │
                                                                       │          users = [user("kyan", uid = 1000,   │
                                                                       │              groups = ["wheel"])],           │

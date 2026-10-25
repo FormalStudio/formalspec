@@ -5,26 +5,56 @@ use ratatui::style::{Modifier, Style};
 use super::{Flow, Hints, Shared, hints, plain};
 use crate::model::{DiskChoice, DiskInfo, Secret};
 use crate::ui::theme::fg;
-use crate::ui::widgets::controls::{chip, stepper, toggle};
+use crate::ui::widgets::controls::{chip, segmented, stepper, toggle};
 use crate::ui::widgets::input::{FIELD_ROWS, Field, TextInput, draw_field};
 use crate::ui::widgets::list::{FilterList, row_chrome};
-use crate::ui::widgets::{Canvas, Hit, fmt_size, rect_in};
+use crate::ui::widgets::{Canvas, Hit, fmt_size, rect_in, wrap};
+use unicode_width::UnicodeWidthStr;
 
 const W_LIST: u8 = 0;
 const W_TOGGLE: u8 = 1;
 const W_PASS: u8 = 2;
 const W_CONFIRM: u8 = 3;
 const W_SWAP: u8 = 4;
+const W_MODE: u8 = 5;
+const W_SIZE: u8 = 6;
 const EFI_BYTES: u64 = 2_000_000_000;
 const MAX_SWAP: u64 = 64;
+const GB: u64 = fspec_switch::GB;
+/// The size picker moves in these steps.
+const SIZE_STEP: u64 = 8;
+/// What the picker starts at when Windows can give that much.
+const DEFAULT_LINUX: u64 = 128;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Focus {
     List,
+    Mode,
+    Size,
     Toggle,
     Pass,
     Confirm,
     Swap,
+}
+
+/// Where Linux goes on a disk holding Windows.
+enum Room {
+    /// Free space already there, in bytes.
+    Free(u64),
+    /// Shrunk off Windows; the most it can give, in GB.
+    Shrink(u64),
+    /// Neither, and why.
+    None(String),
+}
+
+fn room(w: &fspec_switch::WindowsDisk) -> Room {
+    if w.free() >= fspec_switch::MIN_LINUX {
+        return Room::Free(w.free());
+    }
+    match w.max_linux() {
+        Ok(most) => Room::Shrink(most / GB),
+        Err(why) => Room::None(why),
+    }
 }
 
 pub struct DiskScreen {
@@ -34,6 +64,12 @@ pub struct DiskScreen {
     pass: TextInput,
     confirm: TextInput,
     swap: u64,
+    /// Install beside Windows rather than erase the disk, when it holds Windows.
+    beside: bool,
+    /// What Linux takes from Windows, in GB.
+    linux_gb: u64,
+    /// The disk `beside` and `linux_gb` were set for.
+    for_disk: Option<String>,
     focus: Focus,
     attempted: bool,
     height: usize,
@@ -54,6 +90,9 @@ impl DiskScreen {
             pass: TextInput::new(true),
             confirm: TextInput::new(true),
             swap: 4,
+            beside: true,
+            linux_gb: DEFAULT_LINUX,
+            for_disk: None,
             focus: Focus::List,
             attempted: false,
             height: 4,
@@ -69,6 +108,46 @@ impl DiskScreen {
             Some(i) => self.list.select_item(i),
             None => self.list.home(&ok),
         }
+        self.follow();
+    }
+
+    /// A newly picked disk starts beside Windows, with the default size.
+    fn follow(&mut self) {
+        let path = self.selected().map(|d| d.path.clone());
+        if path == self.for_disk {
+            return;
+        }
+        self.for_disk = path;
+        self.beside = true;
+        if let Some(Room::Shrink(most)) = self.windows().map(room) {
+            self.linux_gb = DEFAULT_LINUX.clamp(fspec_switch::MIN_LINUX / GB, most);
+        }
+    }
+
+    fn windows(&self) -> Option<&fspec_switch::WindowsDisk> {
+        self.selected().and_then(|d| d.windows.as_ref())
+    }
+
+    /// The Windows disk when installing beside it.
+    fn beside_windows(&self) -> Option<&fspec_switch::WindowsDisk> {
+        self.windows().filter(|_| self.beside)
+    }
+
+    fn resize(&mut self, d: i64) {
+        if let Some(Room::Shrink(most)) = self.windows().map(room) {
+            let min = fspec_switch::MIN_LINUX / GB;
+            self.linux_gb = (self.linux_gb as i64 + d * SIZE_STEP as i64).clamp(min as i64, most as i64) as u64;
+        }
+    }
+
+    /// Where Linux goes beside Windows, or why it cannot.
+    fn space(&self) -> Option<Result<fspec_switch::Space, String>> {
+        let w = self.beside_windows()?;
+        Some(match room(w) {
+            Room::Free(_) => fspec_switch::space(w, None).map_err(|e| e.to_string()),
+            Room::Shrink(_) => fspec_switch::space(w, Some(self.linux_gb * GB)).map_err(|e| e.to_string()),
+            Room::None(why) => Err(why),
+        })
     }
 
     pub fn selected(&self) -> Option<&DiskInfo> {
@@ -90,7 +169,9 @@ impl DiskScreen {
     }
 
     fn valid(&self) -> bool {
-        self.selected().is_some() && (!self.encrypt || (self.pass.len() >= 8 && self.pass.value == self.confirm.value))
+        self.selected().is_some()
+            && !matches!(self.space(), Some(Err(_)))
+            && (!self.encrypt || (self.pass.len() >= 8 && self.pass.value == self.confirm.value))
     }
 
     pub fn value(&self) -> Option<DiskChoice> {
@@ -101,11 +182,22 @@ impl DiskScreen {
             device: self.selected()?.path.clone(),
             encrypt: self.encrypt.then(|| Secret(self.pass.value.clone())),
             swap_gib: self.swap,
+            windows: match (self.beside_windows(), self.space()) {
+                (Some(w), Some(Ok(space))) => Some(fspec_switch::BesideWindows { disk: w.clone(), space }),
+                _ => None,
+            },
         })
     }
 
     fn stops(&self) -> Vec<Focus> {
-        let mut s = vec![Focus::List, Focus::Toggle];
+        let mut s = vec![Focus::List];
+        if let Some(w) = self.windows() {
+            s.push(Focus::Mode);
+            if self.beside && matches!(room(w), Room::Shrink(_)) {
+                s.push(Focus::Size);
+            }
+        }
+        s.push(Focus::Toggle);
         if self.encrypt {
             s.extend([Focus::Pass, Focus::Confirm]);
         }
@@ -133,6 +225,8 @@ impl DiskScreen {
         self.attempted = true;
         if self.selected().is_none() {
             self.focus = Focus::List;
+        } else if matches!(self.space(), Some(Err(_))) {
+            self.focus = Focus::Mode;
         } else if self.pass_error().is_some() {
             self.focus = Focus::Pass;
         } else {
@@ -155,6 +249,12 @@ impl DiskScreen {
             KeyCode::Esc => return Flow::Back,
             _ => {}
         }
+        let flow = self.key_in(k, sh);
+        self.follow();
+        flow
+    }
+
+    fn key_in(&mut self, k: &KeyEvent, sh: &mut Shared) -> Flow {
         match self.focus {
             Focus::List => {
                 let disks = &self.disks;
@@ -169,6 +269,19 @@ impl DiskScreen {
                     }
                 }
             }
+            Focus::Mode => match k.code {
+                KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => self.beside = !self.beside,
+                KeyCode::Up => self.shift(-1),
+                KeyCode::Down => self.shift(1),
+                _ => {}
+            },
+            Focus::Size => match k.code {
+                KeyCode::Left | KeyCode::Char('h') => self.resize(-1),
+                KeyCode::Right | KeyCode::Char('l') => self.resize(1),
+                KeyCode::Up => self.shift(-1),
+                KeyCode::Down => self.shift(1),
+                _ => {}
+            },
             Focus::Toggle => match k.code {
                 KeyCode::Char(' ') | KeyCode::Left | KeyCode::Right => self.set_encrypt(!self.encrypt),
                 KeyCode::Up => self.shift(-1),
@@ -204,6 +317,15 @@ impl DiskScreen {
                     return self.proceed();
                 }
                 self.list.select_item(h.i);
+                self.follow();
+            }
+            W_MODE => {
+                self.focus = Focus::Mode;
+                self.beside = h.i == 0;
+            }
+            W_SIZE => {
+                self.focus = Focus::Size;
+                self.resize(if h.i == 0 { -1 } else { 1 });
             }
             W_TOGGLE => {
                 self.focus = Focus::Toggle;
@@ -236,7 +358,10 @@ impl DiskScreen {
                 ("Esc", "Back"),
                 ("?", "Keys"),
             ]),
-            Focus::Swap => hints(&[("←→", "Change size"), ("Tab", "Next"), ("Enter", "Continue"), ("Esc", "Back")]),
+            Focus::Swap | Focus::Size => {
+                hints(&[("←→", "Change size"), ("Tab", "Next"), ("Enter", "Continue"), ("Esc", "Back")])
+            }
+            Focus::Mode => hints(&[("←→", "Choose"), ("Tab", "Next"), ("Enter", "Continue"), ("Esc", "Back")]),
             Focus::Pass | Focus::Confirm => hints(&[("Tab", "Next"), ("Enter", "Continue"), ("Esc", "Back")]),
             _ => hints(&[("Tab", "Next"), ("Space", "Toggle"), ("Enter", "Continue"), ("Esc", "Back")]),
         }
@@ -252,7 +377,8 @@ impl DiskScreen {
             return;
         }
         let enc_rows = if self.encrypt { FIELD_ROWS + 1 } else { 0 };
-        let fixed = 2 + 1 + 2 + 1 + 1 + 1 + 1 + enc_rows + 1;
+        let win_rows = if self.windows().is_some() { 3 } else { 0 };
+        let fixed = 2 + 1 + 2 + 1 + 1 + 1 + 1 + enc_rows + 1 + win_rows;
         let list_h = (a.height.saturating_sub(fixed) as usize).clamp(1, self.disks.len());
         self.height = list_h;
         let top = self.list.window(list_h);
@@ -289,11 +415,53 @@ impl DiskScreen {
             }
         }
         let mut y = 2 + list_h as u16 + 1;
+        if let Some(w) = self.windows() {
+            let row = rect_in(a, 0, y, a.width, 1);
+            if self.focus == Focus::Mode {
+                c.text(row, 0, 0, "▌", fg(th.accent));
+            }
+            let labels = ["Install beside Windows", "Erase the whole disk"];
+            segmented(c, row, 2, &labels, usize::from(!self.beside), self.focus == Focus::Mode, W_MODE);
+            y += 1;
+            if self.beside {
+                let row = rect_in(a, 0, y, a.width, 1);
+                match room(w) {
+                    Room::Shrink(_) => {
+                        if self.focus == Focus::Size {
+                            c.text(row, 0, 0, "▌", fg(th.accent));
+                        }
+                        c.text(row, 2, 0, "Linux size", fg(th.muted));
+                        let size = format!("{} GB", self.linux_gb);
+                        stepper(c, row, 14, &size, self.focus == Focus::Size, W_SIZE);
+                    }
+                    Room::Free(b) => {
+                        c.text_ell(row, 2, 0, &format!("Uses {} of free space.", fmt_size(b)), fg(th.muted));
+                    }
+                    Room::None(why) => {
+                        let lines = wrap(&why, a.width.saturating_sub(4) as usize);
+                        let n = lines.len().saturating_sub(1) as u16;
+                        for (i, l) in lines.iter().enumerate() {
+                            c.text(a, 2, y + i as u16, l, fg(th.amber));
+                        }
+                        y += n;
+                    }
+                }
+            }
+            y += 2;
+        }
         let sel = self.selected();
         if let Some(d) = sel {
             self.draw_bar(c, rect_in(a, 0, y, a.width.min(76), 2), d.bytes, sh);
             y += 3;
-            if !d.contents.is_empty() {
+            let windows = self.beside_windows();
+            let shrink = match self.space() {
+                Some(Ok(sp)) => sp.shrink,
+                _ => None,
+            };
+            if let (Some(w), Some(sh)) = (windows, shrink) {
+                let msg = format!("Windows shrinks from {} to {}.", fmt_size(w.windows.size), fmt_size(sh.to));
+                c.text_ell(a, 2, y, &msg, fg(th.muted));
+            } else if windows.is_none() && !d.contents.is_empty() {
                 let msg = format!("Everything on {} ({}) will be erased.", d.model, fmt_size(d.bytes));
                 c.text_ell(a, 2, y, &msg, fg(th.amber));
             }
@@ -355,26 +523,58 @@ impl DiskScreen {
 
     fn draw_bar(&self, c: &mut Canvas, a: Rect, disk_bytes: u64, sh: &Shared) {
         let th = *c.th;
-        let efi_w = ((a.width as u64 * EFI_BYTES / disk_bytes.max(1)) as u16).max(10);
-        let rest_x = efi_w + 1;
-        let rest_w = a.width.saturating_sub(rest_x);
-        if self.encrypt {
+        let subs = format!("{} @home @swap @snapshots @fspec", sh.subvolume());
+        let disk_bytes = disk_bytes.max(1);
+        // Every segment but the last, with its label, bytes and whether it is ours.
+        let mut fixed: Vec<(String, u64, bool)> = Vec::new();
+        match (self.beside_windows(), self.space()) {
+            (Some(w), Some(Ok(sp))) => {
+                let win = sp.shrink.as_ref().map_or(w.windows.size, |s| s.to);
+                fixed.push((format!("Windows {}", fmt_size(win)), win, false));
+                fixed.push(("boot 2 GB".into(), EFI_BYTES, true));
+            }
+            (Some(w), _) => fixed.push((format!("Windows {}", fmt_size(w.windows.size)), w.windows.size, false)),
+            _ => fixed.push(("EFI 2 GB".into(), EFI_BYTES, true)),
+        }
+        let mut x = 0;
+        let mut segs: Vec<(Rect, String, bool)> = Vec::new();
+        for (label, bytes, ours) in fixed {
+            let min = label.width() as u16 + 2;
+            let w = ((a.width as u64 * bytes / disk_bytes) as u16).clamp(min, (a.width / 2).max(min));
+            segs.push((Rect { x: a.x + x, y: a.y + 1, width: w, height: 1 }, label, ours));
+            x += w + 1;
+        }
+        let rest_x = x;
+        let beside_only = self.beside_windows().is_some() && !matches!(self.space(), Some(Ok(_)));
+        if !beside_only {
+            segs.push((
+                Rect { x: a.x + rest_x, y: a.y + 1, width: a.width.saturating_sub(rest_x), height: 1 },
+                subs,
+                true,
+            ));
+        }
+        if self.encrypt && !beside_only {
             c.text(a, rest_x, 0, "LUKS2 ", fg(th.accent));
             for x in rest_x + 6..a.width {
                 c.text(a, x, 0, "─", fg(th.line));
             }
         }
-        let efi = Rect { y: a.y + 1, height: 1, width: efi_w, ..a };
-        let rest = Rect { x: a.x + rest_x, y: a.y + 1, height: 1, width: rest_w };
-        let subs = format!("{} @home @swap @snapshots @fspec", sh.subvolume());
-        if th.truecolor {
-            c.fill(efi, Style::new().bg(th.sel));
-            c.fill(rest, Style::new().bg(th.surface));
-            c.text(efi, 1, 0, "EFI 2 GB", fg(th.ink));
-            c.text_ell(rest, 1, 0, &subs, fg(th.muted));
-        } else {
-            c.text(efi, 0, 0, "[EFI 2 GB]", fg(th.ink));
-            c.text_ell(rest, 0, 0, &format!("[{subs}]"), fg(th.muted));
+        let n = segs.len();
+        for (i, (r, label, ours)) in segs.into_iter().enumerate() {
+            let text = if !ours {
+                fg(th.faint)
+            } else if i + 1 == n {
+                fg(th.muted)
+            } else {
+                fg(th.ink)
+            };
+            if th.truecolor {
+                let bg = if ours && i + 1 < n { th.sel } else { th.surface };
+                c.fill(r, Style::new().bg(bg));
+                c.text_ell(r, 1, 0, &label, text);
+            } else {
+                c.text_ell(r, 0, 0, &format!("[{label}]"), text);
+            }
         }
     }
 }

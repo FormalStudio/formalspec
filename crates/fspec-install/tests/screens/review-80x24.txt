@@ -8,11 +8,11 @@
   3  System     Fedora · Minimal                                        Change
   4  Account    Kyan de Sutter (kyan) on kyan-fedora                    Change
 
+     Windows shrinks by 128 GB and stays in the boot menu.
+
     ●━━  Use Secure Boot with your own keys
 
-    Erase /dev/nvme0n1 and install
-
-
+    Install beside Windows
 
 
 

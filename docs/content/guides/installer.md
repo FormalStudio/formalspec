@@ -8,9 +8,9 @@ stick, answer a few screens, and it partitions the disk, installs the distro you
 spec for the machine and applies it. Use it for a new machine, or to reinstall one from the spec
 you already keep in git.
 
-The installer erases the disk you install to. It installs one system per disk, on the
-[default layout](switching-distros.md#default), and does not install beside Windows or another
-system on the same disk.
+The installer erases the disk you install to, or installs beside Windows when the disk holds it.
+It installs one Linux system per disk, on the [default layout](switching-distros.md#default), and
+does not install beside another Linux system on the same disk.
 
 ## What the ISO is
 
@@ -21,7 +21,8 @@ carries:
 - `fspec-install`, the installer itself, a full-screen terminal program;
 - the tools each distro installs with: debootstrap, dnf, pacman with arch-install-scripts, a
   static xbps, a static moss, and podman;
-- disk tools (gdisk, parted, btrfs-progs, cryptsetup), NetworkManager, git and an ssh client.
+- disk tools (gdisk, parted, btrfs-progs, cryptsetup, ntfs-3g), NetworkManager, git and an ssh
+  client.
 
 On a machine with a GPU, the installer runs full screen in a terminal under a small Wayland
 compositor, with true colour, a proper font and the mouse. Without a GPU, or on a serial console,
@@ -135,6 +136,34 @@ The screen shows the layout it will create: a 2 GB EFI partition and a btrfs fil
 subvolumes for the system, `@home`, `@swap`, `@snapshots` and `@fspec`. The
 [default layout](switching-distros.md#default) explains each one.
 
+#### Beside Windows
+
+On a disk that holds Windows, the screen offers **Install beside Windows**, picked by default, and
+**Erase the whole disk**.
+
+- When the disk has 32 GB or more of free space, Linux uses the largest free space and Windows is
+  not touched.
+- Otherwise **Linux size** sets how much Linux takes from the end of `C:`, from 32 GB up to what
+  leaves Windows 20 GB more than it uses now, in steps of 8 GB. `ntfsresize` shrinks `C:` and its
+  partition. Windows checks the disk once on its next start.
+
+Linux gets a 2 GB boot partition for the kernels and the rest for btrfs. systemd-boot goes on
+Windows' own EFI partition and lists **Windows Boot Manager** in its menu, which shows for 5
+seconds at every boot. The firmware boots systemd-boot first and keeps Windows' entry. Nothing in
+`EFI\Microsoft` is changed. The [default layout](switching-distros.md#default) has the details.
+
+Windows cannot be shrunk while it is hibernated or uses Fast Startup, while `C:` is marked for a
+disk check, or while it is encrypted with BitLocker. The screen says what to do in Windows:
+
+| The screen says | Do this in Windows |
+| --- | --- |
+| Windows did not fully shut down | Turn off Fast Startup in Power Options, then shut down |
+| Windows marked C: for a disk check | Run `chkdsk C: /f`, restart, then shut down |
+| Windows is encrypted with BitLocker | Shrink `C:` in Disk Management, so the installer finds free space |
+
+With BitLocker on, Windows can ask for its recovery key once after the install, because the boot
+path changed. AerynOS cannot be installed beside Windows.
+
 ### System
 
 Choose the distro. Each row says whether it is rolling or fixed-release and whether it is classic
@@ -185,11 +214,13 @@ The review screen lists every choice. Press its number, or click **Change**, to 
 machine booted with UEFI and its firmware is in setup mode: clear the Secure Boot keys in the
 firmware settings, then start the installer again. See [Secure Boot](#secure-boot).
 
-**Erase `<disk>` and install** starts the install.
+**Erase `<disk>` and install**, or **Install beside Windows**, starts the install. Beside Windows,
+the screen says how much Windows shrinks, or that it is untouched.
 
 ### Install
 
-The install runs in stages: partitioning, formatting (and encrypting), creating subvolumes,
+The install runs in stages: shrinking Windows when it gives up space, partitioning, formatting
+(and encrypting), creating subvolumes,
 installing the bootloader, installing the distro, applying your spec, setting your password and
 copying your spec. Each command's output streams to the screen. It cannot be interrupted; keep
 the machine powered on.
@@ -244,6 +275,7 @@ are not verified.
 | Where | What |
 | --- | --- |
 | The EFI partition, mounted at `/efi` | systemd-boot and the distro's kernels, or GRUB on a BIOS machine |
+| Beside Windows: the boot partition at `/efi`, Windows' EFI partition at `/boot/efi` | The kernels on the first, systemd-boot and `loader.conf` on the second |
 | `@<distro>` | The system root, such as `@fedora` |
 | `@home` | `/home` |
 | `@swap` | The swapfile |
@@ -349,6 +381,17 @@ can read the repository.
 
 Every host in the spec is for another platform, or declares no `system`. The ISO installs
 `x86_64-linux` hosts.
+
+**`ntfsresize refuses to shrink <partition>; boot Windows, shut it down fully and try again`**
+
+Windows changed between the disk screen and the install, usually by hibernating. Boot Windows,
+shut it down with Fast Startup off, and start the installer again.
+
+**`<partition> holds no Windows Boot Manager; this is not Windows' ESP`**
+
+The EFI partition on the disk has no `EFI\Microsoft\Boot\bootmgfw.efi`. Windows boots from an
+EFI partition on another disk, which the installer does not change. Install to a disk of its own,
+or erase this one.
 
 **`fedora needs --release <number>, the Fedora release to install`**
 

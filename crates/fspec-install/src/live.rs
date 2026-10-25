@@ -20,7 +20,23 @@ pub const LSBLK: [&str; 6] =
 
 pub fn disks(runner: &dyn Runner) -> Result<Vec<DiskInfo>> {
     let out = runner.check(&Cmd::new("lsblk").args(LSBLK))?;
-    parse_disks(&out.stdout)
+    let mut disks = parse_disks(&out.stdout)?;
+    for d in disks.iter_mut().filter(|d| !d.live_medium) {
+        d.windows = windows(runner, &d.path).unwrap_or_default();
+    }
+    Ok(disks)
+}
+
+/// Windows on `disk`, with how far ntfsresize could shrink it. ntfsresize only reads here.
+pub fn windows(runner: &dyn Runner, disk: &str) -> Result<Option<fspec_switch::WindowsDisk>> {
+    let sfdisk = runner.check(&Cmd::new("sfdisk").args(["--json", disk]))?.stdout;
+    let lsblk = runner.check(&Cmd::new("lsblk").args(["-J", "-b", "-p", "-o", "NAME,FSTYPE,UUID", disk]))?.stdout;
+    let Some(mut w) = fspec_switch::read_windows(&sfdisk, &lsblk, Err(String::new()))? else { return Ok(None) };
+    if !w.bitlocker() {
+        let out = runner.run(&fspec_switch::ntfs_info(&w.windows.dev))?;
+        w.shrink_min = fspec_switch::shrink_min(out.status, &format!("{}{}", out.stdout, out.stderr));
+    }
+    Ok(Some(w))
 }
 
 pub(crate) fn parse_disks(json: &str) -> Result<Vec<DiskInfo>> {
@@ -56,6 +72,7 @@ pub(crate) fn parse_disks(json: &str) -> Result<Vec<DiskInfo>> {
             removable: d["rm"].as_bool().unwrap_or_default(),
             contents,
             live_medium: live,
+            windows: None,
         });
     }
     Ok(out)
