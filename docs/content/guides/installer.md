@@ -231,7 +231,24 @@ When it finishes, remove the USB stick and pick **Restart now**.
 
 When it fails, the screen names the stage and the error. **Try again** goes back, and
 **Open a shell** leaves you at a root shell in the live system. The full log is at
-`/var/log/fspec-install.log`.
+`/var/log/fspec-install.log`, with the seconds since the install started before each command.
+
+## Install without the screens
+
+From a root shell on the ISO (the **shell only** boot entry, or **Open a shell**),
+`fspec-install --answers answers.json` installs a new system with the choices in a JSON file and
+no questions, erasing the disk it names:
+
+```json
+{"locale": "en_US.UTF-8", "keymap": "us", "timezone": "Europe/Madrid", "disk": "/dev/vda",
+ "distro": "fedora", "preset": "desktop", "desktop": "gnome",
+ "user": "kyan", "full_name": "Kyan", "hostname": "nova", "password": "hunter22"}
+```
+
+`passphrase` encrypts the disk, `swap_gib` sets the swap (4 by default), and `desktop` defaults to
+the distro's first one. It takes only what the screens offer: a distro, preset or desktop they
+would not show is refused before the disk is touched. It prints each stage as it starts and how
+long every stage took, and exits non-zero when a stage fails.
 
 ## Restore from git
 

@@ -1725,7 +1725,14 @@ steps inside the new root before it is unmounted: the user's password through
 `chpasswd`, read once from the account screen and never written to the spec,
 and the copy of the spec repo into the user's home. Without EFI it picks the
 BIOS layout. Each command's output streams to the install screen and to
-`/var/log/fspec-install.log`.
+`/var/log/fspec-install.log`, which stamps each command with the seconds since
+the install started.
+
+`fspec-install --answers <file>` takes the choices from a JSON file instead of
+the screens (a fresh install onto a whole disk; no restore, no Windows, no
+Secure Boot), checks them against the catalog, runs the same install and
+prints each stage with how long it took. It is how the ISO is tested in a VM
+over the serial console.
 
 Secure Boot on the installed system is optional and off by default, since it
 needs the firmware in setup mode; the plan runs no `sbctl` otherwise. Off,

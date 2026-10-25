@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::sync::mpsc::Sender;
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use fspec_core::Paths;
@@ -133,7 +134,7 @@ fn stages(plan: &Plan, device: &str, distro: &str) -> (Vec<String>, Vec<usize>) 
 /// Execute `plan`, reporting each stage, every output line and a failure on `tx` and appending all
 /// of it to `log`. Cleanup runs whether or not the steps succeeded, as [`Plan::execute`] does.
 pub fn execute(plan: &Plan, device: &str, distro: &str, log: &Path, tx: &Sender<Progress>) -> Result<()> {
-    let runner = Streaming { tx: tx.clone(), log: Mutex::new(File::create(log)?) };
+    let runner = Streaming { tx: tx.clone(), log: Mutex::new(File::create(log)?), start: Instant::now() };
     execute_with(plan, &runner, device, distro, log, tx)
 }
 
@@ -186,6 +187,7 @@ fn execute_with(
 struct Streaming {
     tx: Sender<Progress>,
     log: Mutex<File>,
+    start: Instant,
 }
 
 impl Streaming {
@@ -199,7 +201,10 @@ impl Streaming {
 
 impl Runner for Streaming {
     fn run(&self, cmd: &Cmd) -> Result<Output> {
-        self.line(&format!("$ {cmd}"));
+        if let Ok(mut f) = self.log.lock() {
+            let _ = writeln!(f, "[{:>5}s] $ {cmd}", self.start.elapsed().as_secs());
+        }
+        let _ = self.tx.send(Progress::Output(format!("$ {cmd}")));
         let mut c = Command::new(&cmd.program);
         c.args(&cmd.args).envs(cmd.env.iter().map(|(k, v)| (k, v)));
         c.stdout(Stdio::piped()).stderr(Stdio::piped());

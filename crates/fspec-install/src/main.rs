@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{Result, bail};
 use clap::Parser;
+use fspec_install::answers::{self, Answers};
 use fspec_install::backend::Backend;
 use fspec_install::demo::DemoBackend;
 use fspec_install::live::Live;
@@ -15,10 +16,22 @@ struct Args {
     /// Run against a made-up machine; nothing is written anywhere.
     #[arg(long)]
     demo: bool,
+    /// Install without the screens, with the choices in this JSON file.
+    #[arg(long, value_name = "FILE", conflicts_with = "demo")]
+    answers: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    if let Some(file) = &args.answers {
+        if !is_root() {
+            bail!("the installer partitions disks, so it runs as root");
+        }
+        let choices = Answers::parse(&std::fs::read_to_string(file)?)?.choices()?;
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || Live::new().install(&choices, tx));
+        return answers::report(rx, &mut std::io::stdout());
+    }
     let (backend, checkout): (Arc<dyn Backend>, PathBuf) = if args.demo {
         (Arc::new(DemoBackend::new()), std::env::temp_dir().join("fspec-install-demo"))
     } else {
