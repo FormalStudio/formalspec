@@ -126,6 +126,13 @@ impl Plan {
         self.run_steps(runner, None)
     }
 
+    /// Run the plan, and when a step fails, run the undo steps reached so far, newest first, after
+    /// the cleanup has unmounted what they would undo. Only for undo a killed run can do without,
+    /// such as deleting a half-built root; the rest needs [`Plan::execute_journaled`].
+    pub fn execute_undoing(&self, runner: &dyn Runner) -> Result<()> {
+        self.run_steps(runner, None)
+    }
+
     /// Run the plan, recording its undo steps in `journal` as they are reached. The caller rolls
     /// the journal back on failure, after the cleanup has unmounted what the plan mounted.
     pub fn execute_journaled(&self, runner: &dyn Runner, journal: &mut Journal) -> Result<()> {
@@ -133,11 +140,15 @@ impl Plan {
     }
 
     fn run_steps(&self, runner: &dyn Runner, mut journal: Option<&mut Journal>) -> Result<()> {
+        let mut reached = Vec::new();
         let result = self.steps.iter().try_for_each(|s| match s {
             Step::Run(c) => runner.check(c).map(drop),
             Step::Undo(c) => match journal.as_deref_mut() {
                 Some(j) => j.record(Undo::Run { cmd: c.clone() }),
-                None => bail!("no journal for the undo step `{c}`"),
+                None => {
+                    reached.push(c);
+                    Ok(())
+                }
             },
             Step::Expect { probe, ok, msg } => {
                 if (runner.run(probe)?.status == 0) == *ok {
@@ -151,6 +162,14 @@ impl Plan {
         for c in &self.cleanup {
             let _ = runner.run(c);
         }
-        result
+        if let Err(e) = result {
+            for c in reached.iter().rev() {
+                if let Err(u) = runner.check(c) {
+                    return Err(e.context(format!("undoing `{c}` failed too: {u:#}")));
+                }
+            }
+            return Err(e);
+        }
+        Ok(())
     }
 }

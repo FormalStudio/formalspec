@@ -1515,7 +1515,11 @@ subvolume `@<name>` on the running root's btrfs filesystem instead, and
 leaves the running root, `loader.conf`, the other roots' entries and the EFI
 variables alone. It needs EFI, a btrfs root and systemd-boot on an ESP
 mounted at `/efi`, `/boot/efi` or `/boot`, so it also works from a root that
-is not on the default layout yet. It refuses an existing `@<name>`. It runs
+is not on the default layout yet. It refuses an existing `@<name>`, and a
+user the spec declares that the inherited root's `/etc/passwd` lacks, before
+it creates anything. When a later step fails, it deletes the `@<name>` it
+created (`btrfs subvolume delete --recursive`, with the top level mounted
+again after the cleanup), so the next try starts clean. It runs
 `podman run ... -v <new root>:/target:rbind <locked image> bootc install
 to-filesystem --bootloader=none --skip-finalize --root-mount-spec=UUID=<fs>
 --karg=rootflags=subvol=@<name>,noatime,compress=zstd:1 --karg=panic=10

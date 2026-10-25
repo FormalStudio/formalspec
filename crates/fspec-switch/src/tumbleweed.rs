@@ -5,7 +5,9 @@ use fspec_core::Paths;
 use fspec_core::runner::Cmd;
 use fspec_core::zypp::{SNAPSHOT_REPOS, SNAPSHOT_VAR, snapshot_repo};
 
-use crate::beside::{BTRFS_OPTS, DEADLINE_SERVICE, INHERIT, WATCHDOG, deadline_timer, esp, guard_service, valid_name};
+use crate::beside::{
+    BTRFS_OPTS, DEADLINE_SERVICE, INHERIT, WATCHDOG, deadline_timer, delete_new, esp, guard_service, valid_name,
+};
 use crate::classic::{WORK, s};
 use crate::machine::{ESP_TYPE, Firmware, Machine};
 use crate::{Plan, subvol};
@@ -368,7 +370,18 @@ pub fn tumbleweed(paths: &Paths, m: &Machine, t: &Tumbleweed) -> Result<Plan> {
         true,
         format!("{source} holds no root to inherit from"),
     );
+    for u in &t.users {
+        plan.expect(
+            Cmd::new("grep").args(["-q", &format!("^{u}:")]).arg(format!("{source}/etc/passwd")),
+            true,
+            format!("the spec's user {u} does not exist in {source}, the root this one inherits its users from"),
+        );
+    }
     plan.run(Cmd::new("btrfs").args(["subvolume", "create"]).arg(format!("{top}/{new}")));
+    // A failed install leaves no half-built root behind, which would block the next try. The
+    // undo is reached only once this run created the subvolume, and runs after the cleanup has
+    // unmounted the top level, so it mounts it again.
+    plan.undo(delete_new(uuid, &new));
     plan.run(Cmd::new("mkdir").arg("-p").arg(&root));
     plan.run(
         Cmd::new("mount").arg("-o").arg(format!("subvol={new},{BTRFS_OPTS}")).arg(format!("UUID={uuid}")).arg(&root),

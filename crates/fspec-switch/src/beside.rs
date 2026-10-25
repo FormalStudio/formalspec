@@ -497,7 +497,18 @@ pub fn beside(paths: &Paths, m: &Machine, b: &Beside) -> Result<Plan> {
         true,
         format!("{source} holds no root to inherit from"),
     );
+    for u in &b.users {
+        plan.expect(
+            Cmd::new("grep").args(["-q", &format!("^{u}:")]).arg(format!("{source}/etc/passwd")),
+            true,
+            format!("the spec's user {u} does not exist in {source}, the root this one inherits its users from"),
+        );
+    }
     plan.run(Cmd::new("btrfs").args(["subvolume", "create"]).arg(format!("{top}/{new}")));
+    // A failed install leaves no half-built root behind, which would block the next try. The
+    // undo is reached only once this run created the subvolume, and runs after the cleanup has
+    // unmounted the top level, so it mounts it again.
+    plan.undo(delete_new(&m.fs_uuid, &new));
     plan.run(Cmd::new("mkdir").arg("-p").arg(&root));
     plan.run(
         Cmd::new("mount")
@@ -591,4 +602,13 @@ pub fn beside(paths: &Paths, m: &Machine, b: &Beside) -> Result<Plan> {
     plan.run(Cmd::new("sh").arg(etc("fspec/esp-sync.sh")).arg(&root).arg(&esp_dir).arg(distro));
     plan.run(Cmd::new("rm").args(["-rf", &stage]));
     Ok(plan.private(&s(&work)))
+}
+
+/// Delete the subvolume `new` of the filesystem `uuid`, with what was created inside it, such as
+/// snapper's `.snapshots`.
+pub(crate) fn delete_new(uuid: &str, new: &str) -> Cmd {
+    let script = r#"m=$(mktemp -d) && mount -o subvolid=5 "UUID=$1" "$m" || exit 1
+btrfs subvolume delete --recursive "$m/$2"; r=$?
+umount "$m"; rmdir "$m"; exit $r"#;
+    Cmd::new("sh").args(["-c", script, "sh", uuid, new])
 }

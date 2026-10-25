@@ -2012,3 +2012,48 @@ fn a_staged_overlay_keeps_the_hosts_own_guard() {
     run(&with, &dir.path().join("theirs"));
     assert!(!dir.path().join("theirs").exists());
 }
+
+fn status(code: i32) -> Output {
+    Output { status: code, ..Output::default() }
+}
+
+#[test]
+fn a_failed_tumbleweed_install_deletes_the_subvolume_it_created() {
+    let plan = tumbleweed(&paths(), &nixos_from_live(), &tw("20261020")).unwrap();
+    let w = "/r/run/fspec/switch";
+    let delete = "sh -c 'm=$(mktemp -d) && mount -o subvolid=5";
+    let runner = RecordingRunner::default();
+    runner.respond(&format!("test -e {w}/top/@tumbleweed"), status(1));
+    runner.respond("podman run", status(125));
+    let err = plan.execute_undoing(&runner).unwrap_err().to_string();
+    assert!(err.contains("podman"), "{err}");
+    let lines = runner.lines();
+    let at = |p: &str| position(&lines, p);
+    let undo = at(delete);
+    assert!(lines[undo].ends_with(&format!("sh {UUID} @tumbleweed")), "{}", lines[undo]);
+    assert!(at("podman run") < at(&format!("umount -R {w}/tumbleweed")));
+    assert!(at(&format!("umount {w}/top")) < undo, "the top level is unmounted before the undo mounts it again");
+    assert_eq!(undo, lines.len() - 1);
+
+    // A subvolume that was there before the run is refused, and never deleted.
+    let runner = RecordingRunner::default();
+    let err = plan.execute_undoing(&runner).unwrap_err().to_string();
+    assert!(err.contains("@tumbleweed already exists"), "{err}");
+    let lines = runner.lines();
+    assert!(!lines.iter().any(|l| l.starts_with(delete) || l.starts_with("btrfs subvolume create")), "{lines:#?}");
+}
+
+#[test]
+fn a_tumbleweed_install_refuses_a_user_the_inherited_root_lacks() {
+    let plan = tumbleweed(&paths(), &nixos_from_live(), &tw("20261020")).unwrap();
+    let w = "/r/run/fspec/switch";
+    let runner = RecordingRunner::default();
+    runner.respond(&format!("test -e {w}/top/@tumbleweed"), status(1));
+    runner.respond("grep -q ^kyan:", status(1));
+    let err = plan.execute_undoing(&runner).unwrap_err().to_string();
+    assert_eq!(
+        err,
+        format!("the spec's user kyan does not exist in {w}/top/@nixos, the root this one inherits its users from")
+    );
+    assert!(!runner.lines().iter().any(|l| l.starts_with("btrfs subvolume create")));
+}

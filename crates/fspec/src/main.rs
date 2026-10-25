@@ -810,7 +810,7 @@ fn switch_runner(paths: &Paths) -> Result<Box<dyn Runner>> {
 
 fn run_plan(paths: &Paths, runner: &dyn Runner, plan: &fspec_switch::Plan) -> Result<()> {
     if is_live(paths) {
-        return plan.execute(runner);
+        return plan.execute_undoing(runner);
     }
     plan.log(runner)?;
     println!("logged {} commands to {}", plan.lines().len(), paths.system("/var/log/fspec-commands.log").display());
