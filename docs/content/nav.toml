@@ -1,0 +1,36 @@
+# Sidebar order. Every page under docs/content is listed here once.
+
+[[section]]
+title = "Start"
+pages = ["index", "install", "first-spec"]
+
+[[section]]
+title = "Concepts"
+pages = ["concepts/how-it-works", "concepts/hosts-and-modules"]
+
+[[section]]
+title = "Configure a host"
+pages = [
+  "guides/packages",
+  "guides/files",
+  "guides/secrets",
+  "guides/services",
+  "guides/users-and-macos",
+  "guides/dev-environments",
+]
+
+[[section]]
+title = "Operate"
+pages = ["guides/removal-and-rollback", "guides/remote-hosts", "guides/sync", "guides/source-builds"]
+
+[[section]]
+title = "The operating system"
+pages = ["guides/system-layer", "guides/switching-distros", "guides/installer"]
+
+[[section]]
+title = "Reference"
+pages = ["reference/commands", "reference/builtins", "reference/lock-file", "reference/paths"]
+
+[[section]]
+title = "Help"
+pages = ["from-nix", "troubleshooting"]

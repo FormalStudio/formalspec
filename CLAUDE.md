@@ -54,7 +54,9 @@ add each mapping you settle there, and drop nix-isms that only exist to work aro
 ## Conventions
 
 - Docs must match the code. A change to behaviour, a builtin, a flag or a resource field updates
-  `docs/design.md` (and `docs/from-nix.md` where it maps a nix construct) in the same commit.
+  `docs/design.md` (and `docs/from-nix.md` where it maps a nix construct) in the same commit,
+  and the user docs in `docs/content/` (the os.formalsnake.dev/docs site): the guide that covers
+  it, `reference/builtins.md` for a builtin or field, `reference/commands.md` for a flag.
 - Comments state constraints the code cannot show. No em dashes in code, docs or commits.
 - Commits are short lowercase conventional subjects (`feat(build): ...`), one unit of work each.
 - A new builtin, builtin argument, resource field or lock key bumps `fspec_remote::ENGINE`, so a

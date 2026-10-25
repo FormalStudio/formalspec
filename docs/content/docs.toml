@@ -1,0 +1,44 @@
+[site]
+name = "FormalSpec"
+url = "https://os.formalsnake.dev"
+base = "/docs/"
+description = "Declare your machines in Starlark and keep them identical, on any Linux distro and on macOS."
+repo = "https://github.com/FormalStudio/formalspec"
+edit = "https://github.com/FormalStudio/formalspec/edit/main"
+
+[header]
+brand = "FormalOS"
+href = "/"
+links = [
+  { label = "GitHub", href = "https://github.com/FormalStudio/formalspec" },
+]
+
+# The tokens of os.formalsnake.dev (formalsnake-os/src/styles/global.css), which is dark only.
+[theme]
+sans = '"Geist", ui-sans-serif, system-ui, sans-serif'
+mono = '"Geist Mono", ui-monospace, "SF Mono", Menlo, monospace'
+fonts = [
+  { family = "Geist", file = "fonts/geist-latin-wght-normal.woff2", weight = "100 900", style = "normal" },
+  { family = "Geist Mono", file = "fonts/geist-mono-latin-wght-normal.woff2", weight = "100 900", style = "normal" },
+]
+
+[theme.dark]
+surface = "oklch(0.198 0 0)"
+sidebar = "oklch(0.198 0 0)"
+raised = "oklch(0.235 0 0)"
+text = "oklch(0.94 0 0)"
+text2 = "oklch(0.72 0 0)"
+accent = "oklch(0.76 0.1 243)"
+accent-container = "oklch(0.673 0.121 242.6 / 0.24)"
+separator = "oklch(1 0 0 / 0.1)"
+code = "oklch(0.235 0 0)"
+
+# The landing page's code (formalsnake-os/src/lib/highlight.ts): comments in the secondary text
+# colour, literals in the accent. Hex, since the highlighter takes no oklch(): --soft and
+# --accent-text above.
+[theme.code]
+comment = "#a4a4a4"
+"comment.doc" = "#a4a4a4"
+string = "#77b9ec"
+number = "#77b9ec"
+boolean = "#77b9ec"

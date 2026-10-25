@@ -1,0 +1,13 @@
+// The user docs (docs/content), served at os.formalsnake.dev/docs. The rest of the host is the
+// formalos-website Worker's custom domain; a route outranks a custom domain on the same host.
+// Build: formaldocs build docs/content --out target/docs-site
+{
+  "name": "formalspec-docs",
+  "compatibility_date": "2026-10-21",
+  "assets": {
+    "directory": "target/docs-site",
+    "html_handling": "auto-trailing-slash",
+    "not_found_handling": "404-page"
+  },
+  "routes": [{ "pattern": "os.formalsnake.dev/docs*", "zone_name": "formalsnake.dev" }]
+}
