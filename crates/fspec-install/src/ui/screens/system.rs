@@ -20,7 +20,6 @@ fn tags(d: &Distro) -> [&'static str; 2] {
             Release::Fixed => "fixed",
         },
         match d.delivery {
-            Delivery::Image => "image",
             Delivery::Atomic => "atomic",
             Delivery::Classic => "classic",
         },

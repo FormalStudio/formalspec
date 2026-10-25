@@ -15,11 +15,10 @@ pub enum Init {
     Runit,
 }
 
-/// Whether the system layer is a bootc image or a package manager driven in place.
+/// How the package manager changes the system: in place, or atomically.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Delivery {
     Classic,
-    Image,
     /// The package manager swaps the whole `/usr` in one transaction and keeps earlier states.
     Atomic,
 }
