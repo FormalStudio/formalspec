@@ -1,22 +1,22 @@
   FormalSpec    Language · Disk · System · Preset · Account · Review · Install
   ────────────────────────────────────────────────────────────────────────────
 
-  Language                        Keyboard           Time zone
-  Type to filter                  Type to filter     Type to filter
+  Language                      Keyboard              Time zone
+  Type to filter                Type to filter        Type to filter
 
-  ▌ English (United States)         Arabic           ▌ UTC
-    English (United Kingdom)        Czech              Europe/Amsterdam
-    Deutsch (Deutschland)           Danish             Europe/Berlin
-    Français (France)               Dutch              Europe/Brussels
-    Español (España)                English (UK)       Europe/Copenhagen
-    Italiano (Italia)             ▌ English (US)       Europe/Dublin
-    Nederlands (Nederland)          Finnish            Europe/Helsinki
-    Português (Brasil)              French             Europe/Lisbon
-    Polski (Polska)                 German             Europe/London
-    Svenska (Sverige)               Italian            Europe/Madrid
-    日本語 (日本)                   Norwegian          Europe/Paris
-    Русский (Россия)                Polish             Europe/Rome
-                                    Portuguese         Europe/Stockholm
+  ▌ English (United States)       Arabic              ▌ UTC
+    English (United Kingdom)      Czech                 Europe/Amsterdam
+    Deutsch (Deutschland)         Danish                Europe/Berlin
+    Français (France)             Dutch                 Europe/Brussels
+    Español (España)              English (UK)          Europe/Copenhagen
+    Italiano (Italia)           ▌ English (US)          Europe/Dublin
+    Nederlands (Nederland)        Finnish               Europe/Helsinki
+    Português (Brasil)            French                Europe/Lisbon
+    Polski (Polska)               German                Europe/London
+    Svenska (Sverige)             Italian               Europe/Madrid
+    日本語 (日本)                 Norwegian             Europe/Paris
+    Русский (Россия)              Polish                Europe/Rome
+                                  Portuguese            Europe/Stockholm
 
   Test your keyboard
     Type here

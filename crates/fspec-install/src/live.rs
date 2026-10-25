@@ -94,13 +94,14 @@ pub fn firmware(sys: &Path) -> Firmware {
     }
 }
 
-/// Every UTF-8 locale glibc supports, named in its own language: `Deutsch (Deutschland)`.
+/// Every compiled UTF-8 locale, named in its own language: `Deutsch (Deutschland)`. The ISO ships
+/// `locales-all`, which has the compiled archive but no `/usr/share/i18n/SUPPORTED`.
 pub fn locales(runner: &dyn Runner) -> Vec<(String, String)> {
-    let names = r#"while read -r loc cs; do
-	case "$cs" in UTF-8) ;; *) continue ;; esac
+    let names = r#"locale -a | while read -r loc; do
+	case "$loc" in C.* | POSIX) continue ;; *.utf8 | *.utf8@*) ;; *) continue ;; esac
 	n=$(LC_ALL=$loc locale lang_name country_name 2>/dev/null | paste -sd'|')
 	printf '%s|%s\n' "$loc" "$n"
-done </usr/share/i18n/SUPPORTED"#;
+done"#;
     let out = runner.run(&Cmd::new("sh").args(["-c", names])).map(|o| o.stdout).unwrap_or_default();
     let mut all: Vec<_> = out.lines().filter_map(native_name).collect();
     all.sort_by_key(|a| a.1.to_lowercase());
@@ -110,7 +111,7 @@ done </usr/share/i18n/SUPPORTED"#;
 /// `de_DE.UTF-8|Deutsch|Deutschland` as `("de_DE.UTF-8", "Deutsch (Deutschland)")`.
 fn native_name(line: &str) -> Option<(String, String)> {
     let mut f = line.split('|');
-    let loc = f.next()?.to_string();
+    let loc = f.next()?.replacen(".utf8", ".UTF-8", 1);
     let Some(lang) = f.next().filter(|s| !s.is_empty()) else { return Some((loc.clone(), loc)) };
     let country = f.next().filter(|s| !s.is_empty());
     let mut chars = lang.chars();
@@ -369,6 +370,11 @@ mod tests {
         assert_eq!(native_name("de_DE.UTF-8|Deutsch|Deutschland").unwrap().1, "Deutsch (Deutschland)");
         assert_eq!(native_name("eo.UTF-8|esperanto|").unwrap().1, "Esperanto");
         assert_eq!(native_name("xx.UTF-8||").unwrap().1, "xx.UTF-8");
+        assert_eq!(
+            native_name("es_ES.utf8|español|España").unwrap(),
+            ("es_ES.UTF-8".into(), "Español (España)".into())
+        );
+        assert_eq!(native_name("ca_ES.utf8@valencia|català|Espanya").unwrap().0, "ca_ES.UTF-8@valencia");
     }
 
     #[test]

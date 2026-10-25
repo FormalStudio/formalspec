@@ -174,8 +174,8 @@ impl Language {
         let th = *c.th;
         let gap = 2;
         let usable = a.width.saturating_sub(gap * 2);
-        let w0 = usable * 42 / 100;
-        let w1 = usable * 24 / 100;
+        let w0 = usable * 40 / 100;
+        let w1 = usable * 29 / 100;
         let w2 = usable - w0 - w1;
         let xs = [0, w0 + gap, w0 + w1 + gap * 2];
         let ws = [w0, w1, w2];

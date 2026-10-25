@@ -1,38 +1,38 @@
   FormalSpec installer                                  Language · Disk · System · Preset · Account · Review · Install
   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
-  Language                   Keyboard        Time zone                ╭─ spec.star ──────────────────────────────────╮
-  Type to filter             Type to filter  Type to filter           │  # This machine's spec. `fspec plan` shows   │
+  Language                  Keyboard           Time zone              ╭─ spec.star ──────────────────────────────────╮
+  Type to filter            Type to filter     Type to filter         │  # This machine's spec. `fspec plan` shows   │
                                                                       │      what a change would do, `fspec apply`   │
-  ▌ English (United States)    Arabic        ▌ UTC                    │      makes it so.                            │
-    English (United Kingdo…    Czech           Europe/Amsterdam       │                                              │
-    Deutsch (Deutschland)      Danish          Europe/Berlin          │  hosts = [                                   │
-    Français (France)          Dutch           Europe/Brussels        │      host(                                   │
-    Español (España)           English (UK)    Europe/Copenhagen      │          platform = "x86_64-linux",          │
-    Italiano (Italia)        ▌ English (US)    Europe/Dublin          │          locale = "en_US.UTF-8",             │
-    Nederlands (Nederland)     Finnish         Europe/Helsinki        │          keymap = "us",                      │
-    Português (Brasil)         French          Europe/Lisbon          │          timezone = "UTC",                   │
-    Polski (Polska)            German          Europe/London          │          protect = ["/home"],                │
-    Svenska (Sverige)          Italian         Europe/Madrid          │      ),                                      │
-    日本語 (日本)              Norwegian       Europe/Paris           │  ]                                           │
-    Русский (Россия)           Polish          Europe/Rome            │                                              │
-                               Portuguese      Europe/Stockholm       │                                              │
-                               Portuguese …    Europe/Warsaw          │                                              │
-                               Russian         Europe/Moscow          │                                              │
-                               Spanish         America/New_York       │                                              │
-                               Swedish         America/Chicago        │                                              │
-                                               America/Denver         │                                              │
-                                               America/Los_Angeles    │                                              │
-                                               America/Sao_Paulo      │                                              │
-                                               America/Toronto        │                                              │
-                                               Asia/Tokyo             │                                              │
-                                               Asia/Seoul             │                                              │
-                                               Asia/Shanghai          │                                              │
-                                               Asia/Singapore         │                                              │
-                                               Asia/Kolkata           │                                              │
-                                               Asia/Dubai             │                                              │
-                                               Australia/Sydney       │                                              │
-                                               Pacific/Auckland       │                                              │
+  ▌ English (United State…    Arabic           ▌ UTC                  │      makes it so.                            │
+    English (United Kingd…    Czech              Europe/Amsterdam     │                                              │
+    Deutsch (Deutschland)     Danish             Europe/Berlin        │  hosts = [                                   │
+    Français (France)         Dutch              Europe/Brussels      │      host(                                   │
+    Español (España)          English (UK)       Europe/Copenhagen    │          platform = "x86_64-linux",          │
+    Italiano (Italia)       ▌ English (US)       Europe/Dublin        │          locale = "en_US.UTF-8",             │
+    Nederlands (Nederland)    Finnish            Europe/Helsinki      │          keymap = "us",                      │
+    Português (Brasil)        French             Europe/Lisbon        │          timezone = "UTC",                   │
+    Polski (Polska)           German             Europe/London        │          protect = ["/home"],                │
+    Svenska (Sverige)         Italian            Europe/Madrid        │      ),                                      │
+    日本語 (日本)             Norwegian          Europe/Paris         │  ]                                           │
+    Русский (Россия)          Polish             Europe/Rome          │                                              │
+                              Portuguese         Europe/Stockholm     │                                              │
+                              Portuguese (Br…    Europe/Warsaw        │                                              │
+                              Russian            Europe/Moscow        │                                              │
+                              Spanish            America/New_York     │                                              │
+                              Swedish            America/Chicago      │                                              │
+                                                 America/Denver       │                                              │
+                                                 America/Los_Angel…   │                                              │
+                                                 America/Sao_Paulo    │                                              │
+                                                 America/Toronto      │                                              │
+                                                 Asia/Tokyo           │                                              │
+                                                 Asia/Seoul           │                                              │
+                                                 Asia/Shanghai        │                                              │
+                                                 Asia/Singapore       │                                              │
+                                                 Asia/Kolkata         │                                              │
+                                                 Asia/Dubai           │                                              │
+                                                 Australia/Sydney     │                                              │
+                                                 Pacific/Auckland     │                                              │
                                                                       │                                              │
   Test your keyboard                                                  │                                              │
     Type here                                                         │                                              │
