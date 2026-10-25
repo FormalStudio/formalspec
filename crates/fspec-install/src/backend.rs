@@ -13,7 +13,8 @@ pub trait Backend: Send + Sync {
     fn firmware(&self) -> Firmware;
     /// `(locale, its name in that language)`, e.g. `("de_DE.UTF-8", "Deutsch (Deutschland)")`.
     fn locales(&self) -> Vec<(String, String)>;
-    fn keymaps(&self) -> Vec<String>;
+    /// `(XKB layout, its description)`, e.g. `("es", "Spanish")`.
+    fn keymaps(&self) -> Vec<(String, String)>;
     fn timezones(&self) -> Vec<String>;
     /// Load a console keymap now, so typing on the next screens matches it.
     fn set_keymap(&self, keymap: &str) -> Result<()>;

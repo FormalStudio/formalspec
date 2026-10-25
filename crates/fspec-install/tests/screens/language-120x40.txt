@@ -4,26 +4,26 @@
   Language                   Keyboard        Time zone                ╭─ spec.star ──────────────────────────────────╮
   Type to filter             Type to filter  Type to filter           │  # This machine's spec. `fspec plan` shows   │
                                                                       │      what a change would do, `fspec apply`   │
-  ▌ English (United States)  ▌ us            ▌ UTC                    │      makes it so.                            │
-    English (United Kingdo…    uk              Europe/Amsterdam       │                                              │
-    Deutsch (Deutschland)      de              Europe/Berlin          │  hosts = [                                   │
-    Français (France)          de-latin1       Europe/Brussels        │      host(                                   │
-    Español (España)           fr              Europe/Copenhagen      │          platform = "x86_64-linux",          │
-    Italiano (Italia)          fr-latin9       Europe/Dublin          │          locale = "en_US.UTF-8",             │
-    Nederlands (Nederland)     es              Europe/Helsinki        │          keymap = "us",                      │
-    Português (Brasil)         it              Europe/Lisbon          │          timezone = "UTC",                   │
-    Polski (Polska)            nl              Europe/London          │          protect = ["/home"],                │
-    Svenska (Sverige)          pt-latin1       Europe/Madrid          │      ),                                      │
-    日本語 (日本)              br-abnt2        Europe/Paris           │  ]                                           │
-    Русский (Россия)           pl2             Europe/Rome            │                                              │
-                               se-lat6         Europe/Stockholm       │                                              │
-                               no              Europe/Warsaw          │                                              │
-                               dk              Europe/Moscow          │                                              │
-                               fi              America/New_York       │                                              │
-                               ru              America/Chicago        │                                              │
-                               cz              America/Denver         │                                              │
-                               us-dvorak       America/Los_Angeles    │                                              │
-                               us-colemak      America/Sao_Paulo      │                                              │
+  ▌ English (United States)    Arabic        ▌ UTC                    │      makes it so.                            │
+    English (United Kingdo…    Czech           Europe/Amsterdam       │                                              │
+    Deutsch (Deutschland)      Danish          Europe/Berlin          │  hosts = [                                   │
+    Français (France)          Dutch           Europe/Brussels        │      host(                                   │
+    Español (España)           English (UK)    Europe/Copenhagen      │          platform = "x86_64-linux",          │
+    Italiano (Italia)        ▌ English (US)    Europe/Dublin          │          locale = "en_US.UTF-8",             │
+    Nederlands (Nederland)     Finnish         Europe/Helsinki        │          keymap = "us",                      │
+    Português (Brasil)         French          Europe/Lisbon          │          timezone = "UTC",                   │
+    Polski (Polska)            German          Europe/London          │          protect = ["/home"],                │
+    Svenska (Sverige)          Italian         Europe/Madrid          │      ),                                      │
+    日本語 (日本)              Norwegian       Europe/Paris           │  ]                                           │
+    Русский (Россия)           Polish          Europe/Rome            │                                              │
+                               Portuguese      Europe/Stockholm       │                                              │
+                               Portuguese …    Europe/Warsaw          │                                              │
+                               Russian         Europe/Moscow          │                                              │
+                               Spanish         America/New_York       │                                              │
+                               Swedish         America/Chicago        │                                              │
+                                               America/Denver         │                                              │
+                                               America/Los_Angeles    │                                              │
+                                               America/Sao_Paulo      │                                              │
                                                America/Toronto        │                                              │
                                                Asia/Tokyo             │                                              │
                                                Asia/Seoul             │                                              │

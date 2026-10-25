@@ -149,29 +149,29 @@ impl Backend for DemoBackend {
         ])
     }
 
-    fn keymaps(&self) -> Vec<String> {
-        strings(&[
-            "us",
-            "uk",
-            "de",
-            "de-latin1",
-            "fr",
-            "fr-latin9",
-            "es",
-            "it",
-            "nl",
-            "pt-latin1",
-            "br-abnt2",
-            "pl2",
-            "se-lat6",
-            "no",
-            "dk",
-            "fi",
-            "ru",
-            "cz",
-            "us-dvorak",
-            "us-colemak",
-        ])
+    fn keymaps(&self) -> Vec<(String, String)> {
+        [
+            ("ara", "Arabic"),
+            ("cz", "Czech"),
+            ("dk", "Danish"),
+            ("nl", "Dutch"),
+            ("gb", "English (UK)"),
+            ("us", "English (US)"),
+            ("fi", "Finnish"),
+            ("fr", "French"),
+            ("de", "German"),
+            ("it", "Italian"),
+            ("no", "Norwegian"),
+            ("pl", "Polish"),
+            ("pt", "Portuguese"),
+            ("br", "Portuguese (Brazil)"),
+            ("ru", "Russian"),
+            ("es", "Spanish"),
+            ("se", "Swedish"),
+        ]
+        .iter()
+        .map(|(k, d)| (k.to_string(), d.to_string()))
+        .collect()
     }
 
     fn timezones(&self) -> Vec<String> {

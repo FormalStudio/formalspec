@@ -36,9 +36,26 @@ impl FilterList {
     pub fn refilter<'a>(&mut self, labels: impl Iterator<Item = &'a str>) {
         let keep = self.selected();
         let f = self.filter.to_lowercase();
-        self.vis =
-            labels.enumerate().filter(|(_, l)| f.is_empty() || l.to_lowercase().contains(&f)).map(|(i, _)| i).collect();
-        self.sel = keep.and_then(|k| self.vis.iter().position(|&i| i == k)).unwrap_or(0);
+        let mut hits: Vec<(u8, usize)> = labels
+            .enumerate()
+            .filter_map(|(i, l)| {
+                let l = l.to_lowercase();
+                let rank = if f.is_empty() || l.starts_with(&f) {
+                    0
+                } else if l.split(|c: char| !c.is_alphanumeric()).any(|w| w.starts_with(&f)) {
+                    1
+                } else if l.contains(&f) {
+                    2
+                } else {
+                    return None;
+                };
+                Some((rank, i))
+            })
+            .collect();
+        hits.sort();
+        self.vis = hits.into_iter().map(|(_, i)| i).collect();
+        // Typing jumps to the best match; clearing the filter keeps what was picked.
+        self.sel = if f.is_empty() { keep.and_then(|k| self.vis.iter().position(|&i| i == k)).unwrap_or(0) } else { 0 };
         self.top = 0;
         self.follow = true;
     }

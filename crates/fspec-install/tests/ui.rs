@@ -21,6 +21,7 @@ struct Scripted {
     inner: DemoBackend,
     gate: Mutex<Option<Receiver<()>>>,
     fail: bool,
+    loaded: Mutex<Vec<String>>,
 }
 
 impl Backend for Scripted {
@@ -33,13 +34,14 @@ impl Backend for Scripted {
     fn locales(&self) -> Vec<(String, String)> {
         self.inner.locales()
     }
-    fn keymaps(&self) -> Vec<String> {
+    fn keymaps(&self) -> Vec<(String, String)> {
         self.inner.keymaps()
     }
     fn timezones(&self) -> Vec<String> {
         self.inner.timezones()
     }
     fn set_keymap(&self, k: &str) -> anyhow::Result<()> {
+        self.loaded.lock().unwrap().push(k.to_string());
         self.inner.set_keymap(k)
     }
     fn clone_spec(&self, u: &str, a: &GitAuth, i: &Path) -> anyhow::Result<Vec<HostSummary>> {
@@ -72,7 +74,15 @@ impl Backend for Scripted {
 
 fn scripted(fail: bool) -> (Arc<Scripted>, Sender<()>) {
     let (tx, rx) = channel();
-    (Arc::new(Scripted { inner: DemoBackend::instant(), gate: Mutex::new(Some(rx)), fail }), tx)
+    (
+        Arc::new(Scripted {
+            inner: DemoBackend::instant(),
+            gate: Mutex::new(Some(rx)),
+            fail,
+            loaded: Mutex::default(),
+        }),
+        tx,
+    )
 }
 
 struct Rig {
@@ -530,6 +540,21 @@ fn typing_filters_the_language_list() {
     r.press(KeyCode::Esc);
     assert_eq!(r.app.step(), Step::Language);
     assert!(r.text((120, 40)).contains("Français"));
+}
+
+#[test]
+fn keyboard_filter_loads_the_layout_only_when_leaving_the_column() {
+    let (be, _release) = scripted(false);
+    let mut r = Rig::new(be.clone(), (120, 40), false);
+    r.to(Step::Language);
+    r.press(KeyCode::Tab);
+    let before = be.loaded.lock().unwrap().len();
+    r.typ("ES");
+    assert_eq!(be.loaded.lock().unwrap().len(), before, "a layout loaded mid-filter");
+    assert!(r.text((120, 40)).contains("Spanish"));
+    r.press(KeyCode::Tab);
+    assert_eq!(be.loaded.lock().unwrap().last().map(String::as_str), Some("es"));
+    assert_eq!(r.app.draft().locale.unwrap().keymap, "es");
 }
 
 #[test]
