@@ -18,9 +18,10 @@ use fspec_remote::{Planned, Probe, Remote, Target};
 #[derive(Parser)]
 #[command(version, about = "Declare your machines in Starlark and keep them identical")]
 struct Cli {
-    /// The spec entry point, or a directory holding spec.star.
-    #[arg(short, long, global = true, env = "FSPEC_SPEC", default_value = "spec.star")]
-    spec: PathBuf,
+    /// The spec entry point, or a directory holding spec.star. Without it: a spec.star in this
+    /// directory, then (plan and update) the dev.star project around it, then $FSPEC_SPEC.
+    #[arg(short, long, global = true)]
+    spec: Option<PathBuf>,
     /// Treat this directory as `/`. Everything fspec reads or writes stays under it.
     #[arg(long, global = true, default_value = "/")]
     root: PathBuf,
@@ -390,15 +391,15 @@ impl From<ScopeArg> for Scope {
 const SCOPES: [Scope; 2] = [Scope::System, Scope::User];
 
 fn main() -> Result<()> {
-    let mut cli = Cli::parse();
-    if cli.spec.is_dir() {
-        cli.spec.push("spec.star");
-    }
+    let cli = Cli::parse();
     let paths = paths(&cli)?;
-    let spec_path = std::path::absolute(&cli.spec)?;
+    let for_project = matches!(cli.command, Command::Plan { .. } | Command::Update { .. });
+    let env = std::env::var_os("FSPEC_SPEC").map(PathBuf::from);
+    let picked = dev::pick_spec(cli.spec.clone(), env, &std::env::current_dir()?, for_project);
+    let spec_path = std::path::absolute(picked.as_deref().unwrap_or(Path::new("spec.star")))?;
     let spec_dir = spec_path.parent().context("spec has no parent directory")?.to_path_buf();
     match &cli.command {
-        Command::Plan { .. } | Command::Update { .. } if dev::in_project(&cli.spec, &spec_path) => match &cli.command {
+        Command::Plan { .. } | Command::Update { .. } if picked.is_none() => match &cli.command {
             Command::Update { pkgs, .. } => dev::update(&paths, pkgs),
             _ => dev::plan_here(&paths),
         },

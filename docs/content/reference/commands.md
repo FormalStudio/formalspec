@@ -11,9 +11,17 @@ These work with every command.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `-s`, `--spec <path>` | `$FSPEC_SPEC`, else `spec.star` | The spec entry point, or a directory holding `spec.star`. The lock and `secrets.star` sit next to it. Export `FSPEC_SPEC` to run `fspec apply` from any directory; while it is set, `fspec plan` and `fspec update` read that spec even inside a `dev.star` project |
+| `-s`, `--spec <path>` | see below | The spec entry point, or a directory holding `spec.star`. The lock and `secrets.star` sit next to it |
 | `--root <dir>` | `/` | Treat this directory as `/`. Commands are logged to `<root>/var/log/fspec-commands.log` instead of run, so you can try an apply safely |
 | `--home <dir>` | `$HOME` | The user's home (with `--root`, `<root>/home/<user>`) |
+
+Without `--spec`, fspec picks the config in this order:
+
+1. A `spec.star` in the current directory.
+2. For `plan` and `update`: the `dev.star` project at or above the current directory.
+3. `$FSPEC_SPEC`, a spec file or a directory holding one. Export it to run `fspec apply` for your
+   machine's main config from any other directory.
+4. `spec.star`, which fails if it is not there.
 
 `--host <name>` appears on most commands. Without it, the command acts on the host whose name
 matches this machine.

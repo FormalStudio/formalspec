@@ -2,7 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::io::IsTerminal;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use anyhow::{Context, Result, bail};
@@ -213,15 +213,74 @@ pub fn update(paths: &Paths, only: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// `fspec plan` and `fspec update` work on a project's dev.star when there is no spec.star to
-/// read: the `--spec` default was left alone and the file does not exist.
-pub fn in_project(spec_flag: &Path, spec_path: &Path) -> bool {
-    spec_flag == Path::new("spec.star")
-        && !spec_path.exists()
-        && std::env::current_dir().ok().and_then(|d| Project::find(&d)).is_some()
+/// The spec a command runs, by priority: `--spec`, a spec.star in the current directory, the
+/// dev.star project at or above it (`None`, only for `fspec plan` and `fspec update`), then
+/// `$FSPEC_SPEC`, then the spec.star that is not there. A directory stands for its spec.star.
+pub fn pick_spec(flag: Option<PathBuf>, env: Option<PathBuf>, cwd: &Path, for_project: bool) -> Option<PathBuf> {
+    let file = |p: PathBuf| if p.is_dir() { p.join("spec.star") } else { p };
+    if let Some(flag) = flag {
+        return Some(file(flag));
+    }
+    let local = cwd.join("spec.star");
+    if local.exists() {
+        return Some(PathBuf::from("spec.star"));
+    }
+    if for_project && Project::find(cwd).is_some() {
+        return None;
+    }
+    Some(env.map_or_else(|| PathBuf::from("spec.star"), file))
 }
 
 pub fn plan_here(paths: &Paths) -> Result<()> {
     let fetch = LiveFetch::new();
     plan(&project(None)?, &machine(paths, &fetch))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dir(files: &[&str]) -> tempfile::TempDir {
+        let d = tempfile::tempdir().unwrap();
+        for f in files {
+            std::fs::write(d.path().join(f), "").unwrap();
+        }
+        d
+    }
+
+    #[test]
+    fn flag_beats_everything() {
+        let d = dir(&["spec.star", "dev.star"]);
+        let got = pick_spec(Some("/x/spec.star".into()), Some("/y".into()), d.path(), true);
+        assert_eq!(got, Some("/x/spec.star".into()));
+    }
+
+    #[test]
+    fn a_directory_stands_for_its_spec() {
+        let d = dir(&[]);
+        let got = pick_spec(Some(d.path().into()), None, Path::new("/nowhere"), false);
+        assert_eq!(got, Some(d.path().join("spec.star")));
+    }
+
+    #[test]
+    fn local_spec_beats_project_and_env() {
+        let d = dir(&["spec.star", "dev.star"]);
+        let got = pick_spec(None, Some("/y/spec.star".into()), d.path(), true);
+        assert_eq!(got, Some("spec.star".into()));
+    }
+
+    #[test]
+    fn project_beats_env_for_plan_and_update_only() {
+        let d = dir(&["dev.star"]);
+        let env = Some(PathBuf::from("/sys/spec.star"));
+        assert_eq!(pick_spec(None, env.clone(), d.path(), true), None);
+        assert_eq!(pick_spec(None, env, d.path(), false), Some("/sys/spec.star".into()));
+    }
+
+    #[test]
+    fn env_then_spec_star() {
+        let d = dir(&[]);
+        assert_eq!(pick_spec(None, Some("/sys/spec.star".into()), d.path(), true), Some("/sys/spec.star".into()));
+        assert_eq!(pick_spec(None, None, d.path(), true), Some("spec.star".into()));
+    }
 }
