@@ -40,14 +40,15 @@ fn workflow_golden() {
         ("librepods".to_string(), "x86_64-linux".to_string()),
     ];
     let expected = include_str!("golden.yml").replace("{{repo}}", env!("CARGO_PKG_REPOSITORY"));
-    assert_eq!(workflow(&jobs, "spec.star").unwrap(), expected);
-    let nested = workflow(&jobs, "examples/kyan/spec.star").unwrap();
+    assert_eq!(workflow(&jobs, "spec.star", "main").unwrap(), expected);
+    let nested = workflow(&jobs, "examples/kyan/spec.star", "formalspec").unwrap();
+    assert!(nested.contains("branches: [formalspec]"), "{nested}");
     assert!(nested.contains(r#"paths: ["examples/kyan/fspec.lock", "examples/kyan/patches/**"]"#), "{nested}");
     assert!(nested.contains("fspec --spec examples/kyan/spec.star build --pkg"), "{nested}");
 }
 
 #[test]
 fn unknown_platforms_and_empty_job_lists_fail() {
-    assert!(workflow(&[], "spec.star").is_err());
-    assert!(workflow(&[("p".into(), "riscv64-linux".into())], "spec.star").is_err());
+    assert!(workflow(&[], "spec.star", "main").is_err());
+    assert!(workflow(&[("p".into(), "riscv64-linux".into())], "spec.star", "main").is_err());
 }

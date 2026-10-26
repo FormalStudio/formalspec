@@ -259,7 +259,8 @@ Prerequisites:
    It writes `.github/workflows/fspec-packages.yml` at the repository root: a matrix with one job
    per `git(...)` package and platform that a host declares. Each job installs fspec and oras,
    runs `fspec build` and pushes the archive with `oras push`. It runs when `fspec.lock` or
-   `patches/` changes on `main`.
+   `patches/` changes on the branch you ran it from (`main` when HEAD is detached), so a spec kept
+   on a branch of its own, such as a dotfiles repo's `formalspec` branch, rebuilds from that branch.
 
    | Platform | Runner |
    | --- | --- |

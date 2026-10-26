@@ -35,8 +35,9 @@ fn runner(platform: &str) -> Result<&'static str> {
 
 pub const PATH: &str = ".github/workflows/fspec-packages.yml";
 
-/// `spec` is the spec file relative to the repo root, which is where the workflow lives.
-pub fn workflow(jobs: &[(String, String)], spec: &str) -> Result<String> {
+/// `spec` is the spec file relative to the repo root, which is where the workflow lives. `branch`
+/// is the one whose pushes rebuild the cache: the spec can live on a branch other than main.
+pub fn workflow(jobs: &[(String, String)], spec: &str, branch: &str) -> Result<String> {
     if jobs.is_empty() {
         bail!("no host declares a git(...) package, there is nothing to cache");
     }
@@ -51,7 +52,7 @@ pub fn workflow(jobs: &[(String, String)], spec: &str) -> Result<String> {
 
 on:
   push:
-    branches: [main]
+    branches: [{branch}]
     paths: ["{dir}fspec.lock", "{dir}patches/**"]
   pull_request:
     paths: ["{dir}fspec.lock", "{dir}patches/**"]

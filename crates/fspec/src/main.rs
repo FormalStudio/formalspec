@@ -577,7 +577,16 @@ fn main() -> Result<()> {
             let rel = spec_path
                 .strip_prefix(&top)
                 .with_context(|| format!("{} is outside its repo {}", spec_path.display(), top.display()))?;
-            let text = fspec_build::ci::workflow(&fspec_build::ci::jobs(&spec.hosts), &rel.to_string_lossy())?;
+            // A detached HEAD or a spec outside any repo falls back to main.
+            let branch = LiveRunner
+                .check(&Cmd::new("git").arg("-C").arg(top.display().to_string()).args([
+                    "symbolic-ref",
+                    "--short",
+                    "HEAD",
+                ]))
+                .map(|o| o.stdout.trim().to_string())
+                .unwrap_or_else(|_| "main".to_string());
+            let text = fspec_build::ci::workflow(&fspec_build::ci::jobs(&spec.hosts), &rel.to_string_lossy(), &branch)?;
             let path = top.join(fspec_build::ci::PATH);
             std::fs::create_dir_all(path.parent().context("workflow has a parent")?)?;
             std::fs::write(&path, text).with_context(|| format!("writing {}", path.display()))?;

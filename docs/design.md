@@ -264,8 +264,9 @@ change: GitHub's Ubuntu runners have podman.
   declares (`ubuntu-24.04` for x86_64-linux, `ubuntu-24.04-arm` for
   aarch64-linux, `macos-26` for aarch64-darwin). Each job installs fspec and
   oras, runs `fspec build` and pushes with `oras push`. Regenerate it when the
-  set of packages or platforms changes; the lock and `patches/` changes trigger
-  it.
+  set of packages or platforms changes; the lock and `patches/` changes on the
+  branch checked out when it was written (main when HEAD is detached) trigger
+  it, so a spec kept on its own branch rebuilds from that branch.
 - `fspec update --cache [--registry r]` also resolves
   `<registry>/<name>:<rev>-<platform>` with
   `oras manifest fetch --descriptor` and records
