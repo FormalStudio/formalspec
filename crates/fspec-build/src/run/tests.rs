@@ -158,9 +158,11 @@ fn deps_install_in_the_image_before_the_recipe_runs_there() {
     assert!(run.contains(" -e FSPEC_SRC=") && run.contains(" -e FSPEC_OUT="), "{run}");
     assert!(run.contains(" registry.opensuse.org/opensuse/tumbleweed sh -c "), "{run}");
     assert!(
-        run.contains("zypper --non-interactive --gpg-auto-import-keys install --no-recommends cmake 'pkgconfig(gtk4)'"),
+        run.contains("--gpg-auto-import-keys --cache-dir ")
+            && run.contains("/tool-x86_64-linux/pkgs/zypp install --no-recommends cmake 'pkgconfig(gtk4)'"),
         "{run}"
     );
+    assert!(run.contains("apt-get -o Dir::Cache::Archives="), "{run}");
     assert!(run.contains("\nsh -c 'make install'"), "{run}");
     assert!(!calls.iter().any(|c| c.starts_with("sh -c 'make")), "{calls:?}");
     assert_eq!(names(&built.archive), ["bin", "bin/tool"]);

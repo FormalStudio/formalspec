@@ -177,6 +177,8 @@ pkg("uxplay",
   mounted at its own path.
 - `deps` install first with whichever of zypper, dnf, apt-get, pacman, xbps-install or apk the
   image has, so you name them the way that distro does. `pkgconfig(gtk4)` works on zypper and dnf.
+  The package files download into the build cache and stay there, so the next build of the
+  package fetches only what changed.
 - Build in the same distro your hosts run. The binary then links against the same library
   versions the host has.
 - Pin the image by digest (`...@sha256:...`) for builds that repeat exactly.

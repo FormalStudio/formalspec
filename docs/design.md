@@ -252,7 +252,9 @@ where podman is missing) of that image, with the work directory and the build ca
 own paths and `FSPEC_SRC`, `FSPEC_OUT` and `FSPEC_CACHE` passed in. `deps` install first, by
 whichever of zypper, dnf, apt-get, pacman, xbps-install or apk the image has,
 so they are named the way that distro names them (`pkgconfig(gtk4)` works on
-zypper and dnf). Building in the host's own distro links against the same
+zypper and dnf). Each manager downloads into `pkgs/` in the package's build
+cache and keeps the files (zypper `mr -k`, dnf `keepcache`, apt with docker's
+`docker-clean` removed), so a warm build fetches only what changed. Building in the host's own distro links against the same
 sonames the host has. On Linux, `deps` without `image` fails the plan. A
 macOS build has no container of its kind, so there `image` fails the plan and
 `deps` are Homebrew formulae, installed with `brew install` before the recipe

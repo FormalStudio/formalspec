@@ -87,7 +87,8 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     let commands = recipe.commands(&dirs, &job.pkg.build_flags, &job.pkg.build);
     let commands = match &job.pkg.source {
         Source::Git { image: Some(image), deps, .. } => {
-            vec![in_container(runner, image, deps, &[work.path(), &cache], &dirs.src, &commands)]
+            let pkgs = cache.join("pkgs");
+            vec![in_container(runner, image, deps, &pkgs, &[work.path(), &cache], &dirs.src, &commands)]
         }
         // macOS has no container of its own kind to build in; Homebrew is its package manager.
         Source::Git { deps, .. } if !deps.is_empty() && job.platform.ends_with("-darwin") => {
@@ -124,11 +125,13 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
 
 /// The recipe as one `podman run` (or `docker run` where podman is missing) of `image`: each of
 /// `mounts` is mounted at its own path, so every path in the commands holds inside, and `deps`
-/// install first with whichever package manager the image has.
+/// install first with whichever package manager the image has, downloading into `pkgs` (inside
+/// one of `mounts`) so the next build of the package fetches only what changed.
 fn in_container(
     runner: &dyn Runner,
     image: &str,
     deps: &[String],
+    pkgs: &Path,
     mounts: &[&Path],
     src: &Path,
     commands: &[Cmd],
@@ -151,7 +154,7 @@ fn in_container(
         script.push(format!("trap \"chown -R {uid}:{gid} {}\" EXIT", shell_words::join(&dirs)));
     }
     if !deps.is_empty() {
-        script.push(install(deps));
+        script.push(install(deps, &pkgs.display().to_string()));
     }
     for cmd in commands {
         for (k, v) in &cmd.env {
@@ -164,15 +167,20 @@ fn in_container(
     run.arg(image).args(["sh", "-c"]).arg(script.join("\n"))
 }
 
-fn install(deps: &[String]) -> String {
+// Docker's debian and ubuntu images ship apt.conf.d/docker-clean, which deletes every deb after
+// it installs; with it gone, apt keeps them in the mounted archives dir.
+fn install(deps: &[String], pkgs: &str) -> String {
     let deps = shell_words::join(deps);
+    let p = shell_words::quote(pkgs);
     format!(
-        "if command -v zypper >/dev/null; then zypper --non-interactive --gpg-auto-import-keys install --no-recommends {deps}\n\
-         elif command -v dnf >/dev/null; then dnf install -y {deps}\n\
-         elif command -v apt-get >/dev/null; then apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends {deps}\n\
-         elif command -v pacman >/dev/null; then pacman -Syu --noconfirm --needed {deps}\n\
-         elif command -v xbps-install >/dev/null; then xbps-install -Syu {deps}\n\
-         elif command -v apk >/dev/null; then apk add {deps}\n\
+        "if command -v zypper >/dev/null; then zypper -q mr -k -a && zypper --non-interactive --gpg-auto-import-keys --cache-dir {p}/zypp install --no-recommends {deps}\n\
+         elif command -v dnf >/dev/null; then dnf install -y --setopt=keepcache=1 --setopt=cachedir={p}/dnf {deps}\n\
+         elif command -v apt-get >/dev/null; then rm -f /etc/apt/apt.conf.d/docker-clean && mkdir -p {p}/apt/partial {p}/apt-lists/partial && \
+         apt-get -o Dir::Cache::Archives={p}/apt -o Dir::State::Lists={p}/apt-lists update && \
+         DEBIAN_FRONTEND=noninteractive apt-get -o Dir::Cache::Archives={p}/apt -o Dir::State::Lists={p}/apt-lists install -y --no-install-recommends {deps}\n\
+         elif command -v pacman >/dev/null; then mkdir -p {p}/pacman && pacman -Syu --noconfirm --needed --cachedir {p}/pacman {deps}\n\
+         elif command -v xbps-install >/dev/null; then xbps-install -Syu --cachedir {p}/xbps {deps}\n\
+         elif command -v apk >/dev/null; then apk add --cache-dir {p}/apk {deps}\n\
          else echo 'the build image has none of zypper, dnf, apt-get, pacman, xbps-install, apk' >&2; exit 1; fi"
     )
 }
