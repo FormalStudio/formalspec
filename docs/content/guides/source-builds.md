@@ -89,9 +89,13 @@ pkg("librepods", source = git("https://github.com/example/librepods"),
 
 ### Write your own build command
 
-`build` replaces recipe detection. It runs with two variables set: `FSPEC_SRC`, the patched
-checkout, and `FSPEC_OUT`, where you put the result. Executables go in `$FSPEC_OUT/bin`.
-`build_flags` do not apply.
+`build` replaces recipe detection. It runs with three variables set: `FSPEC_SRC`, the patched
+checkout, `FSPEC_OUT`, where you put the result, and `FSPEC_CACHE`, a directory kept between
+builds of the package. Executables go in `$FSPEC_OUT/bin`. `build_flags` do not apply.
+
+The checkout, the build directory and `FSPEC_CACHE` stay in `~/.cache/fspec/build/<name>-<platform>/`
+between revs, so a rev bump builds incrementally. Point your script's toolchains, downloads and
+target directories at `$FSPEC_CACHE` and it gets the same.
 
 ```starlark
 pkg("fetch", source = git("https://github.com/example/fetch", rev = "7b19d22c2d8e4b7b2295cc625c9fdf87adcabbcd"),
@@ -221,11 +225,12 @@ name and then a LAN address. Without them, the builder's name is the route.
 
 When an apply needs a package the lock has no CI artifact for:
 
-1. fspec probes each route with `ssh -o ConnectTimeout=5 -o BatchMode=yes <route> uname -sm` and
+1. fspec probes each route with `ssh -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=15 <route> uname -sm` and
    keeps the first that answers for the rest of the run. A builder of another platform is
    skipped.
-2. It copies itself, a job file and the package's patches to
-   `~/.cache/fspec/build/<name>-<rev>` on the builder and runs `fspec build --job` there.
+2. It copies itself, a job file and the package's patches to its own job directory,
+   `~/.cache/fspec/jobs/<name>-<rev>-<id>`, on the builder and runs `fspec build --job` there. The
+   build itself uses the builder's build cache, so the next rev builds incrementally.
 3. It copies the `.tar.zst` back over ssh, deletes the directory on the builder, and installs the
    package on the host.
 
@@ -233,11 +238,12 @@ Nothing is installed on the builder. It needs git, ssh and the recipe's tools, p
 docker for packages with `image`. When fspec runs as root through sudo, the ssh connection runs as
 the user who called sudo, so your own keys reach the builder.
 
-When every builder is unreachable or fails, the host builds the package itself and says so:
+When every builder is unreachable or fails, the apply fails and names each builder's reason. A
+host that lists builders never compiles a package itself; only a host without builders does.
 
 ```console
 fspec: builder desktop is not reachable over desktop, 192.168.1.20
-fspec: no builder built hyperfine; building it on this host
+building hyperfine: no builder built hyperfine: desktop is unreachable or not x86_64-linux
 ```
 
 ## Serve builds from CI

@@ -17,7 +17,7 @@ pub use cmd::{Target, target};
 /// What this fspec can read, compared against the remote's before shipping it a spec. Bump it
 /// with every builtin, builtin argument, resource field or lock key a spec can use, since an
 /// older fspec fails on them, or worse, ignores an unknown lock key.
-pub const ENGINE: u32 = 6;
+pub const ENGINE: u32 = 7;
 
 /// What `fspec facts --json` prints: the machine as it is, to compare against its declaration.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]

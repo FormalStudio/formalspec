@@ -62,7 +62,8 @@ resource as new, and removals stop working for anything it forgot.
 | --- | --- |
 | `~/.cache/fspec/loads/` | `gh:` load files, by owner, repo and commit |
 | `~/.cache/fspec/spec/<commit>/` | On a remote host: the spec a remote apply shipped |
-| `~/.cache/fspec/build/<name>-<rev>/` | On a builder: a build job, deleted when it finishes |
+| `~/.cache/fspec/build/<name>-<platform>/` | Where a package builds: its checkout, build directory and `FSPEC_CACHE`, kept between revs |
+| `~/.cache/fspec/jobs/<name>-<rev>-<id>/` | On a builder: one build job, deleted when it finishes |
 | `~/.cache/fspec/dev/farms/<hash>/bin` | A project environment's commands |
 | `~/.cache/fspec/dev/run/<project>/logs` | Logs of a project's `exec` services |
 | `~/.local/share/fspec/store/` | Packages a project environment unpacked for you |

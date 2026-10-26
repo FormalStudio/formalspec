@@ -17,6 +17,20 @@ pub struct Job<'a> {
     pub platform: &'a str,
     pub spec_dir: &'a Path,
     pub out: &'a Path,
+    /// The build cache, [`cache_root`] outside tests. Each package and platform keeps its
+    /// checkout, build directory and `FSPEC_CACHE` there between revs, so a rev bump builds
+    /// incrementally.
+    pub cache: &'a Path,
+}
+
+/// `$XDG_CACHE_HOME/fspec/build`, else `~/.cache/fspec/build`.
+pub fn cache_root() -> Result<PathBuf> {
+    let base = std::env::var_os("XDG_CACHE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))
+        .context("neither XDG_CACHE_HOME nor HOME is set")?;
+    Ok(base.join("fspec/build"))
 }
 
 #[derive(Debug)]
@@ -31,14 +45,31 @@ pub struct Built {
 /// Fetch the locked commit, apply the patches, run the recipe and pack the executables.
 /// Everything external goes through `runner`.
 pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
+    let cache = job.cache.join(format!("{}-{}", job.pkg.name, job.platform));
+    fs::create_dir_all(&cache).with_context(|| format!("creating {}", cache.display()))?;
+    // Two applies can build the same package at once; the second waits for the first's cache.
+    let lock = fs::File::create(cache.with_extension("lock"))?;
+    lock.lock().with_context(|| format!("locking {}", cache.display()))?;
     let work = tempfile::tempdir().context("creating a build directory")?;
-    let dirs = Dirs { src: work.path().join("src"), build: work.path().join("build"), out: work.path().join("out") };
+    let dirs = Dirs {
+        src: cache.join("src"),
+        build: cache.join("build"),
+        out: work.path().join("out"),
+        cache: cache.join("cache"),
+    };
+    fs::create_dir_all(&dirs.cache)?;
     let src = dirs.src.display().to_string();
+    if !dirs.src.join(".git").is_dir() {
+        runner.check(&Cmd::new("git").args(["init", "-q", &src]))?;
+        runner.check(&Cmd::new("git").args(["-C", &src, "remote", "add", "origin", job.url]))?;
+    }
+    // A forced checkout and a clean drop the last build's patches and untracked files; ignored
+    // files (an in-tree target/) stay, so they build incrementally too.
     for cmd in [
-        Cmd::new("git").args(["init", "-q", &src]),
-        Cmd::new("git").args(["-C", &src, "remote", "add", "origin", job.url]),
+        Cmd::new("git").args(["-C", &src, "remote", "set-url", "origin", job.url]),
         Cmd::new("git").args(["-C", &src, "fetch", "-q", "--depth", "1", "origin", job.rev]),
-        Cmd::new("git").args(["-C", &src, "checkout", "-q", "FETCH_HEAD"]),
+        Cmd::new("git").args(["-C", &src, "checkout", "-q", "-f", "FETCH_HEAD"]),
+        Cmd::new("git").args(["-C", &src, "clean", "-q", "-ffd"]),
     ] {
         runner.check(&cmd)?;
     }
@@ -56,7 +87,7 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     let commands = recipe.commands(&dirs, &job.pkg.build_flags, &job.pkg.build);
     let commands = match &job.pkg.source {
         Source::Git { image: Some(image), deps, .. } => {
-            vec![in_container(runner, image, deps, work.path(), &dirs.src, &commands)]
+            vec![in_container(runner, image, deps, &[work.path(), &cache], &dirs.src, &commands)]
         }
         // macOS has no container of its own kind to build in; Homebrew is its package manager.
         Source::Git { deps, .. } if !deps.is_empty() && job.platform.ends_with("-darwin") => {
@@ -87,21 +118,38 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     fs::write(&archive, body).with_context(|| format!("writing {}", archive.display()))?;
     let tag = format!("{}-{}", job.rev, job.platform);
     fs::write(job.out.join("tag"), &tag)?;
+    drop(lock);
     Ok(Built { archive, tag })
 }
 
-/// The recipe as one `podman run` (or `docker run` where podman is missing) of `image`: the work
-/// directory is mounted at its own path, so every path in the commands holds inside, and `deps`
+/// The recipe as one `podman run` (or `docker run` where podman is missing) of `image`: each of
+/// `mounts` is mounted at its own path, so every path in the commands holds inside, and `deps`
 /// install first with whichever package manager the image has.
-fn in_container(runner: &dyn Runner, image: &str, deps: &[String], work: &Path, src: &Path, commands: &[Cmd]) -> Cmd {
+fn in_container(
+    runner: &dyn Runner,
+    image: &str,
+    deps: &[String],
+    mounts: &[&Path],
+    src: &Path,
+    commands: &[Cmd],
+) -> Cmd {
     let podman = runner.run(&Cmd::new("sh").args(["-c", "command -v podman"])).is_ok_and(|o| o.status == 0);
-    let work = work.display().to_string();
-    let mut run = Cmd::new(if podman { "podman" } else { "docker" })
-        .args(["run", "--rm", "-v"])
-        .arg(format!("{work}:{work}:Z"))
-        .arg("-w")
-        .arg(src.display().to_string());
+    let mut run = Cmd::new(if podman { "podman" } else { "docker" }).args(["run", "--rm"]);
+    for m in mounts {
+        let m = m.display().to_string();
+        run = run.arg("-v").arg(format!("{m}:{m}:Z"));
+    }
+    run = run.arg("-w").arg(src.display().to_string());
     let mut script = vec!["set -e".to_string()];
+    if !podman {
+        // Docker's root is the host's root, so whatever the build writes into the cache would
+        // be root's, and the next build's git checkout there could not touch it. Rootless
+        // podman's root is the user already.
+        // SAFETY: getuid and getgid have no preconditions.
+        let (uid, gid) = unsafe { (libc::getuid(), libc::getgid()) };
+        let dirs: Vec<String> = mounts.iter().map(|m| m.display().to_string()).collect();
+        script.push(format!("trap \"chown -R {uid}:{gid} {}\" EXIT", shell_words::join(&dirs)));
+    }
     if !deps.is_empty() {
         script.push(install(deps));
     }

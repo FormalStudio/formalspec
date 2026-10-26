@@ -513,7 +513,9 @@ fn main() -> Result<()> {
                 bail!("this machine is {local}, not {platform}");
             }
             let dir = job.parent().context("the job file has no directory")?;
-            let job = fspec_build::Job { pkg: &file.pkg, url, rev: &file.rev, platform, spec_dir: dir, out };
+            let cache = fspec_build::cache_root()?;
+            let job =
+                fspec_build::Job { pkg: &file.pkg, url, rev: &file.rev, platform, spec_dir: dir, out, cache: &cache };
             println!("{}", fspec_build::build(&LiveRunner, &job)?.archive.display());
             Ok(())
         }
@@ -558,7 +560,8 @@ fn main() -> Result<()> {
                 .with_context(|| format!("pkg {} is not in fspec.lock, run fspec update", pkg.name))?;
             fspec_core::patches::check(&spec_dir, &pkg.patches, locked.patches.as_deref())?;
             let rev = locked.rev.as_deref().with_context(|| format!("pkg {} has no rev in fspec.lock", pkg.name))?;
-            let job = fspec_build::Job { pkg, url, rev, platform, spec_dir: &spec_dir, out };
+            let cache = fspec_build::cache_root()?;
+            let job = fspec_build::Job { pkg, url, rev, platform, spec_dir: &spec_dir, out, cache: &cache };
             println!("{}", fspec_build::builders::build_anywhere(&LiveRunner, &builders, &job)?.display());
             Ok(())
         }

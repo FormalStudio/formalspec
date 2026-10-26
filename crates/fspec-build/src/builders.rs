@@ -1,5 +1,5 @@
 //! Building a `git(...)` package that CI has no artifact for: on the host's builders over ssh,
-//! else on the host itself. Each builder is probed once per run over its routes in order, and
+//! or on the host itself when it declares none. Each builder is probed once per run over its routes in order, and
 //! the first route that answers is kept for the rest of the run, so a builder that is down costs
 //! one connect timeout per route per run, not one per package.
 
@@ -28,25 +28,32 @@ pub struct JobFile {
 }
 
 /// Build `job` on the first builder that is reachable, runs the job's platform and succeeds,
-/// else here, and return the archive under `job.out`.
+/// and return the archive under `job.out`. Only a host without builders builds it itself: a host
+/// that names builders is one that should not compile.
 pub fn build_anywhere(runner: &dyn Runner, builders: &[Builder], job: &Job) -> Result<PathBuf> {
+    if builders.is_empty() {
+        return Ok(build(runner, job)?.archive);
+    }
+    let mut why = Vec::new();
     for b in builders {
-        let Some(route) = route(runner, b, job.platform) else { continue };
+        let Some(route) = route(runner, b, job.platform) else {
+            why.push(format!("{} is unreachable or not {}", b.name, job.platform));
+            continue;
+        };
         match remote(runner, &b.name, &route, job) {
             Ok(archive) => return Ok(archive),
-            Err(e) => eprintln!("fspec: {} failed to build {} ({route}): {e:#}", b.name, job.pkg.name),
+            Err(e) => why.push(format!("{} ({route}): {e:#}", b.name)),
         }
     }
-    if !builders.is_empty() {
-        eprintln!("fspec: no builder built {}; building it on this host", job.pkg.name);
-    }
-    Ok(build(runner, job)?.archive)
+    bail!("no builder built {}: {}", job.pkg.name, why.join("; "))
 }
 
 /// ssh to `route`, as the user who ran sudo when fspec runs as root through it: root's own
 /// ssh has none of the user's keys or known hosts.
 fn ssh(route: &str) -> Cmd {
-    let opts = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes"];
+    // A build runs for minutes with no output on the wire; keepalives turn a dropped link into an
+    // error instead of a hang.
+    let opts = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15"];
     let cmd = match std::env::var("SUDO_USER").ok().filter(|_| is_root()) {
         Some(user) => Cmd::new("sudo").args(["-u", &user, "-H", "ssh"]),
         None => Cmd::new("ssh"),
@@ -106,8 +113,18 @@ fn platform_of(uname: &str) -> Option<String> {
 /// and copy the archive back.
 fn remote(runner: &dyn Runner, name: &str, route: &str, job: &Job) -> Result<PathBuf> {
     let rev: String = job.rev.chars().take(12).collect();
-    let dir = format!(".cache/fspec/build/{}-{rev}", job.pkg.name);
     let stage = tempfile::tempdir()?;
+    // Each job gets its own directory: two applies building one rev once shared it, and the
+    // second's unpack deleted the first's build under it. The builder's build cache, not this
+    // directory, is what carries between jobs.
+    let id = stage
+        .path()
+        .file_name()
+        .context("a temp dir has a name")?
+        .to_string_lossy()
+        .trim_start_matches('.')
+        .to_string();
+    let dir = format!(".cache/fspec/jobs/{}-{rev}-{id}", job.pkg.name);
     let exe = std::env::current_exe().context("finding this fspec to ship to the builder")?;
     fs::copy(&exe, stage.path().join("fspec")).context("staging fspec for the builder")?;
     let file = JobFile { pkg: job.pkg.clone(), rev: job.rev.to_string() };
@@ -120,7 +137,7 @@ fn remote(runner: &dyn Runner, name: &str, route: &str, job: &Job) -> Result<Pat
     let tar = stage.path().with_extension("tar");
     runner
         .check(&Cmd::new("tar").arg("-cf").arg(tar.display().to_string()).arg("-C").arg(path(stage.path())).arg("."))?;
-    let unpack = format!("rm -rf {dir} && mkdir -p {dir} && tar -xf - -C {dir}");
+    let unpack = format!("mkdir -p {dir} && tar -xf - -C {dir}");
     let shipped = runner.check(&ssh(route).arg(unpack).stdin_file(&tar));
     let _ = fs::remove_file(&tar);
     shipped.with_context(|| format!("shipping the build to {name}"))?;
@@ -157,6 +174,8 @@ mod tests {
 
     use super::*;
 
+    const SSH: &str = "ssh -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=15";
+
     fn pkg(name: &str) -> Pkg {
         serde_json::from_value(
             serde_json::json!({"name": name, "source": {"kind": "git", "url": "https://x/y", "rev": "main"}}),
@@ -178,10 +197,9 @@ mod tests {
     #[test]
     fn a_builder_is_probed_once_per_run_and_keeps_the_first_route_that_answers() {
         let runner = RecordingRunner::default();
-        runner
-            .respond("ssh -o ConnectTimeout=5 -o BatchMode=yes ts-probe", Output { status: 255, ..Output::default() });
+        runner.respond(&format!("{SSH} ts-probe"), Output { status: 255, ..Output::default() });
         runner.respond(
-            "ssh -o ConnectTimeout=5 -o BatchMode=yes lan-probe",
+            &format!("{SSH} lan-probe"),
             Output { status: 0, stdout: "Linux x86_64\n".into(), ..Output::default() },
         );
         let b = builder("probe-once", &["ts-probe", "lan-probe"]);
@@ -195,16 +213,16 @@ mod tests {
     fn a_builder_of_another_platform_is_skipped() {
         let runner = RecordingRunner::default();
         runner.respond(
-            "ssh -o ConnectTimeout=5 -o BatchMode=yes mac-arm",
+            &format!("{SSH} mac-arm"),
             Output { status: 0, stdout: "Darwin arm64\n".into(), ..Output::default() },
         );
         assert_eq!(route(&runner, &builder("mac-arm", &[]), "x86_64-linux"), None);
     }
 
     #[test]
-    fn with_no_builder_reachable_the_host_builds_it_itself() {
+    fn with_no_builder_reachable_the_host_does_not_build_it_itself() {
         let runner = RecordingRunner::default();
-        runner.respond("ssh -o ConnectTimeout=5 -o BatchMode=yes down-a", Output { status: 255, ..Output::default() });
+        runner.respond(&format!("{SSH} down-a"), Output { status: 255, ..Output::default() });
         let dir = tempfile::tempdir().unwrap();
         let p = pkg("tool");
         let job = Job {
@@ -214,16 +232,30 @@ mod tests {
             platform: "x86_64-linux",
             spec_dir: dir.path(),
             out: dir.path(),
+            cache: dir.path(),
         };
-        // The local build runs git through the runner; the recording runner has no checkout to
-        // select a recipe from, so the attempt ends there.
         let err = build_anywhere(&runner, &[builder("down-a", &[])], &job).unwrap_err();
+        assert!(err.to_string().contains("no builder built tool: down-a is unreachable"), "{err:#}");
+        assert!(!runner.lines().iter().any(|l| l.starts_with("git ")), "{:#?}", runner.lines());
+    }
+
+    #[test]
+    fn without_builders_the_host_builds_it_itself() {
+        let runner = RecordingRunner::default();
+        let dir = tempfile::tempdir().unwrap();
+        let p = pkg("tool");
+        let job = Job {
+            pkg: &p,
+            url: "https://x/y",
+            rev: "abc",
+            platform: "x86_64-linux",
+            spec_dir: dir.path(),
+            out: dir.path(),
+            cache: dir.path(),
+        };
+        // The recording runner leaves no checkout to select a recipe from, so the build ends there.
+        let err = build_anywhere(&runner, &[], &job).unwrap_err();
         assert!(err.to_string().contains("no Cargo.toml"), "{err:#}");
-        let lines = runner.lines();
-        assert!(
-            lines.iter().any(|l| l.starts_with("git -C ") && l.contains("fetch -q --depth 1 origin abc")),
-            "{lines:#?}"
-        );
-        assert!(!lines.iter().any(|l| l.contains("./fspec build")));
+        assert!(runner.lines().iter().any(|l| l.contains("fetch -q --depth 1 origin abc")), "{:#?}", runner.lines());
     }
 }

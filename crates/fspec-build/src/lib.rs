@@ -9,4 +9,4 @@ mod pack;
 pub mod recipe;
 mod run;
 
-pub use run::{Built, Job, build};
+pub use run::{Built, Job, build, cache_root};

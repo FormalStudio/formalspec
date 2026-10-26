@@ -218,7 +218,17 @@ them.
 | CMake | `cmake -S <src> -B <build> -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=<out> <flags>`, `cmake --build <build> --parallel`, `cmake --install <build>` |
 | Go | `go build -C <src> -o <out>/bin/ <flags> ./...` |
 | Make | `make -C <src> <flags>`, `make -C <src> install PREFIX=<out>` |
-| explicit | the `build` command, with `FSPEC_SRC` (the patched checkout) and `FSPEC_OUT` (put executables in `$FSPEC_OUT/bin`) in its environment; `build_flags` do not apply |
+| explicit | the `build` command, with `FSPEC_SRC` (the patched checkout), `FSPEC_OUT` (put executables in `$FSPEC_OUT/bin`) and `FSPEC_CACHE` (a directory kept between builds, for toolchains and target dirs) in its environment; `build_flags` do not apply |
+
+**Build cache.** `<src>`, `<build>` and `FSPEC_CACHE` live in
+`~/.cache/fspec/build/<name>-<platform>/` on the machine that builds, and stay
+there between revs: the next rev fetches into the same checkout (a forced
+checkout and `git clean -ffd` drop the last build's patches and untracked
+files, ignored ones stay), so Cargo, Meson and CMake build incrementally. A
+second build of the same package waits on `<name>-<platform>.lock` beside it.
+Only `<out>` is new each time. With docker, whose root is the host's root, the
+container hands the mounted directories back to the building user when it
+exits.
 
 Every command goes through the `Runner`. Non-Cargo recipes install into
 `<out>`, a prefix, and the artifact is that whole tree (directories, modes and
@@ -238,8 +248,8 @@ pkg("librepods", source = git("https://github.com/…/omarchy-pods", rev = "…"
 
 With `image` set, `fspec build` still checks out and patches on the build
 machine, then runs the whole recipe as one `podman run --rm` (`docker run`
-where podman is missing) of that image, with the work directory mounted at its
-own path and `FSPEC_SRC` and `FSPEC_OUT` passed in. `deps` install first, by
+where podman is missing) of that image, with the work directory and the build cache mounted at their
+own paths and `FSPEC_SRC`, `FSPEC_OUT` and `FSPEC_CACHE` passed in. `deps` install first, by
 whichever of zypper, dnf, apt-get, pacman, xbps-install or apk the image has,
 so they are named the way that distro names them (`pkgconfig(gtk4)` works on
 zypper and dnf). Building in the host's own distro links against the same
@@ -298,18 +308,20 @@ host(name = "e1504g", platform = "x86_64-linux",
 `routes` are ssh destinations for the same machine, in order of preference
 (the Tailscale name, then the LAN address); without them the name is the
 route. The first time a run needs a builder it probes the routes in order with
-`ssh -o ConnectTimeout=5 -o BatchMode=yes <route> uname -sm` and keeps the
+`ssh -o ConnectTimeout=5 -o BatchMode=yes -o ServerAliveInterval=15 <route> uname -sm` and keeps the
 first that answers for the rest of the run, so a builder that is down costs
 one timeout per route per run, not one per package. A builder of another
 platform is skipped. On the builder, fspec ships itself, a job file (the
 package as the spec declares it, the locked rev) and the package's patches to
-`~/.cache/fspec/build/<name>-<rev>`, runs `fspec build --job` there, copies the
-`.tar.zst` back over ssh and deletes the directory: nothing is installed on
-the builder, which needs only git, ssh and the recipe's tools (podman or
-docker for `image`). Run as root through sudo, the ssh runs as `SUDO_USER`,
-whose keys reach the builder. When every builder is unreachable or fails, the
-host builds the package itself and says so, rather than failing. The order is
-always the CI artifact, then builders in the order listed, then the host.
+`~/.cache/fspec/jobs/<name>-<rev>-<id>`, its own directory per job, runs
+`fspec build --job` there, copies the `.tar.zst` back over ssh and deletes the
+directory. The builder's build cache is what carries between jobs. Nothing is
+installed on the builder, which needs only git, ssh and the recipe's tools
+(podman or docker for `image`). Run as root through sudo, the ssh runs as
+`SUDO_USER`, whose keys reach the builder. When every builder is unreachable
+or fails, the apply fails with each builder's reason: a host that names
+builders is one that should not compile. The order is the CI artifact, then
+builders in the order listed; only a host without builders builds itself.
 
 The store directory of a built package hashes the url, the rev, the patches
 and the recipe (`build`, `build_flags`, `image`, `deps`), so a changed recipe

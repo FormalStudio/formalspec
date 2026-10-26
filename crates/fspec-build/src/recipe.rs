@@ -38,11 +38,14 @@ pub fn select(src: &Path, build: &[String]) -> Result<Recipe> {
     })
 }
 
-/// Where a recipe reads and writes. `out` is the install prefix of everything but Cargo.
+/// Where a recipe reads and writes. `out` is the install prefix of everything but Cargo. `src`,
+/// `build` and `cache` persist between builds of one package; `out` is new each time.
 pub struct Dirs {
     pub src: PathBuf,
     pub build: PathBuf,
     pub out: PathBuf,
+    /// `FSPEC_CACHE` for an explicit build: its toolchains, downloads and target directories.
+    pub cache: PathBuf,
 }
 
 impl Recipe {
@@ -67,7 +70,11 @@ impl Recipe {
                     .args(flags),
             ],
             Recipe::Meson => vec![
-                Cmd::new("meson").args(["setup", &bld, &src, "--buildtype", "release", "--prefix", &out]).args(flags),
+                Cmd::new("meson")
+                    .args(["setup", &bld, &src, "--buildtype", "release", "--prefix", &out])
+                    // `setup` refuses a directory the last build configured unless told to redo it.
+                    .args(d.build.join("meson-private").is_dir().then_some("--reconfigure"))
+                    .args(flags),
                 Cmd::new("meson").args(["compile", "-C", &bld]),
                 Cmd::new("meson").args(["install", "-C", &bld]),
             ],
@@ -88,7 +95,13 @@ impl Recipe {
             ],
             Recipe::Explicit => {
                 let (program, args) = build.split_first().expect("explicit builds have a command");
-                vec![Cmd::new(program).args(args).env("FSPEC_SRC", src).env("FSPEC_OUT", out)]
+                vec![
+                    Cmd::new(program)
+                        .args(args)
+                        .env("FSPEC_SRC", src)
+                        .env("FSPEC_OUT", out)
+                        .env("FSPEC_CACHE", path(&d.cache)),
+                ]
             }
         }
     }
@@ -101,7 +114,7 @@ mod tests {
     use super::*;
 
     fn dirs() -> Dirs {
-        Dirs { src: "/w/src".into(), build: "/w/build".into(), out: "/w/out".into() }
+        Dirs { src: "/w/src".into(), build: "/w/build".into(), out: "/w/out".into(), cache: "/w/cache".into() }
     }
 
     fn lines(r: Recipe, flags: &[&str]) -> Vec<String> {
@@ -162,6 +175,13 @@ mod tests {
     #[test]
     fn explicit_builds_get_the_checkout_and_the_output_directory() {
         let cmds = Recipe::Explicit.commands(&dirs(), &[], &["sh".into(), "-c".into(), "true".into()]);
-        assert_eq!(cmds[0].env, [("FSPEC_SRC".into(), "/w/src".into()), ("FSPEC_OUT".into(), "/w/out".into())]);
+        assert_eq!(
+            cmds[0].env,
+            [
+                ("FSPEC_SRC".into(), "/w/src".into()),
+                ("FSPEC_OUT".into(), "/w/out".into()),
+                ("FSPEC_CACHE".into(), "/w/cache".into())
+            ]
+        );
     }
 }
