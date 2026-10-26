@@ -11,7 +11,7 @@ These work with every command.
 
 | Option | Default | Meaning |
 | --- | --- | --- |
-| `-s`, `--spec <path>` | `spec.star` | The spec entry point. The lock and `secrets.star` sit next to it |
+| `-s`, `--spec <path>` | `$FSPEC_SPEC`, else `spec.star` | The spec entry point, or a directory holding `spec.star`. The lock and `secrets.star` sit next to it. Export `FSPEC_SPEC` to run `fspec apply` from any directory; while it is set, `fspec plan` and `fspec update` read that spec even inside a `dev.star` project |
 | `--root <dir>` | `/` | Treat this directory as `/`. Commands are logged to `<root>/var/log/fspec-commands.log` instead of run, so you can try an apply safely |
 | `--home <dir>` | `$HOME` | The user's home (with `--root`, `<root>/home/<user>`) |
 

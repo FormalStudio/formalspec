@@ -18,8 +18,8 @@ use fspec_remote::{Planned, Probe, Remote, Target};
 #[derive(Parser)]
 #[command(version, about = "Declare your machines in Starlark and keep them identical")]
 struct Cli {
-    /// The spec entry point.
-    #[arg(short, long, global = true, default_value = "spec.star")]
+    /// The spec entry point, or a directory holding spec.star.
+    #[arg(short, long, global = true, env = "FSPEC_SPEC", default_value = "spec.star")]
     spec: PathBuf,
     /// Treat this directory as `/`. Everything fspec reads or writes stays under it.
     #[arg(long, global = true, default_value = "/")]
@@ -390,7 +390,10 @@ impl From<ScopeArg> for Scope {
 const SCOPES: [Scope; 2] = [Scope::System, Scope::User];
 
 fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
+    if cli.spec.is_dir() {
+        cli.spec.push("spec.star");
+    }
     let paths = paths(&cli)?;
     let spec_path = std::path::absolute(&cli.spec)?;
     let spec_dir = spec_path.parent().context("spec has no parent directory")?.to_path_buf();
