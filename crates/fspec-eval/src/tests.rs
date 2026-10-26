@@ -26,13 +26,21 @@ fn example_spec() {
     let spec = evaluate(&example()).unwrap();
     assert_eq!(spec.hosts.len(), 3);
 
-    let g815 = spec.host("g815").unwrap();
-    let keys: Vec<String> = g815.desired().iter().map(|d| d.resource.key().to_string()).collect();
+    let laptop = spec.host("laptop").unwrap();
+    let keys: Vec<String> = laptop.desired().iter().map(|d| d.resource.key().to_string()).collect();
+    assert!(!keys.contains(&"image:system".into()));
+    assert!(
+        matches!(&laptop.system, Some(fspec_core::resource::System::Distro(d)) if d.distro == "opensuse-tumbleweed")
+    );
+
+    let workstation = spec.host("workstation").unwrap();
+    let keys: Vec<String> = workstation.desired().iter().map(|d| d.resource.key().to_string()).collect();
     assert!(keys.contains(&"image:system".into()));
-    assert!(keys.contains(&"user:kyandesutter".into()));
+    assert!(keys.contains(&"user:alex".into()));
     assert!(keys.contains(&"service:syncthing".into()));
     assert!(!keys.contains(&"pkg:aerospace".into()));
-    let syncthing = g815.desired().into_iter().find(|d| d.resource.key().to_string() == "service:syncthing").unwrap();
+    let syncthing =
+        workstation.desired().into_iter().find(|d| d.resource.key().to_string() == "service:syncthing").unwrap();
     assert_eq!(syncthing.owner.as_deref(), Some("syncthing"));
 
     let mac = spec.host("macbook").unwrap();

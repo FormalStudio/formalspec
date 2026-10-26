@@ -19,7 +19,7 @@ fn fspec(root: &Path, args: &[&str]) -> std::process::Output {
 #[test]
 fn plan_against_seeded_state() {
     let root = tempfile::tempdir().unwrap();
-    let out = fspec(root.path(), &["plan", "--host", "g815", "--json"]);
+    let out = fspec(root.path(), &["plan", "--host", "workstation", "--json"]);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let plan: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     let changes = plan["changes"].as_array().unwrap();
@@ -37,7 +37,7 @@ fn plan_against_seeded_state() {
     fs::create_dir_all(&state_dir).unwrap();
     fs::write(state_dir.join("state.json"), seeded).unwrap();
 
-    let out = fspec(root.path(), &["plan", "--host", "g815"]);
+    let out = fspec(root.path(), &["plan", "--host", "workstation"]);
     let text = String::from_utf8_lossy(&out.stdout);
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     assert!(text.contains("~ pkg:fd  github:sharkdp/fd [source]"), "{text}");
