@@ -1,3 +1,0 @@
-Defaults env_keep+=SSH_AUTH_SOCK
-Defaults noninteractive_auth
-kyandesutter ALL=(ALL) NOPASSWD: ALL

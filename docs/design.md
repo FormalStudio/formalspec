@@ -2044,8 +2044,9 @@ p3, p4 and p6 share the NVMe, and Windows' boot entry lives on the same EFI
 partition. The current configuration is `~/.config/nix`, which the port reads
 and never edits.
 
-1. **Parity port.** `examples/kyan/` holds a spec that reproduces both Linux
-   hosts from `~/.config/nix`:
+1. **Parity port.** The `formalspec` branch of
+   [FormalSnake/dotfiles](https://github.com/FormalSnake/dotfiles/tree/formalspec) holds a spec
+   that reproduces both Linux hosts from `~/.config/nix`:
    - Bazzite: nvidia on the g815, plain on the e1504g;
    - Hyprland with its Lua config, FormalShell built from git, and the matugen
      templates;

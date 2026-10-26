@@ -1,5 +1,0 @@
-[Desktop Entry]
-Type=Application
-Name=PolicyKit Authentication Agent
-# FormalShell registers the session's polkit agent; this one fails as a duplicate.
-Hidden=true

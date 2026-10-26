@@ -1,9 +1,0 @@
-#!/bin/bash
-set -e
-
-knob=/sys/devices/platform/asus-nb-wmi/gpu_mux_mode
-[ "$(cat "$knob")" = 0 ] && exit 0
-echo 0 > "$knob"
-echo "MUX switched to dGPU, takes effect at the next boot"
-
-
