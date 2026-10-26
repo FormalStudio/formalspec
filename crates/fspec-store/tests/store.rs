@@ -57,6 +57,7 @@ fn aqua(name: &str) -> Desired {
 struct World {
     _dir: tempfile::TempDir,
     paths: Paths,
+    build_cache: PathBuf,
     facts: Facts,
     lock: Lock,
     runner: Box<dyn Runner>,
@@ -68,6 +69,7 @@ impl World {
         let dir = tempfile::tempdir().unwrap();
         let paths = Paths::new(dir.path().into(), dir.path().join("home/u"));
         World {
+            build_cache: dir.path().join("build-cache"),
             _dir: dir,
             paths,
             facts: Facts::declared("m", PLATFORM, None).unwrap(),
@@ -90,6 +92,7 @@ impl World {
             scope: Scope::System,
             protect: &[],
             builders: &[],
+            build_cache: Some(&self.build_cache),
         }
     }
 

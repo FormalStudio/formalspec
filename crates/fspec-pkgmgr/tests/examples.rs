@@ -37,6 +37,7 @@ fn run(spec: &str, host: &str, scope: Scope) -> (Vec<String>, usize) {
         scope,
         protect: &[],
         builders: &[],
+        build_cache: None,
     };
     apply_scope(&cx(1), &backends, &want).unwrap();
     let state = State::load(&state_dir(&paths, scope).join("state.json")).unwrap();

@@ -1621,6 +1621,7 @@ impl<'a> Env<'a> {
             scope,
             protect: &self.protect,
             builders: &self.builders,
+            build_cache: None,
         }
     }
 }

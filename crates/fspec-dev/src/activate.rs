@@ -198,6 +198,7 @@ pub(crate) fn with_store<R>(
         scope: Scope::User,
         protect: &[],
         builders: &[],
+        build_cache: None,
     };
     f(&cx, &paths.fspec_root().join("store"), &user_store(&paths.home))
 }

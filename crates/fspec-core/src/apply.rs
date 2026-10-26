@@ -37,6 +37,8 @@ pub struct Cx<'a> {
     pub protect: &'a [String],
     /// The host's builders, for git packages CI has no artifact for.
     pub builders: &'a [crate::resource::Builder],
+    /// Where git packages build; `None` is the user's cache (`fspec_build::cache_root`).
+    pub build_cache: Option<&'a Path>,
 }
 
 impl Cx<'_> {
@@ -335,9 +337,21 @@ fn backend_for<'b>(cx: &Cx, backends: &[&'b dyn Backend], r: &Resource) -> Resul
     }
 }
 
-/// Hold `<dir>/apply.lock` for the life of the returned file, refusing when another apply has it.
+/// `<dir>/apply.lock`, held until dropped.
+#[derive(Debug)]
+struct ScopeLock(fs::File);
+
+impl Drop for ScopeLock {
+    /// Closing is not enough: a child spawned on another thread holds a copy of every fd until its
+    /// exec closes the CLOEXEC ones, and the flock lives until the last copy goes.
+    fn drop(&mut self) {
+        let _ = self.0.unlock();
+    }
+}
+
+/// Hold `<dir>/apply.lock` for the life of the returned guard, refusing when another apply has it.
 /// The holder writes its pid there so the refusal can name it.
-fn lock_scope(dir: &Path) -> Result<fs::File> {
+fn lock_scope(dir: &Path) -> Result<ScopeLock> {
     use std::io::{Read, Seek, Write};
     fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
     let path = dir.join("apply.lock");
@@ -361,7 +375,7 @@ fn lock_scope(dir: &Path) -> Result<fs::File> {
     file.set_len(0)?;
     file.rewind()?;
     write!(file, "{}", std::process::id())?;
-    Ok(file)
+    Ok(ScopeLock(file))
 }
 
 /// Converge one scope. Recovers an interrupted apply first. On failure the journal is replayed

@@ -107,6 +107,7 @@ impl World {
             scope,
             protect: &[],
             builders: &[],
+            build_cache: None,
         }
     }
 

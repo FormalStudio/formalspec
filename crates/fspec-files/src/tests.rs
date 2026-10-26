@@ -55,6 +55,7 @@ impl World {
             scope: Scope::User,
             protect: &[],
             builders: &[],
+            build_cache: None,
         }
     }
 

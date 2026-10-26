@@ -430,7 +430,10 @@ fn unpack_into(cx: &Cx, p: &Pkg, origin: &Origin, dirname: &str, dest: &Path, sc
     match origin {
         Origin::Build { url, rev } => {
             let (platform, out) = (cx.facts.platform(), scratch.join("build").join(dirname));
-            let cache = fspec_build::cache_root()?;
+            let cache = match cx.build_cache {
+                Some(c) => c.to_path_buf(),
+                None => fspec_build::cache_root()?,
+            };
             let job = fspec_build::Job {
                 pkg: p,
                 url,

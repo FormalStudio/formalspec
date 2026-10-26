@@ -167,6 +167,7 @@ mod tests {
                 scope: Scope::System,
                 protect: &[],
                 builders: &[],
+                build_cache: None,
             }
         }
 
