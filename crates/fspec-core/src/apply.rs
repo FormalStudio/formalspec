@@ -335,11 +335,43 @@ fn backend_for<'b>(cx: &Cx, backends: &[&'b dyn Backend], r: &Resource) -> Resul
     }
 }
 
+/// Hold `<dir>/apply.lock` for the life of the returned file, refusing when another apply has it.
+/// The holder writes its pid there so the refusal can name it.
+fn lock_scope(dir: &Path) -> Result<fs::File> {
+    use std::io::{Read, Seek, Write};
+    fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
+    let path = dir.join("apply.lock");
+    let mut file = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(&path)
+        .with_context(|| format!("opening {}", path.display()))?;
+    if let Err(e) = file.try_lock() {
+        let mut pid = String::new();
+        let _ = file.read_to_string(&mut pid);
+        return match e {
+            fs::TryLockError::WouldBlock => {
+                bail!("another apply (pid {}) is running here; wait for it or stop it", pid.trim())
+            }
+            fs::TryLockError::Error(e) => Err(e).with_context(|| format!("locking {}", path.display())),
+        };
+    }
+    file.set_len(0)?;
+    file.rewind()?;
+    write!(file, "{}", std::process::id())?;
+    Ok(file)
+}
+
 /// Converge one scope. Recovers an interrupted apply first. On failure the journal is replayed
 /// and the state file is left as it was.
 pub fn apply_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired]) -> Result<Plan> {
     let dir = cx.state_dir();
     let state_path = dir.join("state.json");
+    // Taken before recovery: a second apply would otherwise replay the first one's live journal
+    // and share its staging directory.
+    let _lock = lock_scope(&dir)?;
     Journal::recover(&dir, cx.runner)?;
     let mut state = State::load(&state_path)?;
     if cx.scope == Scope::User && attribute::refresh(cx, &mut state, desired)? {

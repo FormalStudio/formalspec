@@ -388,3 +388,13 @@ fn a_deferred_package_and_what_it_owns_are_left_out_and_retried() {
     let pending: Vec<String> = plan.changes.iter().map(|c| c.key.to_string()).collect();
     assert_eq!(pending, ["pkg:away", "service:awayd"]);
 }
+
+#[test]
+fn a_second_apply_of_a_scope_is_refused_while_the_first_holds_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let first = lock_scope(dir.path()).unwrap();
+    let err = lock_scope(dir.path()).unwrap_err().to_string();
+    assert!(err.contains(&format!("another apply (pid {})", std::process::id())), "{err}");
+    drop(first);
+    lock_scope(dir.path()).unwrap();
+}

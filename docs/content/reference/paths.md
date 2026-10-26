@@ -41,6 +41,7 @@ The same `/opt/fspec` root is used on macOS.
 | `~/.local/state/fspec/state.json` | User: what it owns in your home |
 | `<state dir>/generations/<n>.json` | A snapshot of state per generation, used by `rollback` |
 | `<state dir>/journal.json` | The undo journal of an apply in progress |
+| `<state dir>/apply.lock` | Held by the running apply, with its pid; a second apply is refused |
 | `<state dir>/secrets/<sha256>.age` | Kept ciphertext of each applied secret, for `fspec secret install` |
 
 Deleting a state file makes FormalSpec forget what it owns. The next apply then treats every

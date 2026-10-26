@@ -728,6 +728,11 @@ within the cutoff, then the user-store packages no remaining farm links into.
 5. On failure, replay the journal backwards. A crash mid-apply is resumed or
    reverted from the journal on the next run.
 
+Each scope's apply holds `<state dir>/apply.lock` from before that recovery to
+the end, with its pid in the file. A second apply of the same scope is refused
+and names the pid, rather than replaying the first one's live journal or
+sharing its staging directory.
+
 Before step 4, FormalSpec takes a btrfs or APFS snapshot of the paths it is
 about to touch when the filesystem supports it.
 
