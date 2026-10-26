@@ -30,9 +30,11 @@ pub fn spec_dir(commit: &str, dirty: Option<&str>) -> String {
     format!("\"$HOME/.cache/fspec/spec/{leaf}\"")
 }
 
-/// fspec as the remote's shell finds it. `fspec switch` and `fspec disk init` install it in
-/// /usr/local/bin, which AerynOS's non-interactive ssh PATH leaves out.
-pub const FSPEC: &str = r#"PATH="$PATH:/usr/local/bin" fspec"#;
+/// fspec as the remote's shell finds it. `fspec switch`, `fspec disk init` and the engine upgrade
+/// install it in /usr/local/bin, which AerynOS's non-interactive ssh PATH leaves out. It goes
+/// first: a store-managed fspec under /opt/fspec/current/bin is the lock's older one until the
+/// apply the upgrade unblocks has run.
+pub const FSPEC: &str = r#"PATH="/usr/local/bin:$PATH" fspec"#;
 
 pub fn batch(alias: &str) -> Cmd {
     Cmd::new("ssh").args(["-o", "ConnectTimeout=5", "-o", "BatchMode=yes"]).arg(alias)
@@ -150,7 +152,7 @@ mod tests {
     fn probe_line() {
         assert_eq!(
             probe("g815").to_string(),
-            r#"ssh -o ConnectTimeout=5 -o BatchMode=yes g815 'PATH="$PATH:/usr/local/bin" fspec facts --json'"#
+            r#"ssh -o ConnectTimeout=5 -o BatchMode=yes g815 'PATH="/usr/local/bin:$PATH" fspec facts --json'"#
         );
     }
 
@@ -204,7 +206,7 @@ mod tests {
             [
                 "-t",
                 "g815",
-                r#"PATH="$PATH:/usr/local/bin" fspec --spec "$HOME/.cache/fspec/spec/abc123"/spec.star apply --local --host g815"#
+                r#"PATH="/usr/local/bin:$PATH" fspec --spec "$HOME/.cache/fspec/spec/abc123"/spec.star apply --local --host g815"#
             ]
         );
         assert!(apply.interactive);
@@ -212,7 +214,7 @@ mod tests {
         assert!(scoped.args[2].ends_with("apply --local --host g815 --scope user"));
         assert_eq!(
             plan("g815", &dest, "spec.star", "g815").args[5],
-            r#"PATH="$PATH:/usr/local/bin" fspec --spec "$HOME/.cache/fspec/spec/abc123"/spec.star plan --json --local --host g815"#
+            r#"PATH="/usr/local/bin:$PATH" fspec --spec "$HOME/.cache/fspec/spec/abc123"/spec.star plan --json --local --host g815"#
         );
     }
 }

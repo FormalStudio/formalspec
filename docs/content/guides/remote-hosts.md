@@ -156,7 +156,7 @@ dirty apply breaks that link, so commit once the change works.
 ### 1. Probe
 
 ```sh
-ssh -o ConnectTimeout=5 -o BatchMode=yes server 'PATH="$PATH:/usr/local/bin" fspec facts --json'
+ssh -o ConnectTimeout=5 -o BatchMode=yes server 'PATH="/usr/local/bin:$PATH" fspec facts --json'
 ```
 
 The host prints what it is:
@@ -203,7 +203,7 @@ by the host's own fspec, from the lock.
 ### 4. Run the apply
 
 ```sh
-ssh -t server 'PATH="$PATH:/usr/local/bin" fspec --spec "$HOME/.cache/fspec/spec/<commit>"/spec.star apply --local --host server'
+ssh -t server 'PATH="/usr/local/bin:$PATH" fspec --spec "$HOME/.cache/fspec/spec/<commit>"/spec.star apply --local --host server'
 ```
 
 `-t` hands your terminal to the remote command, so `sudo` there can prompt. `--local` tells the
