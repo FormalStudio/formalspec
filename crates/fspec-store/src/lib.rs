@@ -178,6 +178,9 @@ fn target<'a>(cx: &'a Cx, p: &'a Pkg) -> Result<Target<'a>> {
     for (dest, part) in &p.parts {
         identity = format!("{identity}+{dest}={}", part_hash(p, locked, dest, part)?);
     }
+    if !p.build.is_empty() {
+        identity = format!("{identity}+{}", archive::hash8(&serde_json::to_string(&p.build)?));
+    }
     let dirname = format!("{}-{}-{version}", archive::hash8(&identity), p.name);
     Ok(Target {
         locked,
@@ -240,6 +243,9 @@ impl Backend for StoreBackend {
                 }
                 _ => {}
             }
+        }
+        if !p.build.is_empty() && !matches!(p.source, Source::Git { .. } | Source::Url { .. }) {
+            bail!("build runs for git(...) and url(...) packages only");
         }
         if !p.share.is_empty() && cx.facts.os != Os::Linux {
             bail!("share links into /usr/local/share, which only Linux searches");
@@ -477,9 +483,31 @@ fn unpack_into(cx: &Cx, p: &Pkg, origin: &Origin, dirname: &str, dest: &Path, sc
                 let tree = patch_root(dest, &p.source);
                 patch::apply_all(&tree, cx.spec_dir, &p.patches).with_context(|| format!("patching {}", p.name))?;
             }
+            if !p.build.is_empty() {
+                build_download(cx, p, dest, &scratch.join("src").join(dirname))?;
+            }
         }
     }
     Ok(())
+}
+
+/// A url(...) package's `build`: the command reads the unpacked download from `FSPEC_SRC` and
+/// installs the package into `FSPEC_OUT`. It runs on the host, at each install.
+fn build_download(cx: &Cx, p: &Pkg, dest: &Path, src: &Path) -> Result<()> {
+    if src.exists() {
+        fs::remove_dir_all(src)?;
+    }
+    fs::create_dir_all(src.parent().context("the source dir has a parent")?)?;
+    fs::rename(dest, src)?;
+    fs::create_dir_all(dest)?;
+    let (program, args) = p.build.split_first().context("build has a command")?;
+    let cmd = Cmd::new(program)
+        .args(args)
+        .env("FSPEC_SRC", src.display().to_string())
+        .env("FSPEC_OUT", dest.display().to_string());
+    let built = cx.runner.check(&cmd).with_context(|| format!("building {}", p.name));
+    fs::remove_dir_all(src)?;
+    built.map(drop)
 }
 
 /// Each of `p.parts` at its locked url and hash, unpacked into its path under the package root.

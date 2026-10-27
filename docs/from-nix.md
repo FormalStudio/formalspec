@@ -50,6 +50,7 @@ the store-wide build graph and hand-written hashes.
 | seed-once activation scripts | `file(..., mode = "seed")` |
 | a JSON file you rewrite with `jq` on activation | `file(..., mode = "patch")` |
 | `overrideAttrs` with `patches` | `pkg(..., patches = [...], build_flags = [...])` |
+| `appimageTools` with a `postExtract` edit | `pkg(..., source = url(...), build = [...])` |
 | `systemd.services`, `systemd.user.services`, `launchd.agents` | `service(...)` |
 | `homebrew.brews`, `homebrew.casks`, `homebrew.taps` | `pkg(..., source = brew(..., tap = "owner/repo"))` |
 | `home.packages` apps under `~/Applications/Home Manager Apps`, mac-app-util | `pkg(..., apps = ["Foo.app"])`, copied into /Applications |

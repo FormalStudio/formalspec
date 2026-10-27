@@ -352,6 +352,33 @@ fn a_url_elf_is_the_command_and_any_other_file_is_data() {
 }
 
 #[test]
+fn a_url_build_installs_from_the_download_and_reinstalls_when_it_changes() {
+    let mut w = World::new();
+    let appimage = b"\x7fELF\x02\x01\x01 AppImage".to_vec();
+    let url = "https://example/Beeper-4.3.73-x86_64.AppImage";
+    w.lock.upsert(locked("beeper", &format!("url:{url}"), "1", url, &appimage));
+    w.fetch = MapFetch::default().with(url, appimage);
+    w.runner = Box::new(BuildHere);
+    let build = |echo: &str| {
+        let script = format!(
+            r#"test -f "$FSPEC_SRC/beeper" && mkdir -p "$FSPEC_OUT/bin" && printf '#!/bin/sh\necho {echo}\n' > "$FSPEC_OUT/bin/beeper" && chmod +x "$FSPEC_OUT/bin/beeper""#
+        );
+        with_fields(pkg("beeper", json!({"kind": "url", "url": url}), "pinned"), json!({"build": ["sh", "-c", script]}))
+    };
+    w.apply(&[build("patched")]).unwrap();
+    assert_eq!(w.run("beeper"), "patched");
+    w.apply(&[build("patched again")]).unwrap();
+    assert_eq!(w.run("beeper"), "patched again");
+
+    let failing = with_fields(
+        pkg("beeper", json!({"kind": "url", "url": url}), "pinned"),
+        json!({"build": ["sh", "-c", "exit 3"]}),
+    );
+    let err = w.apply(&[failing]).unwrap_err();
+    assert!(format!("{err:#}").contains("building beeper"), "{err:#}");
+}
+
+#[test]
 fn a_data_only_pkg_links_its_share_trees() {
     let mut w = World::new();
     let fedora = serde_json::from_value(json!({"kind": "distro", "distro": "fedora", "init": "systemd"})).unwrap();

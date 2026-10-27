@@ -154,7 +154,7 @@ A package. See [Packages](../guides/packages.md).
 | `apps` | list of strings | `[]` | macOS: `.app` bundles inside the package, copied to `/Applications` |
 | `parts` | dict | `{}` | Extra `url(...)` archives unpacked into the package, keyed by the path inside it |
 | `patches` | list of paths | `[]` | Patch files in the spec repository, applied in order |
-| `build` | list of strings | `[]` | For `git(...)`: the build command, replacing recipe detection |
+| `build` | list of strings | `[]` | For `git(...)`: the build command, replacing recipe detection. For `url(...)`: a command run on the host after download, reading `$FSPEC_SRC` and installing into `$FSPEC_OUT` |
 | `build_flags` | list of strings | `[]` | For `git(...)`: appended to the recipe's configure or build command |
 | `files` | list of `file(...)` | `[]` | Files that belong to the package and go with it |
 | `services` | list of `service(...)` | `[]` | Services that belong to the package and go with it |

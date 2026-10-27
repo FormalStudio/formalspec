@@ -162,6 +162,17 @@ pkg("beeper", source = url("https://example.com/Beeper-4.3.73-x86_64.AppImage"))
 it once and records its hash. A bare executable, such as an AppImage, becomes the command named
 after the package. To move to a new version, change the URL.
 
+A download that needs reworking before it runs takes `build`, a command that reads the unpacked
+download from `$FSPEC_SRC` and installs the package into `$FSPEC_OUT`:
+
+```starlark
+pkg("beeper", source = url("https://example.com/Beeper-4.3.73-x86_64.AppImage"),
+    build = ["sh", "-c", "cd $FSPEC_SRC && ./beeper --appimage-extract && cp -a squashfs-root/. $FSPEC_OUT/"]),
+```
+
+It runs on the host at every install, so keep it to unpacking and small edits; anything that
+compiles belongs in a `git(...)` package. Changing the command reinstalls the package.
+
 ### Nix
 
 ```starlark

@@ -525,6 +525,15 @@ the lock does not have fails the apply until the next update. The parts'
 hashes are part of the store directory's name. A `git` or `nix` package has no
 downloaded archive and takes no `parts`.
 
+A `url(...)` package can also take `build`, a command run on the host after the
+parts and patches, for a download that needs more than a text patch (an
+AppImage whose bundled app has to be extracted and edited). It sees the
+unpacked download in `FSPEC_SRC` and installs the package into `FSPEC_OUT`,
+which becomes the store directory; a hash of the command is part of that
+directory's name, so editing it reinstalls. It runs at every install, with no
+build cache and no builder, so it suits seconds of unpacking, not a compile.
+`build` on any other downloaded source is refused.
+
 macOS app bundles go where Spotlight, Launchpad, the Dock and `open -a` find
 them with `apps`, the bundle paths inside the package:
 
