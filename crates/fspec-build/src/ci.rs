@@ -79,7 +79,14 @@ jobs:
       - name: Install fspec
         run: cargo install --locked --git {repo} fspec
       - name: Build
-        run: fspec --spec {spec} build --pkg ${{{{ matrix.pkg }}}} --platform ${{{{ matrix.platform }}}} --out out
+        env:
+          # GITHUB_TOKEN reads only this repository; a git(...) source in another private one needs this.
+          FSPEC_GIT_TOKEN: ${{{{ secrets.FSPEC_GIT_TOKEN }}}}
+        run: |
+          if [ -n "$FSPEC_GIT_TOKEN" ]; then
+            git config --global url."https://x-access-token:$FSPEC_GIT_TOKEN@github.com/".insteadOf https://github.com/
+          fi
+          fspec --spec {spec} build --pkg ${{{{ matrix.pkg }}}} --platform ${{{{ matrix.platform }}}} --out out
       - name: Push
         env:
           TOKEN: ${{{{ secrets.GITHUB_TOKEN }}}}

@@ -306,6 +306,18 @@ When either changes, the entry loses its digest until CI has built the new commi
 
 Run `fspec ci packages` again when the set of git packages or platforms changes.
 
+A job checks out a `git(...)` source over `https://github.com/` with no credentials, so a source in
+a private repository fails there. Store a token that can read it as the repository secret
+`FSPEC_GIT_TOKEN` and the jobs fetch with it:
+
+```sh
+gh secret set FSPEC_GIT_TOKEN --body "$(gh auth token)"
+```
+
+Builders and hosts fetch with git's own credentials, so a private source builds there once
+`gh auth setup-git` (or any credential helper) can read it. Write the URL as `https://`: the jobs
+have no ssh key.
+
 ### Registry layout
 
 Each package is one repository, `ghcr.io/<owner>/fspec-cache/<name>`, with one tag per commit and
