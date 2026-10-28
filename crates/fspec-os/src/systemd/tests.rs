@@ -320,6 +320,32 @@ fn a_display_manager_boots_the_host_to_graphical_and_hands_the_old_default_back(
 }
 
 #[test]
+fn rolling_back_a_forced_enable_puts_the_alias_it_took_back() {
+    let w = World::linux(Init::Systemd);
+    let lib = w.paths.root.join("usr/lib/systemd/system");
+    fs::create_dir_all(&lib).unwrap();
+    fs::write(lib.join("greetd.service"), "[Service]\nExecStart=greetd\n\n[Install]\nAlias=display-manager.service\n")
+        .unwrap();
+    let etc = w.paths.root.join("etc/systemd/system");
+    fs::create_dir_all(&etc).unwrap();
+    let alias = etc.join("display-manager.service");
+    std::os::unix::fs::symlink("/usr/lib/systemd/system/display-manager-legacy.service", &alias).unwrap();
+
+    let greetd = resource(json!({"kind": "service", "name": "greetd"}));
+    let op = Op { key: greetd.key(), desired: Some(desired(greetd.clone())), current: None, drift: vec![] };
+    let mut journal = fspec_core::journal::Journal::begin(&w.paths.system_state_dir(), 1).unwrap();
+    let Resource::Service(s) = &greetd else { unreachable!() };
+    crate::distro_unit::commit(&w.cx(Scope::System), Init::Systemd, &mut journal, &op, s).unwrap();
+    fs::remove_file(&alias).unwrap();
+    std::os::unix::fs::symlink("/usr/lib/systemd/system/greetd.service", &alias).unwrap();
+
+    w.runner.calls.lock().unwrap().clear();
+    journal.rollback(&w.runner).unwrap();
+    assert_eq!(w.runner.lines(), ["systemctl disable greetd", "systemctl daemon-reload"]);
+    assert_eq!(fs::read_link(&alias).unwrap().to_str(), Some("/usr/lib/systemd/system/display-manager-legacy.service"));
+}
+
+#[test]
 fn a_service_without_exec_enables_the_distro_unit() {
     let w = World::linux(Init::Systemd);
     let backends: &[&dyn Backend] = &[&SystemdBackend];

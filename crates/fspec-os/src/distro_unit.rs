@@ -149,6 +149,52 @@ fn start(cx: &Cx, s: &Service) -> Result<Map<String, Value>> {
     Ok(fspec_core::apply::deferred(format!("`{start}` failed: {}; see `{journalctl} {}`", why.trim(), s.name)))
 }
 
+/// Where systemd looks for a unit file, in its order of precedence, and where `enable` links.
+fn unit_dirs(user: bool) -> (&'static [&'static str], &'static str) {
+    if user {
+        (
+            &["~/.config/systemd/user", "/etc/systemd/user", "/usr/local/lib/systemd/user", "/usr/lib/systemd/user"],
+            "~/.config/systemd/user",
+        )
+    } else {
+        (
+            &["/etc/systemd/system", "/usr/local/lib/systemd/system", "/usr/lib/systemd/system", "/lib/systemd/system"],
+            "/etc/systemd/system",
+        )
+    }
+}
+
+/// The links `enable --force` may take over from another unit: the `[Install] Alias=` names of
+/// the unit file systemd would load.
+fn alias_links(cx: &Cx, s: &Service) -> Result<Vec<std::path::PathBuf>> {
+    let (dirs, links) = unit_dirs(s.user);
+    // `systemctl enable greetd` means greetd.service.
+    let typed = [".service", ".target", ".socket", ".device", ".slice", ".scope"].iter().chain(&STARTED);
+    let name =
+        if typed.into_iter().any(|t| s.name.ends_with(t)) { s.name.clone() } else { format!("{}.service", s.name) };
+    let mut file = None;
+    for dir in dirs {
+        if let Some(text) = crate::read_or_empty(&cx.resolve(&format!("{dir}/{name}"))?) {
+            file = Some(text);
+            break;
+        }
+    }
+    let mut section = "";
+    let mut out = Vec::new();
+    for line in file.as_deref().unwrap_or("").lines().map(str::trim) {
+        if line.starts_with('[') {
+            section = line;
+        } else if section == "[Install]"
+            && let Some(names) = line.strip_prefix("Alias").map(str::trim_start).and_then(|l| l.strip_prefix('='))
+        {
+            for name in names.split_whitespace().filter(|n| !n.contains('/')) {
+                out.push(cx.resolve(&format!("{links}/{name}"))?);
+            }
+        }
+    }
+    Ok(out)
+}
+
 pub(crate) fn commit(cx: &Cx, init: Init, journal: &mut Journal, op: &Op, s: &Service) -> Result<Map<String, Value>> {
     let removal = op.is_removal();
     match init {
@@ -157,6 +203,15 @@ pub(crate) fn commit(cx: &Cx, init: Init, journal: &mut Journal, op: &Op, s: &Se
             // Tumbleweed's preset leaves display-manager.service on display-manager-legacy.service,
             // and the spec naming this one is what decides.
             let (verb, undo) = if removal { ("disable", "enable --force") } else { ("enable --force", "disable") };
+            if !removal {
+                // The rollback disables this unit before it puts back the alias links it took over.
+                journal.record(Undo::Run {
+                    cmd: Cmd::new("systemctl").args(s.user.then_some("--user")).arg("daemon-reload"),
+                })?;
+                for link in alias_links(cx, s)? {
+                    journal.backup(&link)?;
+                }
+            }
             journal.record(Undo::Run { cmd: systemctl(undo, s) })?;
             cx.runner.check(&systemctl(verb, s))?;
             let mut rec = own_default(cx, journal, op, s)?;

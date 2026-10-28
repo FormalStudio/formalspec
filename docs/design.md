@@ -934,7 +934,9 @@ service("syncthing", exec = "syncthing serve --no-browser",
 Without `exec`, `service("gdm")` names a unit the distro ships and fspec only
 enables it at boot, without starting it, so the same apply works inside the chroot
 `switch --distro` builds. systemd runs `systemctl enable --force gdm` (an alias
-such as display-manager.service may already point at another unit), runit links
+such as display-manager.service may already point at another unit; before it,
+the journal backs up the links named by the unit file's `[Install] Alias=`, so a
+rollback disables the unit and then restores the links it took over), runit links
 `/etc/sv/gdm` into `/etc/runit/runsvdir/default` (and fails `apply` when the
 package that ships it is missing), OpenRC runs `rc-update add gdm default` and dinit
 `dinitctl enable gdm`. On systemd a `.swap`, `.mount`, `.automount`, `.timer`,

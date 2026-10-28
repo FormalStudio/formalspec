@@ -224,7 +224,10 @@ would fail the apply.
 Such a service takes no `restart`, `after`, `env`, `description` or `systemd`. On systemd it may
 set `user = True` to enable a user unit, and the name may carry a suffix such as
 `service("nordvpnd.socket")`. Drift is the unit no longer being enabled. Removing it disables the
-unit and leaves the distro's files alone.
+unit and leaves the distro's files alone. An apply that fails after the forced enable rolls it
+back: fspec disables the unit and puts back the alias links it took over (the `Alias=` names in
+the unit file's `[Install]` section), so `display-manager.service` points at the old display
+manager again.
 
 `display_manager = True` (systemd only) marks the login screen. While it is declared, the host
 boots to `graphical.target`. Some distros default to `multi-user.target`, which never starts a
