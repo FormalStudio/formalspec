@@ -171,8 +171,10 @@ what a host is, and a wrong `ssh` destination cannot turn into a wrong apply.
 
 `engine` is a number that goes up whenever fspec learns a new builtin, builtin argument, resource
 field or lock key. An fspec on the host with a lower number may reject the spec or ignore lock
-entries it does not know, so fspec refuses it. fspec never copies itself to the host, since the
-binary on your machine may not run there. Update fspec on the host instead.
+entries it does not know, so fspec first installs the fspec your lock pins there: the CI build
+when the lock records one for the host's platform, otherwise a build the host's own fspec runs
+from the locked commit (minutes, the first time). fspec never copies itself to the host, since the
+binary on your machine may not run there.
 
 ### 2. Check the tree
 
@@ -229,11 +231,10 @@ A host that asks for a password fails here; set up key authentication.
 The login worked and the shell found no `fspec`. Install it on the host, or link it into a
 directory on the default path such as `/usr/local/bin`.
 
-**`fspec on server is older than this one (engine 2 < 3) and fspec.lock has no CI build of fspec for x86_64-linux to install; ...`**
+**`fspec on server is older than this one (engine 2 < 3) and fspec.lock pins no fspec; ...`**
 
 An apply hands an older Linux host the fspec the lock pins before it ships the spec, and this
-lock has no CI build of it yet. Run `fspec update --cache` once CI has built the `fspec`
-package, or update fspec on the host by hand.
+lock pins none. Run `fspec update fspec`, or update fspec on the host by hand.
 
 **`host server is declared as x86_64-linux/debian but the machine is x86_64-linux/fedora`**
 

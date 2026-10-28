@@ -2011,11 +2011,16 @@ through the `Runner`:
    prints the remote fspec's engine number, raised with every builtin, field
    or lock key a spec can use; one lower than this fspec's fails the same way
    (`fspec on g815 is older than this one (engine 0 < 1)`), since it may
-   reject the spec or ignore lock keys it does not know, unless the lock holds
-   a CI build of [the engine](#the-engine) for the remote's platform. Then the
-   driving fspec pulls it, streams it to `~/.cache/fspec/engine.new` and runs
-   `ssh -t h sudo install` to put it at `/usr/local/bin/fspec`, probes again
-   and carries on. It never ships its own binary, which may not run there.
+   reject the spec or ignore lock keys it does not know, unless the lock pins
+   [the engine](#the-engine). With a CI build for the remote's platform the
+   driving fspec pulls it; without one (CI has not caught up with a lock bump)
+   it ships the remote a job file for the locked rev and has the remote's own
+   older fspec run `fspec build --job` in `~/.cache/fspec/engine-build`, then
+   copies the archive back. Either way it unpacks the binary, streams it to
+   `~/.cache/fspec/engine.new` and runs `ssh -t h sudo install` to put it at
+   `/usr/local/bin/fspec`, probes again and carries on; the remote's apply then
+   links that path back into its store. It never ships its own binary, which
+   may not run there.
 2. Refuse a dirty spec tree. Hosts that apply the same commit end up with the
    same software, so uncommitted changes under the spec directory stop the
    apply unless `--dirty` is passed.

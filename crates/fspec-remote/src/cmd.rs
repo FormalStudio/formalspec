@@ -112,6 +112,33 @@ pub fn upload_engine(alias: &str, file: &Path) -> Cmd {
     batch(alias).arg(format!("mkdir -p \"$HOME/.cache/fspec\" && cat > {ENGINE_UPLOAD}")).stdin_file(file)
 }
 
+/// Where an older remote builds the locked engine when CI has not: its own fspec runs the job.
+const ENGINE_JOB: &str = "\"$HOME/.cache/fspec/engine-build\"";
+
+pub fn upload_engine_job(alias: &str, file: &Path) -> Cmd {
+    batch(alias).arg(format!("mkdir -p {ENGINE_JOB} && cat > {ENGINE_JOB}/job.json")).stdin_file(file)
+}
+
+/// The build prints nothing for minutes; keepalives turn a dropped link into an error.
+pub fn build_engine(alias: &str, platform: &str) -> Cmd {
+    batch(alias)
+        .args(["-o", "ServerAliveInterval=15"])
+        .arg(format!("cd {ENGINE_JOB} && {FSPEC} build --job job.json --platform {platform} --out out"))
+}
+
+/// Copies the archive [`build_engine`] wrote to `to` on this machine.
+pub fn fetch_engine_build(alias: &str, platform: &str, to: &Path) -> Cmd {
+    let cat = batch(alias).arg(format!("cat {ENGINE_JOB}/out/{}-{platform}.tar.zst", fspec_core::engine::NAME));
+    Cmd::new("sh")
+        .args(["-c", r#"out=$1; shift; "$@" > "$out""#, "sh", &to.display().to_string()])
+        .arg(cat.program)
+        .args(cat.args)
+}
+
+pub fn clean_engine_job(alias: &str) -> Cmd {
+    batch(alias).arg(format!("rm -rf {ENGINE_JOB}"))
+}
+
 /// Interactive, since sudo may ask for a password.
 pub fn install_engine(alias: &str) -> Cmd {
     let bin = fspec_core::engine::BIN;

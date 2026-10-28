@@ -41,6 +41,12 @@ pub fn pull_built(runner: &dyn Runner, reference: &str, scratch: &Path, dest: &P
     archive::unpack(&body, dest, name)
 }
 
+/// Unpack a package archive `fspec build` wrote into `dest`.
+pub fn unpack_built(archive: &Path, dest: &Path, name: &str) -> Result<()> {
+    let body = std::fs::read(archive).with_context(|| format!("reading {}", archive.display()))?;
+    archive::unpack(&body, dest, name)
+}
+
 /// What the state file keeps per package. `locked` is the lock entry as applied, which lets a
 /// rollback rebuild the lock of an old generation.
 #[derive(Serialize, Deserialize, Clone, Debug)]

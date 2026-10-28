@@ -261,6 +261,9 @@ impl fspec_core::runner::Runner for Bootstrap {
                     .to_string(),
             ));
         }
+        if line.starts_with("sh -c") && line.contains(".tar.zst") {
+            fs::write(&cmd.args[3], &self.body)?;
+        }
         if line.starts_with("oras pull") {
             fs::write(Path::new(cmd.args.last().unwrap()).join("fspec"), &self.body)?;
         }
@@ -344,5 +347,41 @@ fn an_older_remote_with_no_locked_engine_build_says_how_to_get_one() {
     );
     let h = host("g815", "x86_64-linux", "bazzite");
     let err = remote(dir.path(), &runner, false).plan(&h, "g815").err().unwrap();
-    assert!(err.to_string().contains("no CI build of fspec for x86_64-linux"), "{err}");
+    assert!(err.to_string().contains("fspec.lock pins no fspec; run `fspec update fspec`"), "{err}");
+}
+
+#[test]
+fn an_older_remote_builds_the_locked_engine_when_ci_has_not() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fspec_core::engine::pkg().source.to_string();
+    fs::write(
+        dir.path().join("fspec.lock"),
+        format!("[[pkg]]\nname = \"fspec\"\nsource = \"{source}\"\nrev = \"abc\"\n"),
+    )
+    .unwrap();
+    let runner = Bootstrap { calls: Default::default(), body: engine_tar(), installed: Default::default() };
+    let h = host("g815", "x86_64-linux", "bazzite");
+    let r = Remote {
+        runner: &runner,
+        spec_dir: dir.path().into(),
+        spec_file: "spec.star".into(),
+        dirty: false,
+        loads_cache: None,
+    };
+    r.plan(&h, "g815").unwrap();
+
+    let calls = runner.calls.lock().unwrap();
+    let at = |needle: &str| {
+        calls.iter().position(|c| c.contains(needle)).unwrap_or_else(|| panic!("no {needle}: {calls:#?}"))
+    };
+    assert!(!calls.iter().any(|c| c.contains("oras")), "{calls:#?}");
+    assert!(calls[at("job.json")].contains("cat >"));
+    assert!(
+        calls[at("build --job")].ends_with("fspec build --job job.json --platform x86_64-linux --out out'"),
+        "{calls:#?}"
+    );
+    assert!(at("build --job") < at("fspec-x86_64-linux.tar.zst"));
+    assert!(at("fspec-x86_64-linux.tar.zst") < at("rm -rf"));
+    assert!(at("rm -rf") < at("engine.new"));
+    assert!(at("engine.new") < at("sudo install"));
 }

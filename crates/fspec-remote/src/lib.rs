@@ -3,7 +3,7 @@
 
 pub mod cmd;
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use fspec_core::engine;
@@ -130,23 +130,21 @@ impl Remote<'_> {
             return Ok(reach);
         }
         let lock = Lock::load(&self.spec_dir.join("fspec.lock"))?;
-        let Some(reference) = locked_engine(&lock, &found.platform) else {
-            bail!(
-                "fspec on {alias} is older than this one (engine {} < {ENGINE}) and fspec.lock has no CI build of fspec for {} to install; run `fspec update --cache`, or install a current fspec there first",
-                found.engine,
-                found.platform
-            );
-        };
-        eprintln!("fspec: {alias} runs engine {}, installing the locked fspec there first", found.engine);
         let tmp = tempfile::tempdir()?;
         let dest = tmp.path().join("pkg");
-        fspec_store::pull_built(self.runner, reference, &tmp.path().join("oci"), &dest, engine::NAME)
-            .context("pulling the locked fspec, which needs oras on this machine's PATH")?;
+        match locked_engine(&lock, &found.platform) {
+            Some(reference) => {
+                eprintln!("fspec: {alias} runs engine {}, installing the locked fspec there first", found.engine);
+                fspec_store::pull_built(self.runner, reference, &tmp.path().join("oci"), &dest, engine::NAME)
+                    .context("pulling the locked fspec, which needs oras on this machine's PATH")?;
+            }
+            None => self.build_engine(alias, found, &lock, tmp.path(), &dest)?,
+        }
         // A build recipe installs into $FSPEC_OUT/bin, a detected one packs at the top.
         let exe = [dest.join("bin").join(engine::NAME), dest.join(engine::NAME)]
             .into_iter()
             .find(|p| p.is_file())
-            .with_context(|| format!("the locked fspec build {reference} holds no {} executable", engine::NAME))?;
+            .with_context(|| format!("the locked fspec build holds no {} executable", engine::NAME))?;
         self.runner.check(&cmd::upload_engine(alias, &exe))?;
         let out = self.runner.run(&cmd::install_engine(alias))?;
         if out.status != 0 {
@@ -157,6 +155,34 @@ impl Remote<'_> {
             current(alias, found)?;
         }
         Ok(reach)
+    }
+
+    /// Has the older fspec on `alias` build the locked engine, for a lock CI has not recorded a
+    /// build in yet, and unpacks it into `dest`.
+    fn build_engine(&self, alias: &str, found: &Probe, lock: &Lock, tmp: &Path, dest: &Path) -> Result<()> {
+        let pkg = engine::pkg();
+        let rev = lock.pkg(engine::NAME, &pkg.source.to_string()).and_then(|p| p.rev.clone()).with_context(|| {
+            format!(
+                "fspec on {alias} is older than this one (engine {} < {ENGINE}) and fspec.lock pins no fspec; run `fspec update fspec`, or install a current fspec there first",
+                found.engine
+            )
+        })?;
+        eprintln!(
+            "fspec: {alias} runs engine {}, and fspec.lock has no CI build of fspec for {}, so {alias} builds the locked one first",
+            found.engine, found.platform
+        );
+        let job = tmp.join("job.json");
+        // What `fspec build --job` reads (fspec_build::builders::JobFile).
+        std::fs::write(&job, serde_json::to_vec(&serde_json::json!({"pkg": pkg, "rev": rev}))?)?;
+        self.runner.check(&cmd::upload_engine_job(alias, &job))?;
+        let archive = tmp.join("engine.tar.zst");
+        let built = self
+            .runner
+            .check(&cmd::build_engine(alias, &found.platform))
+            .and_then(|_| self.runner.check(&cmd::fetch_engine_build(alias, &found.platform, &archive)));
+        let _ = self.runner.run(&cmd::clean_engine_job(alias));
+        built.with_context(|| format!("building the locked fspec on {alias}"))?;
+        fspec_store::unpack_built(&archive, dest, engine::NAME)
     }
 
     /// Copies the git-tracked files of the spec dir (and the untracked ones when it is dirty), plus
