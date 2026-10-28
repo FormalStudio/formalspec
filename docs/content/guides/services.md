@@ -30,7 +30,7 @@ host laptop
   1 to add, 0 to change, 0 to remove
 ```
 
-A changed service is restarted. A removed one is stopped, disabled, and its files deleted.
+A changed service is restarted. A removed one is stopped, disabled, and its files deleted; on systemd its failed state is cleared too, so `systemctl --failed` does not keep listing a unit that no longer exists.
 
 | Argument | Default | Meaning |
 | --- | --- | --- |

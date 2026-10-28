@@ -169,9 +169,11 @@ fn add_update_remove_command_sequences() {
             "systemctl stop fspec-web.service",
             "systemctl disable fspec-web.service",
             "systemctl daemon-reload",
+            "systemctl reset-failed fspec-web.service",
             "systemctl stop fspec-job.timer",
             "systemctl disable fspec-job.timer",
             "systemctl daemon-reload",
+            "systemctl reset-failed fspec-job.service fspec-job.timer",
         ]
     );
     assert!(!unit.exists() && !timer_unit.exists());
@@ -195,7 +197,10 @@ fn a_unit_that_refuses_manual_start_is_only_enabled_and_disabled() {
 
     w.runner.calls.lock().unwrap().clear();
     apply_scope(&w.cx(Scope::System), backends, &[]).unwrap();
-    assert_eq!(w.runner.lines(), ["systemctl disable fspec-app.service", "systemctl daemon-reload"]);
+    assert_eq!(
+        w.runner.lines(),
+        ["systemctl disable fspec-app.service", "systemctl daemon-reload", "systemctl reset-failed fspec-app.service"]
+    );
 }
 
 #[test]

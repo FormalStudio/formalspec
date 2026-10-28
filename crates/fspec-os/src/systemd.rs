@@ -118,6 +118,11 @@ impl Backend for SystemdBackend {
                     remove_any(&cx.resolve(&u.path)?)?;
                 }
                 cx.runner.check(&ctl(&["daemon-reload"]))?;
+                // A unit that failed (or exited non-zero on its stop) stays listed as failed, file
+                // gone, until this clears it.
+                let mut reset = vec!["reset-failed"];
+                reset.extend(us.iter().map(|u| u.file.as_str()));
+                cx.runner.run(&ctl(&reset))?;
                 continue;
             }
 
