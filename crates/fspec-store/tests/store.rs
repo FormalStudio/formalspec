@@ -231,7 +231,7 @@ fn self_managed_installs_once_and_ignores_later_locks() {
 }
 
 #[test]
-fn failed_commit_leaves_no_trace() {
+fn a_package_missing_what_the_spec_names_fails_before_any_commit() {
     let mut w = World::new();
     w.add_hello("1.0.0");
     let empty = tgz(&[("lib/readme.txt", "no executables here", 0o644)]);
@@ -240,7 +240,8 @@ fn failed_commit_leaves_no_trace() {
 
     let err = w.apply(&[aqua("hello"), aqua("zlib")]).unwrap_err();
     assert!(format!("{err:#}").contains("no executables"), "{err:#}");
-    assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
+    assert!(format!("{err:#}").contains("checking zlib"), "{err:#}");
+    assert!(!format!("{err:#}").contains("rolled back"), "{err:#}");
     assert!(fs::symlink_metadata(w.root().join("current")).is_err());
     assert!(!w.root().join("generations/1").exists());
     assert_eq!(w.store_entries(), 0);

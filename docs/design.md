@@ -2027,7 +2027,9 @@ whose shape belongs to the backend that applied it.
 Backends implement one trait: `handles` claims resources on a host (exactly
 one backend per resource, or `plan` lists it as unsupported and `apply`
 refuses), `drift` reports live divergence for unchanged resources, `prepare`
-fetches and renders into a staging directory, and `commit` makes changes live,
+fetches and renders into a staging directory (the store also checks there that
+a package holds the `bins`, `links`, `share`, `etc` and `apps` the spec names,
+so a wrong one fails before any phase commits), and `commit` makes changes live,
 journaling an undo step before each mutation. A backend can name the live
 paths a resource writes (`writes`); a removed `file` at one of those paths is
 handed over instead of deleted, and the plan shows it as `>` rather than `-`.

@@ -338,11 +338,17 @@ impl Backend for StoreBackend {
                     fs::create_dir_all(marker.parent().context("marker has a parent")?)?;
                     fs::write(&marker, out)?;
                 }
-                Kind::Archive { origin, dirname, .. } => {
+                Kind::Archive { origin, dirname, artifact } => {
                     if root.join("store").join(&dirname).exists() || !build_tool_present(p, &origin) {
                         continue;
                     }
-                    unpack_into(cx, p, &origin, &dirname, &staging.join("store").join(&dirname), staging)?;
+                    let staged = staging.join("store").join(&dirname);
+                    unpack_into(cx, p, &origin, &dirname, &staged, staging)?;
+                    // A wrong `bins`, `links` or `share` fails here, before an earlier phase has
+                    // installed the distro's packages that a rollback would then remove again.
+                    bins_of(p, artifact, &staged)
+                        .and_then(|bins| check_tree(p, &bins, &staged))
+                        .with_context(|| format!("checking {}", p.name))?;
                 }
             }
         }
@@ -590,12 +596,27 @@ fn install(cx: &Cx, p: &Pkg, staging: &Path, journal: &mut Journal) -> Result<In
             (format!("store/{dirname}"), bins)
         }
     };
+    let tree = if Path::new(&store).is_absolute() { PathBuf::from(&store) } else { root.join(&store) };
+    check_tree(p, &bins, &tree)?;
+    Ok(Installed {
+        store,
+        version: t.version,
+        id: t.id,
+        bins,
+        share: p.share.clone(),
+        etc: p.etc.clone(),
+        apps: p.apps.clone(),
+        locked: t.locked.clone(),
+    })
+}
+
+/// What the spec names in the package's tree is there.
+fn check_tree(p: &Pkg, bins: &BTreeMap<String, String>, tree: &Path) -> Result<()> {
     // A source build may install only a library or data (a PAM module), which current/pkgs/<name>
     // reaches; a download with nothing to link is a wrong artifact.
     if bins.is_empty() && p.share.is_empty() && p.apps.is_empty() && !matches!(p.source, Source::Git { .. }) {
         bail!("it has no executables to link, no share and no apps");
     }
-    let tree = if Path::new(&store).is_absolute() { PathBuf::from(&store) } else { root.join(&store) };
     for (field, links) in [("share", &p.share), ("etc", &p.etc)] {
         for (dest, rel) in links {
             if fs::symlink_metadata(tree.join(rel)).is_err() {
@@ -608,16 +629,7 @@ fn install(cx: &Cx, p: &Pkg, staging: &Path, journal: &mut Journal) -> Result<In
             bail!("apps: `{app}` is not in the package");
         }
     }
-    Ok(Installed {
-        store,
-        version: t.version,
-        id: t.id,
-        bins,
-        share: p.share.clone(),
-        etc: p.etc.clone(),
-        apps: p.apps.clone(),
-        locked: t.locked.clone(),
-    })
+    Ok(())
 }
 
 fn is_link(path: &Path) -> bool {
