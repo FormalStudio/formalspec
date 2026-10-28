@@ -2062,9 +2062,10 @@ point where FormalSpec becomes usable day to day.
 
 ## First release
 
-v0.1 is the release that replaces NixOS on the g815 and the e1504g with
-openSUSE Tumbleweed under FormalSpec. The design session decides when it is
-ready, and every item below is required.
+v0.1 is the release that removes Nix from Kyan's machines: openSUSE
+Tumbleweed under FormalSpec replaces NixOS on the g815 and the e1504g, and
+FormalSpec over Homebrew replaces nix-darwin on the macbook. The design session
+decides when it is ready, and every item below is required.
 
 The spec is the `formalspec` branch of
 [FormalSnake/dotfiles](https://github.com/FormalSnake/dotfiles/tree/formalspec),
@@ -2092,28 +2093,41 @@ Done:
 
 Open:
 
-1. **Parity gaps.** Decide quickshell (a Qt 6 source build, or dcal without
-   its UI), and apply and check uxplay, colloid-icon-theme and Discord with
-   moonlight, which no host has applied yet.
+1. **Parity gaps.** Drop dcal, which FormalShell cannot read, and apply and
+   check uxplay, colloid-icon-theme and Discord with moonlight, which no host
+   has applied yet.
 2. **The g815 port**, in this order:
-   - port the macos-vm OpenCore EFI as a `git()` build, or drop it;
-   - in Windows, turn off Fast Startup and check `C:` is not BitLocker
-     encrypted;
+   - port the macOS 10.9 guest: OpenCore from its release zip, the
+     config.plist render and ESP image in the launcher;
    - build a NixOS system that mounts `/` as `subvol=@nixos`, `/home` from
      `@home` and `/swap` from `@swap`, take a backup, and run `fspec disk
-     migrate --stage <iso> --nixos-system <path>`;
-   - after the reboot into `@nixos`, run `fspec switch --beside tumbleweed`,
-     with the 16G swapfile on the layout that leaves;
+     migrate --stage <iso> --nixos-system <path>`. It converts p5 in place;
+     the partition table, Windows' partitions and its boot files stay as
+     they are;
+   - after the reboot into `@nixos`, run `fspec switch --beside tumbleweed`;
    - boot Tumbleweed and check the Limine menu still boots NixOS and Windows,
-     the NVIDIA G07 driver, the gpu-mux service and the NTFS mounts.
+     the NVIDIA G07 driver, the gpu-mux service, the NTFS mounts and the
+     macOS guest.
 
-   Not yet proven on real hardware: the 1 GB EFI partition holding the g815's
-   NixOS closure, and booting Windows after the install beside it.
+   Swap is zram while `@nixos` exists; the 16G swapfile in `@swap` comes back
+   after `fspec forget nixos`. Not yet proven on real hardware: the 1 GB EFI
+   partition holding the g815's NixOS closure.
 3. **Remote convergence.** `fspec apply --all` from the macbook converges both
    Linux hosts over ssh, and `fspec plan --all` shows no drift afterwards.
 4. **The release ISO workflow** runs once and publishes an ISO.
+5. **The macbook port.** `fspec plan --host macbook --local` evaluates clean.
+   Drop the skill copies `meshtop skills sync` already installs. Apply it
+   beside nix-darwin, which renames each managed file over Home
+   Manager's `/nix/store` link; unload nix-darwin's launchd jobs (`kyan.*`,
+   `org.nix-community.home.*`), whose `fspec.*` replacements the apply
+   starts; then check the CI-built packages (pam_ssh_agent_auth, sbarlua,
+   Messages, FormalMusic) and the sudo mesh.
+6. **Nix removed.** `fspec forget nixos` on both Linux hosts, nix-darwin's
+   uninstaller and then Determinate Nix's `/nix/nix-installer uninstall` on
+   the macbook. The host-ops skill and the rules that name `~/.config/nix`
+   point at the spec instead, and `~/.config/nix` is archived.
 
 Rollout of the g815 starts once 1 and 4 pass and the VM steps of 2 have run
-against a copy of its disk layout. NixOS stays a boot entry; `fspec forget
-nixos` runs only after Kyan says so, on either host. The g815's real disk is
-not touched before the design session gives the go.
+against a copy of its disk layout. Every step of 6 deletes the way back, so
+each runs only after Kyan says so, and the g815's real disk is not touched
+before the design session gives the go.
