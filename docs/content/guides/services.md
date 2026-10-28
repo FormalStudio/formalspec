@@ -209,7 +209,8 @@ service("swap-swapfile.swap"),
 service("mnt-games.mount"),
 ```
 
-If it fails to start (the disk is missing), the apply defers it and the next apply tries again.
+If it fails to start (the disk is missing), the apply keeps it as pending and the next apply tries
+again.
 Removing one disables it but leaves it active until the next boot, since unmounting a busy mount
 would fail the apply.
 
@@ -325,9 +326,10 @@ shows as drift (`... was edited`), and the next apply writes the file again.
 
 - **systemd.** Apply runs `systemctl daemon-reload`, then `enable` and `start` for a new unit or
   `restart` for a changed one (`--user` for a user unit). A user unit starts with your user
-  manager, so it runs while you are logged in. A unit that fails to start does not undo the apply:
-  fspec warns with the `journalctl -u` command to read, keeps the rest, and starts the unit
-  again on the next apply.
+  manager, so it runs while you are logged in. A unit that fails to start or restart does not
+  undo the apply: fspec warns with the `journalctl -u` command to read, keeps the rest, and
+  records the unit as pending. `fspec plan` shows it as `not finished` until an apply starts it,
+  and removing its declaration removes it like any other service.
 - **launchd.** System jobs load into the `system` domain, user jobs into `gui/<uid>`, with
   `launchctl bootstrap`. A change runs `launchctl bootout`, then `bootstrap` again.
 - **runit.** `runsvdir` picks up a new link within five seconds, so an add runs no command. A

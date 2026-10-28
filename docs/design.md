@@ -944,7 +944,7 @@ package that ships it is missing), OpenRC runs `rc-update add gdm default` and d
 `dinitctl enable gdm`. On systemd a `.swap`, `.mount`, `.automount`, `.timer`,
 `.path` or `.socket` unit is also started, since activating one never runs a
 daemon by itself: a declared swapfile or disk is up after the apply, not after
-the next reboot. A start that fails is deferred like a declared service's, and
+the next reboot. A start that fails leaves it pending like a declared service's, and
 drift includes such a unit not being active. Such a service takes no other field, s6 and launchd refuse
 it, and drift is the unit no longer being enabled. Removing it disables the unit
 (without stopping it, as unmounting a busy mount would fail the apply) and leaves
@@ -976,11 +976,14 @@ systemd units are `fspec-<name>.service` (and `.timer`) under
 `/etc/systemd/system` or `~/.config/systemd/user`. An apply writes every new or
 changed unit and reloads once before it enables and starts any, so a unit can
 `Requires=` another from the same apply. A unit that is written and enabled but fails
-to start or restart is deferred, like an unreachable repo: the apply warns
+to start or restart is pending: the apply warns
 with `systemctl`'s message and the `journalctl -u` to read, keeps every other
 change, clears the unit's failed state (its `Restart=` retries may have hit the
-start limit), and leaves it out of the state, so the next apply starts it
-again. A unit file systemd refuses to enable still fails the apply. A bare command name in `exec`
+start limit), and records the unit in the state with a `pending` marker. fspec
+owns it, so dropping the declaration stops, disables and deletes it, and the
+next plan shows it as drift (`not finished: ...`) until an apply starts it.
+Unlike a deferred repo, which never landed and stays out of the state, a
+pending unit is live. A unit file systemd refuses to enable still fails the apply. A bare command name in `exec`
 runs through `/usr/bin/env`, since systemd does not search `PATH`. `after =
 ["network"]` becomes `network-online.target`, another name `fspec-<name>.service`,
 and a literal `*.target` stays as written. Under `systemd = {...}`, the keys

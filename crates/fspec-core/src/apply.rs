@@ -173,6 +173,20 @@ fn deferral(record: Option<&Map<String, Value>>) -> Option<&str> {
     record?.get(DEFERRED)?.as_str()
 }
 
+const PENDING: &str = "pending";
+
+/// Mark a record whose resource is live but not finished for a reason outside the spec, such as
+/// a written and enabled service that will not start. Unlike [`deferred`], the state keeps it, so
+/// a removed declaration still removes it, and the next plan shows it as drift and the next apply
+/// tries again.
+pub fn pending(record: &mut Map<String, Value>, why: impl Into<String>) {
+    record.insert(PENDING.to_string(), Value::String(why.into()));
+}
+
+fn pending_why(record: &Map<String, Value>) -> Option<&str> {
+    record.get(PENDING)?.as_str()
+}
+
 /// `Sync` because `plan` asks every backend for drift at once, from several threads.
 pub trait Backend: Sync {
     fn name(&self) -> &'static str;
@@ -295,7 +309,13 @@ pub fn plan_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], state
     // Drift only reads the live system, so the backends check at once.
     let drifted = par::try_map(&groups, |(b, _, entries)| b.drift_all(cx, entries))?;
     for ((_, keys, _), notes) in groups.into_iter().zip(drifted) {
-        for (key, notes) in keys.into_iter().zip(notes).filter(|(_, n)| !n.is_empty()) {
+        for (key, mut notes) in keys.into_iter().zip(notes) {
+            if let Some(why) = state.entries.get(&key).and_then(|e| pending_why(&e.record)) {
+                notes.insert(0, format!("not finished: {why}"));
+            }
+            if notes.is_empty() {
+                continue;
+            }
             let detail = String::new();
             p.changes.push(Change { key, scope: cx.scope, action: Action::Drift { notes }, detail });
         }
@@ -556,6 +576,8 @@ fn commit_all(
                     if key.kind == "pkg" {
                         deferred_pkgs.push(key.id.clone());
                     }
+                } else if let Some(why) = pending_why(record) {
+                    eprintln!("fspec: {key} is not finished: {why}; the next apply tries it again");
                 }
             }
             records.extend(got);

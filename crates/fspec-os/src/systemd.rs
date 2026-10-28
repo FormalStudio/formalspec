@@ -9,7 +9,7 @@ use fspec_core::apply::{Backend, Cx, Op, Phase, Records};
 use fspec_core::facts::Init;
 use fspec_core::journal::{Journal, Undo, remove_any};
 use fspec_core::resource::{Restart, Service, Timer};
-use fspec_core::runner::Cmd;
+use fspec_core::runner::{Cmd, Output};
 use fspec_core::state::Entry;
 use fspec_core::{Resource, Scope};
 use serde_json::{Map, Value, json};
@@ -156,18 +156,13 @@ impl Backend for SystemdBackend {
                 manual.then(|| ctl(&["start", &main]))
             };
             // A unit that is written and enabled but will not start is the unit's own problem (a
-            // missing config, a port in use), so it is deferred rather than rolling back every
-            // other change. The state does not record it, so the next apply starts it again.
+            // missing config, a port in use), so it is left pending rather than rolling back
+            // every other change.
             let Some(start) = start else { continue };
             let out = cx.runner.run(&start)?;
             if out.status != 0 {
-                let why = out.stderr.lines().chain(out.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("");
-                let journalctl = if user { "journalctl --user -u" } else { "journalctl -u" };
-                let why = format!("`{start}` failed: {}; see `{journalctl} {main}`", why.trim());
-                records.insert(op.key.clone(), fspec_core::apply::deferred(why));
-                // `Restart=` retries can hit the start limit, which refuses the next apply's start
-                // until it is cleared.
-                cx.runner.run(&ctl(&["reset-failed", &main]))?;
+                let why = failed(cx, user, &main, &start, &out)?;
+                fspec_core::apply::pending(records.entry(op.key.clone()).or_default(), why);
             }
         }
         Ok(records)
@@ -226,7 +221,12 @@ fn stale_all(cx: &Cx, rs: &[&Resource]) -> Result<Vec<Option<String>>> {
     }
     for user in [false, true] {
         let asked: Vec<usize> = (0..rs.len())
-            .filter(|&i| matches!(rs[i], Resource::Service(_)) && !refuses_manual(rs[i]) && is_user(rs[i]) == user)
+            .filter(|&i| {
+                matches!(rs[i], Resource::Service(_))
+                    && !refuses_manual(rs[i])
+                    && is_user(rs[i]) == user
+                    && has_process(&unit_name(rs[i]))
+            })
             .collect();
         if asked.is_empty() {
             continue;
@@ -271,6 +271,15 @@ fn stale_from(cx: &Cx, store: &Path, unit: &str, shown: &str) -> Result<Option<S
     })
 }
 
+/// Why `cmd` failed to start or restart `unit`, after clearing the unit's failed state: `Restart=`
+/// retries can hit the start limit, which refuses the next apply's start until it is cleared.
+pub(crate) fn failed(cx: &Cx, user: bool, unit: &str, cmd: &Cmd, out: &Output) -> Result<String> {
+    let why = out.stderr.lines().chain(out.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("");
+    let journalctl = if user { "journalctl --user -u" } else { "journalctl -u" };
+    cx.runner.run(&ctl(user, &["reset-failed", unit]))?;
+    Ok(format!("`{cmd}` failed: {}; see `{journalctl} {unit}`", why.trim()))
+}
+
 fn restart_stale(cx: &Cx, journal: &mut Journal, r: &Resource) -> Result<()> {
     match stale(cx, r)? {
         Some(why) => restart(cx, journal, r, &why),
@@ -300,6 +309,15 @@ fn distro(r: &Resource) -> Option<&fspec_core::resource::Service> {
 fn ctl(user: bool, args: &[&str]) -> Cmd {
     Cmd::new("systemctl").args(user.then_some("--user")).args(args.iter().copied())
 }
+
+/// A `.timer`, `.path`, `.socket` or `.mount` has no `MainPID` or `ExecStart`, so `systemctl
+/// show` prints an empty block for it, which the blank-line split cannot count.
+fn has_process(unit: &str) -> bool {
+    !unit.rsplit_once('.').is_some_and(|(_, suffix)| NO_PROCESS.contains(&suffix))
+}
+
+const NO_PROCESS: [&str; 10] =
+    ["socket", "device", "mount", "automount", "swap", "target", "path", "timer", "slice", "scope"];
 
 fn refuses_manual(r: &Resource) -> bool {
     let Resource::Service(s) = r else { return false };

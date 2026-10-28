@@ -244,27 +244,41 @@ fn failed_enable_rolls_back_files_and_replays_undo() {
 }
 
 #[test]
-fn a_unit_that_will_not_start_is_deferred_and_the_rest_lands() {
+fn a_unit_that_will_not_start_stays_owned_and_pending() {
     let w = World::linux(Init::Systemd);
     let backends: &[&dyn Backend] = &[&SystemdBackend];
     let job = resource(json!({"kind": "timer", "name": "job", "exec": "/bin/job", "schedule": "@daily"}));
     let failed = Output { status: 1, stderr: "Job for fspec-web.service failed.\n".into(), ..Output::default() };
-    w.runner.respond("systemctl start fspec-web.service", failed);
-    let want = [desired(svc("/bin/web")), desired(job)];
+    w.runner.respond("systemctl start fspec-web.service", failed.clone());
+    let want = [desired(svc("/bin/web")), desired(job.clone())];
     apply_scope(&w.cx(Scope::System), backends, &want).unwrap();
     assert!(w.paths.root.join("etc/systemd/system/fspec-web.service").exists());
     assert!(w.runner.lines().contains(&"systemctl start fspec-job.timer".to_string()));
     assert!(w.runner.lines().contains(&"systemctl reset-failed fspec-web.service".to_string()));
-    let state = State::load(&w.paths.system_state_dir().join("state.json")).unwrap();
-    assert_eq!(state.entries.keys().map(ToString::to_string).collect::<Vec<_>>(), ["timer:job"]);
+    let state = || State::load(&w.paths.system_state_dir().join("state.json")).unwrap();
+    assert_eq!(state().entries.len(), 2);
 
-    // The next apply starts it again.
-    w.runner.responses.lock().unwrap().clear();
-    w.runner.calls.lock().unwrap().clear();
+    // The next plan shows it, and a restart that fails again keeps it pending.
+    let p = plan_scope(&w.cx(Scope::System), backends, &want, &state()).unwrap();
+    assert!(matches!(&p.changes[..], [c] if c.key.id == "web"
+        && matches!(&c.action, Action::Drift { notes } if notes[0].starts_with("not finished: `systemctl start"))));
+    w.runner.respond("systemctl restart fspec-web.service", failed);
     apply_scope(&w.cx(Scope::System), backends, &want).unwrap();
-    assert!(w.runner.lines().contains(&"systemctl start fspec-web.service".to_string()));
-    let state = State::load(&w.paths.system_state_dir().join("state.json")).unwrap();
-    assert_eq!(state.entries.len(), 2);
+    assert_eq!(plan_scope(&w.cx(Scope::System), backends, &want, &state()).unwrap().changes.len(), 1);
+
+    w.runner.responses.lock().unwrap().clear();
+    apply_scope(&w.cx(Scope::System), backends, &want).unwrap();
+    assert!(plan_scope(&w.cx(Scope::System), backends, &want, &state()).unwrap().changes.is_empty());
+
+    // Dropping the declaration of a pending unit removes it like any owned unit.
+    w.runner.respond("systemctl start fspec-web.service", Output { status: 1, ..Output::default() });
+    w.runner.respond("systemctl restart fspec-web.service", Output { status: 1, ..Output::default() });
+    let edited = [desired(svc("/bin/web2")), desired(job.clone())];
+    apply_scope(&w.cx(Scope::System), backends, &edited).unwrap();
+    w.runner.calls.lock().unwrap().clear();
+    apply_scope(&w.cx(Scope::System), backends, &[desired(job)]).unwrap();
+    assert!(w.runner.lines().contains(&"systemctl disable fspec-web.service".to_string()));
+    assert!(!w.paths.root.join("etc/systemd/system/fspec-web.service").exists());
 }
 
 #[test]
@@ -389,12 +403,19 @@ fn a_distro_swap_starts_on_a_running_system_and_retries_until_it_is_active() {
             "systemctl reset-failed swap-swapfile.swap"
         ]
     );
-    assert!(state().entries.is_empty(), "a unit that did not start is tried again");
+    assert!(
+        state().entries.values().all(|e| e.record.contains_key("pending")),
+        "a unit that did not start is tried again"
+    );
 
     w.runner.calls.lock().unwrap().clear();
     w.runner.responses.lock().unwrap().clear();
     apply_scope(&cx(), backends, &swap).unwrap();
-    assert_eq!(w.runner.lines(), ["systemctl enable --force swap-swapfile.swap", "systemctl start swap-swapfile.swap"]);
+    assert!(w.runner.lines().ends_with(&[
+        "systemctl enable --force swap-swapfile.swap".to_string(),
+        "systemctl start swap-swapfile.swap".to_string()
+    ]));
+    assert!(state().entries.values().all(|e| e.record.is_empty()));
 
     // Enabled by an earlier engine but never started: drift, and apply starts it.
     w.runner.respond("systemctl is-enabled", Output { stdout: "enabled\n".into(), ..Default::default() });
@@ -505,7 +526,9 @@ fn one_systemctl_show_finds_the_stale_service_among_many() {
         Output { stdout: format!("{idle}\nMainPID=42\n{exec}\n\n{idle}"), ..Default::default() },
     );
     let svc = |n: &str| desired(resource(json!({"kind": "service", "name": format!("{n}.service"), "user": true})));
-    let want = vec![svc("a"), svc("b"), svc("c")];
+    // A timer prints an empty block, so it is not asked about.
+    let timer = desired(resource(json!({"kind": "service", "name": "d.timer", "user": true})));
+    let want = vec![svc("a"), svc("b"), svc("c"), timer];
     apply_scope(&w.cx(Scope::User), backends, &want).unwrap();
     w.runner.calls.lock().unwrap().clear();
 

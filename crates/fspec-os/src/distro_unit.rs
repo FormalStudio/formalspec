@@ -134,19 +134,15 @@ fn own_default(cx: &Cx, journal: &mut Journal, op: &Op, s: &Service) -> Result<M
     Ok(rec)
 }
 
-/// A unit that is enabled but will not start (a missing disk behind a mount) is deferred like a
-/// declared service that fails to start, so the next apply tries again.
-fn start(cx: &Cx, s: &Service) -> Result<Map<String, Value>> {
+/// A unit that is enabled but will not start (a missing disk behind a mount) is left pending like
+/// a declared service that fails to start, so the next apply tries again.
+fn start(cx: &Cx, s: &Service, rec: &mut Map<String, Value>) -> Result<()> {
     let start = systemctl("start", s);
     let out = cx.runner.run(&start)?;
-    if out.status == 0 {
-        return Ok(Map::new());
+    if out.status != 0 {
+        fspec_core::apply::pending(rec, crate::systemd::failed(cx, s.user, &s.name, &start, &out)?);
     }
-    let why = out.stderr.lines().chain(out.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("");
-    let journalctl = if s.user { "journalctl --user -u" } else { "journalctl -u" };
-    // A failed mount or swap counts towards the start limit, which would refuse the next try.
-    cx.runner.run(&systemctl("reset-failed", s))?;
-    Ok(fspec_core::apply::deferred(format!("`{start}` failed: {}; see `{journalctl} {}`", why.trim(), s.name)))
+    Ok(())
 }
 
 /// Where systemd looks for a unit file, in its order of precedence, and where `enable` links.
@@ -216,7 +212,7 @@ pub(crate) fn commit(cx: &Cx, init: Init, journal: &mut Journal, op: &Op, s: &Se
             cx.runner.check(&systemctl(verb, s))?;
             let mut rec = own_default(cx, journal, op, s)?;
             if !removal && starts(s) {
-                rec.extend(start(cx, s)?);
+                start(cx, s, &mut rec)?;
             }
             return Ok(rec);
         }
