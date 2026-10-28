@@ -78,8 +78,11 @@ impl Backend for SystemdBackend {
             if let Some(s) = distro(op.resource()) {
                 let rec = crate::distro_unit::commit(cx, Init::Systemd, journal, op, s)?;
                 if !op.is_removal() {
-                    if op.current.is_some() {
-                        restart_stale(cx, journal, op.resource())?;
+                    let mut rec = rec;
+                    if op.current.is_some()
+                        && let Some(why) = restart_stale(cx, journal, op.resource())?
+                    {
+                        fspec_core::apply::pending(&mut rec, why);
                     }
                     records.insert(op.key.clone(), rec);
                 }
@@ -168,14 +171,19 @@ impl Backend for SystemdBackend {
         Ok(records)
     }
 
-    fn refresh(&self, cx: &Cx, entries: &[Entry], journal: &mut Journal) -> Result<()> {
+    fn refresh(&self, cx: &Cx, entries: &[Entry], journal: &mut Journal) -> Result<Records> {
         let rs: Vec<&Resource> = entries.iter().map(|e| &e.resource).collect();
-        for (r, why) in rs.iter().zip(stale_all(cx, &rs)?) {
-            if let Some(why) = why {
-                restart(cx, journal, r, &why)?;
+        let mut records = Records::new();
+        for (e, why) in entries.iter().zip(stale_all(cx, &rs)?) {
+            if let Some(why) = why
+                && let Some(failed) = restart(cx, journal, &e.resource, &why)?
+            {
+                let mut rec = e.record.clone();
+                fspec_core::apply::pending(&mut rec, failed);
+                records.insert(e.resource.key(), rec);
             }
         }
-        Ok(())
+        Ok(records)
     }
 }
 
@@ -280,19 +288,25 @@ pub(crate) fn failed(cx: &Cx, user: bool, unit: &str, cmd: &Cmd, out: &Output) -
     Ok(format!("`{cmd}` failed: {}; see `{journalctl} {unit}`", why.trim()))
 }
 
-fn restart_stale(cx: &Cx, journal: &mut Journal, r: &Resource) -> Result<()> {
+fn restart_stale(cx: &Cx, journal: &mut Journal, r: &Resource) -> Result<Option<String>> {
     match stale(cx, r)? {
         Some(why) => restart(cx, journal, r, &why),
-        None => Ok(()),
+        None => Ok(None),
     }
 }
 
-fn restart(cx: &Cx, journal: &mut Journal, r: &Resource, why: &str) -> Result<()> {
-    let restart = ctl(is_user(r), &["restart", &unit_name(r)]);
+/// Restart a stale service. Returns why the restart failed, which leaves the service pending
+/// like a failed start in commit instead of rolling back the apply.
+fn restart(cx: &Cx, journal: &mut Journal, r: &Resource, why: &str) -> Result<Option<String>> {
+    let (user, unit) = (is_user(r), unit_name(r));
+    let restart = ctl(user, &["restart", &unit]);
     journal.record(Undo::Run { cmd: restart.clone() })?;
-    cx.runner.check(&restart)?;
+    let out = cx.runner.run(&restart)?;
+    if out.status != 0 {
+        return failed(cx, user, &unit, &restart, &out).map(Some);
+    }
     println!("{}: restarted, {why}", r.key());
-    Ok(())
+    Ok(None)
 }
 
 fn staged(staging: &Path, op: &Op, u: &Unit) -> std::path::PathBuf {

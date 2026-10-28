@@ -271,6 +271,9 @@ $ fspec apply
 service:web: restarted, fspec-web.service runs 1a2b3c4d-web-1.4.0, the store now has 5e6f7a8b-web-1.5.0
 ```
 
+A restart that fails does not undo the apply, even when the package moved in the same apply: fspec
+warns, keeps the rest, and leaves the service pending, so the next apply restarts it again.
+
 This covers fspec's own services and distro units, system and user, including a user service that
 runs a package from the system scope. A unit that refuses manual starts or stops is left for its
 next start. The other inits do not restart a service for this.

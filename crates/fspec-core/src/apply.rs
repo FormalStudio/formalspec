@@ -246,9 +246,10 @@ pub trait Backend: Sync {
 
     /// Called after the commit with the entries of this backend that no op touched, for what
     /// another change moved under them: a service still running the package build the store
-    /// just replaced.
-    fn refresh(&self, _cx: &Cx, _entries: &[Entry], _journal: &mut Journal) -> Result<()> {
-        Ok(())
+    /// just replaced. Returns the new record of each entry it could not refresh, marked
+    /// [`pending`].
+    fn refresh(&self, _cx: &Cx, _entries: &[Entry], _journal: &mut Journal) -> Result<Records> {
+        Ok(Records::new())
     }
 }
 
@@ -495,10 +496,10 @@ pub fn apply_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired]) -> R
 
     let mut journal = Journal::begin(&dir, cx.generation)?;
     let result = commit_all(cx, &by_backend, &staging, &mut journal).and_then(|records| {
-        refresh_untouched(cx, backends, &state, &p, &mut journal)?;
-        Ok(records)
+        let refreshed = refresh_untouched(cx, backends, &state, &p, &mut journal)?;
+        Ok((records, refreshed))
     });
-    let records = match result {
+    let (records, refreshed) = match result {
         Ok(r) => r,
         Err(e) => {
             let rollback = journal.rollback(cx.runner);
@@ -513,6 +514,11 @@ pub fn apply_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired]) -> R
     let mut next = State { generation: cx.generation, ..state.clone() };
     for op in &handed {
         next.entries.remove(&op.key);
+    }
+    for (key, record) in refreshed {
+        if let Some(entry) = next.entries.get_mut(&key) {
+            entry.record = record;
+        }
     }
     for (_, ops) in &by_backend {
         for op in ops {
@@ -595,7 +601,14 @@ fn commit_all(
     Ok(records)
 }
 
-fn refresh_untouched(cx: &Cx, backends: &[&dyn Backend], state: &State, p: &Plan, journal: &mut Journal) -> Result<()> {
+fn refresh_untouched(
+    cx: &Cx,
+    backends: &[&dyn Backend],
+    state: &State,
+    p: &Plan,
+    journal: &mut Journal,
+) -> Result<Records> {
+    let mut records = Records::new();
     for b in backends {
         let entries: Vec<Entry> = state
             .entries
@@ -604,10 +617,16 @@ fn refresh_untouched(cx: &Cx, backends: &[&dyn Backend], state: &State, p: &Plan
             .map(|(_, e)| e.clone())
             .collect();
         if !entries.is_empty() {
-            b.refresh(cx, &entries, journal).with_context(|| format!("{}: refreshing", b.name()))?;
+            let got = b.refresh(cx, &entries, journal).with_context(|| format!("{}: refreshing", b.name()))?;
+            for (key, record) in &got {
+                if let Some(why) = pending_why(record) {
+                    eprintln!("fspec: {key} is not finished: {why}; the next apply tries it again");
+                }
+            }
+            records.extend(got);
         }
     }
-    Ok(())
+    Ok(records)
 }
 
 /// Removed packages lose their app data to the trash once every backend has removed what it

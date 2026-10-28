@@ -960,7 +960,9 @@ stale: `plan` reports it as drift and `apply` restarts it. This covers a service
 of either kind whose package moved in an earlier apply or in the other scope (a
 user unit running a system store package). A package the same apply replaces is
 caught after the commit, when the engine hands each backend the entries no
-change touched (`refresh`). A unit with `RefuseManualStart` or `RefuseManualStop`
+change touched (`refresh`). A restart that fails, in the commit or in the
+refresh, leaves the service pending like a failed start instead of rolling the
+apply back. A unit with `RefuseManualStart` or `RefuseManualStop`
 is left for its next start. One `systemctl show -p MainPID -p ExecStart` per
 manager reads every service at once, whatever their number.
 

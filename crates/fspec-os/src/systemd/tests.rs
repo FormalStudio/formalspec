@@ -435,10 +435,9 @@ fn a_timer_env_goes_into_its_service() {
     assert!(units(&r).unwrap()[0].content.contains("Environment=\"VAULT=/v\"\n"));
 }
 
-#[test]
-fn a_service_running_a_replaced_store_package_restarts() {
-    let w = World::linux(Init::Systemd);
-    let backends: &[&dyn Backend] = &[&SystemdBackend];
+/// A user `shell.service` whose main process (pid 42) runs `aaa-shell` while the store's
+/// `current` link now points at `bbb-shell`. Returns the `/proc/42` directory.
+fn stale_shell(w: &World) -> std::path::PathBuf {
     let store = w.paths.fspec_root().join("store");
     for id in ["aaa-shell", "bbb-shell"] {
         fs::create_dir_all(store.join(id).join("bin")).unwrap();
@@ -457,6 +456,14 @@ fn a_service_running_a_replaced_store_package_restarts() {
             ..Default::default()
         },
     );
+    proc
+}
+
+#[test]
+fn a_service_running_a_replaced_store_package_restarts() {
+    let w = World::linux(Init::Systemd);
+    let backends: &[&dyn Backend] = &[&SystemdBackend];
+    let proc = stale_shell(&w);
     let shell = vec![desired(resource(json!({"kind": "service", "name": "shell.service", "user": true})))];
     apply_scope(&w.cx(Scope::User), backends, &shell).unwrap();
     assert_eq!(w.runner.lines(), ["systemctl --user enable --force shell.service"]);
@@ -501,6 +508,27 @@ fn a_service_running_a_replaced_store_package_restarts() {
     );
     let state = State::load(&cx.state_dir().join("state.json")).unwrap();
     assert!(plan_scope(&cx, backends, &shell, &state).unwrap().changes.is_empty());
+}
+
+#[test]
+fn a_refresh_restart_that_fails_leaves_the_service_pending() {
+    let w = World::linux(Init::Systemd);
+    stale_shell(&w);
+    let failed = Output { status: 1, stderr: "Job for shell.service failed.\n".into(), ..Output::default() };
+    w.runner.respond("systemctl --user restart shell.service", failed);
+    let shell = resource(json!({"kind": "service", "name": "shell.service", "user": true}));
+    let entries = [Entry { resource: shell.clone(), owner: None, record: Map::new() }];
+    let cx = w.cx(Scope::User);
+    let mut journal = fspec_core::journal::Journal::begin(&cx.state_dir(), 1).unwrap();
+    let records = SystemdBackend.refresh(&cx, &entries, &mut journal).unwrap();
+    assert!(
+        records[&shell.key()]["pending"]
+            .as_str()
+            .unwrap()
+            .starts_with("`systemctl --user restart shell.service` failed")
+    );
+    assert!(w.runner.lines().contains(&"systemctl --user reset-failed shell.service".to_string()));
+    journal.finish().unwrap();
 }
 
 #[test]
