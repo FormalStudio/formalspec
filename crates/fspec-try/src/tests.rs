@@ -103,13 +103,15 @@ fn aerynos_scrapes_its_download_page() {
 }
 
 #[test]
-fn qemu_boots_the_iso_first_under_uefi() {
+fn qemu_boots_the_disk_before_the_iso_under_uefi() {
     let line = qemu(&vm(debian(), None, Display::Vnc)).to_string();
     for part in [
         "-machine q35,accel=kvm -cpu host -smp $cpus -m ${mem}M",
         "if=pflash,format=raw,readonly=on,file=code.fd",
-        "virtio-blk-pci,drive=disk,bootindex=1",
-        "ide-cd,drive=cd,bootindex=0",
+        "-object iothread,id=io0",
+        "discard=unmap,cache=$dcache,aio=$aio,file=disk.qcow2",
+        "virtio-blk-pci,drive=disk,iothread=io0,bootindex=0",
+        "ide-cd,drive=cd,bootindex=1",
         "-nic user,model=virtio-net-pci",
         "-device usb-tablet",
         "-device virtio-vga -display none",
@@ -129,7 +131,12 @@ fn throwaway_disk_is_deleted_on_exit() {
         s.contains("rm -rf \"$run\" \"$cache/disks/$id.qcow2\"\n}\ntrap cleanup EXIT\ntrap 'exit 130' INT HUP TERM"),
         "{s}"
     );
-    assert!(s.contains("qemu-img create -q -f qcow2 \"$cache/disks/$id.qcow2\" 32G"), "{s}");
+    assert!(s.contains("qemu-img create -q -f qcow2 -o nocow=on \"$cache/disks/$id.qcow2\" 32G"), "{s}");
+    assert!(s.contains("dcache=unsafe\naio=io_uring\n"), "{s}");
+    assert!(
+        s.contains("  -drive \"if=none,id=disk,format=qcow2,discard=unmap,cache=$dcache,aio=$aio,file=disk.qcow2\""),
+        "{s}"
+    );
     assert!(s.contains("cp \"$vars\" \"$run/vars.fd\""), "{s}");
     assert!(s.contains(&format!("echo \"{H}  $iso.part\" | sha256sum -c --status -")), "{s}");
     assert!(
@@ -146,12 +153,16 @@ fn kept_disk_stays() {
     let s = script(&vm(debian(), Some("deb"), Display::Window));
     assert!(s.contains("  rm -rf \"$run\"\n}"), "{s}");
     assert!(!s.contains("$cache/disks/$id.qcow2\" 32G"), "{s}");
-    assert!(s.contains("[ -f \"$keep/disk.qcow2\" ] || qemu-img create -q -f qcow2 \"$keep/disk.qcow2\" 32G"), "{s}");
+    assert!(
+        s.contains("[ -f \"$keep/disk.qcow2\" ] || qemu-img create -q -f qcow2 -o nocow=on \"$keep/disk.qcow2\" 32G"),
+        "{s}"
+    );
+    assert!(s.contains("dcache=none\nqemu-img bench -c 1 -t none -f qcow2 \"$run/disk.qcow2\" >/dev/null 2>&1 || dcache=writeback\n"), "{s}");
     assert!(s.contains("ln -s \"$keep/vars.fd\" \"$run/vars.fd\""), "{s}");
     assert!(!s.contains("vnc.pw"), "{s}");
     let back = script(&vm(Media::None, Some("deb"), Display::Window));
     assert!(back.contains("[ -f \"$keep/disk.qcow2\" ] || die \"no kept VM named \"deb\nmkdir -p"), "{back}");
-    assert!(!back.contains("cdrom.iso"), "{back}");
+    assert!(!back.contains("$run/cdrom.iso"), "{back}");
 }
 
 #[test]
@@ -186,4 +197,13 @@ fn viewers() {
     let linux = viewer("linux", 5901, "pw", |p| p == "remote-viewer").unwrap();
     assert_eq!(linux.to_string(), "remote-viewer vnc://:pw@127.0.0.1:5901");
     assert!(viewer("linux", 5901, "pw", |_| false).is_none());
+}
+
+#[test]
+fn unused_isos_expire() {
+    let s = script(&vm(debian(), None, Display::Vnc));
+    assert!(s.contains("touch \"$iso\"\nln -s \"$iso\" \"$run/cdrom.iso\""), "{s}");
+    assert!(s.contains("find \"$cache/iso\" -type f -name '*.iso' -mmin +10080 -amin +10080"), "{s}");
+    assert!(s.contains("readlink -f \"$d/cdrom.iso\""), "{s}");
+    assert!(s.find("touch \"$iso\"") < s.find("-mmin +10080"), "{s}");
 }

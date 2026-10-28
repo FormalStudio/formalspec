@@ -224,15 +224,18 @@ pub struct Vm {
     pub media: Media,
     /// Keep the disk and UEFI variables under this name instead of deleting them on exit.
     pub keep: Option<String>,
-    /// Default: half the host's threads, between 2 and 8.
+    /// Default: half the host's threads, between 2 and 16.
     pub cpus: Option<u32>,
-    /// Default: a quarter of the host's memory, between 4 and 8 GiB.
+    /// Default: a third of the host's memory, between 4 and 16 GiB.
     pub memory_gib: Option<u32>,
     pub disk_gib: u32,
     pub display: Display,
     /// The VNC password, at most 8 characters as VNC authentication takes.
     pub password: String,
 }
+
+/// Days a cached ISO stays after the last run that booted it.
+pub const ISO_DAYS: u32 = 7;
 
 pub fn run_dir(id: &str) -> String {
     format!("/tmp/fspec-try-{id}")
@@ -254,7 +257,9 @@ const OVMF: [(&str, &str); 5] = [
 ];
 
 /// The qemu command, run from inside the run directory, where the script links the firmware, the
-/// disk, the ISO and the variables under fixed names. `$cpus` and `$mem` are the script's.
+/// disk, the ISO and the variables under fixed names. `$cpus`, `$mem`, `$dcache` and `$aio` are
+/// the script's. The disk boots before the ISO: OVMF skips an empty disk, so a new VM boots the ISO
+/// and one whose installer rebooted it boots what was installed.
 pub fn qemu(vm: &Vm) -> Cmd {
     let mut c = Cmd::new("qemu-system-x86_64").args([
         "-name",
@@ -271,17 +276,19 @@ pub fn qemu(vm: &Vm) -> Cmd {
         "if=pflash,format=raw,readonly=on,file=code.fd",
         "-drive",
         "if=pflash,format=raw,file=vars.fd",
+        "-object",
+        "iothread,id=io0",
         "-drive",
-        "if=none,id=disk,format=qcow2,discard=unmap,file=disk.qcow2",
+        "if=none,id=disk,format=qcow2,discard=unmap,cache=$dcache,aio=$aio,file=disk.qcow2",
         "-device",
-        "virtio-blk-pci,drive=disk,bootindex=1",
+        "virtio-blk-pci,drive=disk,iothread=io0,bootindex=0",
     ]);
     if vm.media != Media::None {
         c = c.args([
             "-drive",
             "if=none,id=cd,media=cdrom,readonly=on,file=cdrom.iso",
             "-device",
-            "ide-cd,drive=cd,bootindex=0",
+            "ide-cd,drive=cd,bootindex=1",
         ]);
     }
     c = c.args([
@@ -384,13 +391,24 @@ done
                     q(&iso.file)
                 );
             }
-            s += "  mv \"$iso.part\" \"$iso\"\nfi\nln -s \"$iso\" \"$run/cdrom.iso\"\n";
+            s += "  mv \"$iso.part\" \"$iso\"\nfi\ntouch \"$iso\"\nln -s \"$iso\" \"$run/cdrom.iso\"\n";
         }
         Media::Path(p) => {
             s += &format!("[ -f {0} ] || die \"no ISO at \"{0}\nln -s \"$(realpath {0})\" \"$run/cdrom.iso\"\n", q(p));
         }
         Media::None => {}
     }
+    // A run touches the cached ISO it boots, so an unused one is older than both its atime and
+    // mtime say; one a running VM boots stays whatever its age.
+    s += &format!(
+        r#"live=$(for d in /tmp/fspec-try-*; do [ -d "$d" ] && kill -0 "$(cat "$d/pid" 2>/dev/null)" 2>/dev/null && readlink -f "$d/cdrom.iso"; done; true)
+find "$cache/iso" -type f -name '*.iso' -mmin +{0} -amin +{0} | while IFS= read -r f; do
+  printf '%s\n' "$live" | grep -qxF "$f" || {{ say "deleting $f, unused for {1} days"; rm -f "$f"; }}
+done
+"#,
+        ISO_DAYS * 24 * 60,
+        ISO_DAYS
+    );
     let size = vm.disk_gib;
     match &vm.keep {
         Some(name) => {
@@ -399,22 +417,35 @@ done
                 s += &format!("[ -f \"$keep/disk.qcow2\" ] || die \"no kept VM named \"{}\n", q(name));
             }
             s += "mkdir -p \"$keep\"\n";
-            s += &format!("[ -f \"$keep/disk.qcow2\" ] || qemu-img create -q -f qcow2 \"$keep/disk.qcow2\" {size}G\n");
+            s += &format!(
+                "[ -f \"$keep/disk.qcow2\" ] || qemu-img create -q -f qcow2 -o nocow=on \"$keep/disk.qcow2\" {size}G\n"
+            );
             s += "[ -f \"$keep/vars.fd\" ] || cp \"$vars\" \"$keep/vars.fd\"\n";
             s += "ln -s \"$keep/disk.qcow2\" \"$run/disk.qcow2\"\nln -s \"$keep/vars.fd\" \"$run/vars.fd\"\n";
         }
         None => {
-            s += &format!("qemu-img create -q -f qcow2 \"{disk}\" {size}G\nln -s \"{disk}\" \"$run/disk.qcow2\"\n");
+            s += &format!(
+                "qemu-img create -q -f qcow2 -o nocow=on \"{disk}\" {size}G\nln -s \"{disk}\" \"$run/disk.qcow2\"\n"
+            );
             s += "cp \"$vars\" \"$run/vars.fd\"\n";
         }
     }
+    // A throwaway disk is deleted on exit, so it can skip the guest's flushes; a kept one bypasses
+    // the host page cache where the filesystem takes O_DIRECT.
+    s += match vm.keep {
+        Some(_) => {
+            "dcache=none\nqemu-img bench -c 1 -t none -f qcow2 \"$run/disk.qcow2\" >/dev/null 2>&1 || dcache=writeback\n"
+        }
+        None => "dcache=unsafe\n",
+    };
+    s += "aio=io_uring\nqemu-img bench -c 1 -t \"$dcache\" -i io_uring -f qcow2 \"$run/disk.qcow2\" >/dev/null 2>&1 || aio=threads\n";
     s += &match vm.cpus {
         Some(n) => format!("cpus={n}\n"),
-        None => "cpus=$(( $(nproc) / 2 ))\n[ \"$cpus\" -le 8 ] || cpus=8\n[ \"$cpus\" -ge 2 ] || cpus=2\n".into(),
+        None => "cpus=$(( $(nproc) / 2 ))\n[ \"$cpus\" -le 16 ] || cpus=16\n[ \"$cpus\" -ge 2 ] || cpus=2\n".into(),
     };
     s += &match vm.memory_gib {
         Some(g) => format!("mem={}\n", u64::from(g) * 1024),
-        None => "mem=$(( $(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo) / 4 ))\n[ \"$mem\" -le 8192 ] || mem=8192\n[ \"$mem\" -ge 4096 ] || mem=4096\n".into(),
+        None => "mem=$(( $(awk '/^MemTotal:/ { print int($2 / 1024) }' /proc/meminfo) / 3 ))\n[ \"$mem\" -le 16384 ] || mem=16384\n[ \"$mem\" -ge 4096 ] || mem=4096\n".into(),
     };
     if vm.display == Display::Vnc {
         s += &format!("printf %s {} > \"$run/vnc.pw\"\n", q(&vm.password));

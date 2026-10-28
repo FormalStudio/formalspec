@@ -259,10 +259,10 @@ enum Command {
         /// Keep the VM's disk under NAME on the VM's host; `fspec try --keep NAME` boots it again.
         #[arg(long, value_name = "NAME")]
         keep: Option<String>,
-        /// Virtual CPUs, default half the host's threads between 2 and 8.
+        /// Virtual CPUs, default half the host's threads between 2 and 16.
         #[arg(long)]
         cpus: Option<u32>,
-        /// Memory in GiB, default a quarter of the host's between 4 and 8.
+        /// Memory in GiB, default a third of the host's between 4 and 16.
         #[arg(long, value_name = "GIB")]
         memory: Option<u32>,
         /// Size of a new disk in GiB. It is sparse, so it only takes what the guest writes.

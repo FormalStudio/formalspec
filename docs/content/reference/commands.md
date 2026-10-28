@@ -189,7 +189,7 @@ None of these change the host. See [Trying distros](../guides/trying-distros.md)
 
 | Command | Does |
 | --- | --- |
-| `fspec try <distro\|url\|path> [--host <h>] [--keep <name>] [--cpus <n>] [--memory <GiB>] [--disk <GiB>] [--headless] [--print]` | Boots the ISO in a KVM VM with a fresh disk, deleted when the VM stops. `<distro>` is `tumbleweed`, `fedora`, `ubuntu`, `debian`, `arch`, `nixos`, `aerynos` or `void`. `--host` runs it on that host over ssh and opens its display here over VNC. `--keep` keeps the disk under `<name>` |
+| `fspec try <distro\|url\|path> [--host <h>] [--keep <name>] [--cpus <n>] [--memory <GiB>] [--disk <GiB>] [--headless] [--print]` | Boots the ISO in a KVM VM with a fresh disk, deleted when the VM stops. `<distro>` is `tumbleweed`, `fedora`, `ubuntu`, `debian`, `arch`, `nixos`, `aerynos` or `void`. `--host` runs it on that host over ssh and opens its display here over VNC. `--keep` keeps the disk under `<name>`. `--cpus` defaults to half the host's threads (2 to 16), `--memory` to a third of its RAM (4 to 16 GiB). A run deletes cached ISOs no run booted for 7 days |
 | `fspec try --keep <name>` | Boots a kept VM again from its disk |
 | `fspec try --list [--host <h>]` | Lists the distros, and the kept VMs, running VMs and cached ISOs on the host |
 | `fspec try --delete <name> [--host <h>]` | Deletes a kept VM |

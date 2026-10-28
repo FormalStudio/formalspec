@@ -1823,11 +1823,39 @@ whatever engine it has.
 qemu runs from inside the run directory, where the script links the firmware,
 the variables, the disk and the ISO under fixed names; that keeps `qemu` a
 fixed, testable command. The machine is q35 with `-cpu host`, UEFI from
-pflash, the ISO at boot index 0 and the virtio disk at 1, user-mode networking
-and a USB tablet for an absolute pointer. A run on the local desktop shows
-`virtio-vga-gl` in a GTK window with GL. Otherwise qemu serves `virtio-vga`
-over VNC on `vnc.sock` with a random password from a secret file, and a QMP
-socket sits beside it.
+pflash, user-mode networking and a USB tablet for an absolute pointer. The
+virtio disk is boot index 0 and the ISO 1: OVMF skips a disk with nothing to
+boot, so a new VM starts the ISO and the reboot at the end of an install starts
+the installed system instead of the installer again.
+
+The disk is a virtio-blk on its own iothread, so its I/O leaves the main loop,
+with `aio=io_uring` where a probe with `qemu-img bench` opens it, else
+`threads`. Disks are created with `nocow=on`, which on btrfs drops copy on write
+and data checksums; with checksums btrfs serves `O_DIRECT` through the page
+cache. A throwaway disk uses `cache=unsafe`, ignoring the guest's flushes, since
+it is deleted on exit anyway. A kept disk uses `cache=none` when the filesystem
+takes `O_DIRECT`, else `writeback`. On the g815 (btrfs, NVMe) 512 MiB of
+allocating 64 KiB writes with a flush every 250 took 0.33 s with the old
+`writeback`/`threads`, 0.21 s with `none`/`io_uring` and 0.16 s with `unsafe`.
+
+The defaults are half the host's threads (2 to 16) and a third of its memory
+(4 to 16 GiB): a live ISO keeps its writes in guest RAM. `-smp N` already gives
+one socket of N cores on q35 since qemu 6.2, and the vCPUs are not pinned, so
+no SMT topology is passed.
+
+A run on the local desktop shows `virtio-vga-gl` (virgl, OpenGL) in a GTK
+window with GL. Venus (`venus=on,blob=on,hostmem=`, Vulkan in the guest) was
+tried on the g815 (qemu 11.1, virglrenderer 1.3, NVIDIA 595): the guest listed
+the RTX 5070 as a Venus device, but under a Vulkan load the guest display froze
+in the GTK window and qemu aborted inside NVIDIA's EGL with `egl-headless`, so
+virgl stays. Otherwise qemu serves `virtio-vga` over VNC on `vnc.sock` with a
+random password from a secret file, and a QMP socket sits beside it.
+
+A run touches the cached ISO it boots, then deletes cached ISOs whose atime
+and mtime are both more than `ISO_DAYS` (7) days old, except one a running VM's
+run directory links. A user `tmpfiles.d` rule in the spec (`e
+%C/fspec/try/iso - - - am:7d`, aged by atime and mtime as the script ages them) expires them on hosts where `fspec try` does
+not run again.
 
 With `--host`, the CLI stages the script with one batch ssh and runs it with
 `ssh -tt -L 127.0.0.1:<port>:/tmp/fspec-try-<id>/vnc.sock`. The forced pty

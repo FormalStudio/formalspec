@@ -65,18 +65,25 @@ fspec try --delete fedora-test        # delete it
 
 | Where, on the VM's host | Holds |
 | --- | --- |
-| `~/.cache/fspec/try/iso/<distro>/` | The cached ISO. A newer release replaces the older one |
+| `~/.cache/fspec/try/iso/<distro>/` | The cached ISO. A newer release replaces the older one, and one no run has booted for 7 days is deleted |
 | `~/.cache/fspec/try/disks/` | Throwaway disks while their VM runs |
 | `~/.local/share/fspec/try/<name>/` | A kept VM's disk and UEFI variables |
 | `/tmp/fspec-try-<id>/` | A running VM: its sockets, links to its files, its VNC password |
 
 A run killed without its cleanup, by a power cut for example, is cleaned up by the next run on that
-host.
+host. Each run also deletes cached ISOs that no run has booted for 7 days, unless a running VM boots
+them. To expire them on a host where you stop using `fspec try`, add a user `tmpfiles.d` rule such
+as `e %C/fspec/try/iso - - - am:7d`.
+
+The disk comes before the ISO in the boot order. A new disk is empty, so the VM boots the ISO; once
+an installer has written a bootloader to it and reboots, the VM boots the installed system. With
+`--keep`, the next `fspec try --keep <name>` boots it too.
 
 ## The display
 
-On a Linux desktop the VM opens in a GTK window with virgl, so the guest desktop is accelerated by
-the host GPU. Closing the window stops the VM.
+On a Linux desktop the VM opens in a GTK window with virgl, so the guest's OpenGL desktop is
+accelerated by the host GPU. Guest Vulkan stays software (llvmpipe): Venus, which forwards Vulkan
+to the host GPU, froze the guest display on an NVIDIA host. Closing the window stops the VM.
 
 With `--host`, the VM has no window on that host. qemu serves the display over VNC on a unix
 socket only your user can reach, with a random password, and fspec forwards it over the same ssh
@@ -84,8 +91,14 @@ connection to a local port. Once the VM answers, fspec opens a viewer: Screen Sh
 `remote-viewer` (virt-viewer) or a TigerVNC `vncviewer` on Linux. Without a viewer, or with
 `--headless`, it prints the `vnc://` address to open yourself.
 
-The defaults are half the host's CPU threads (2 to 8) and a quarter of its memory (4 to 8 GiB).
+The defaults are half the host's CPU threads (2 to 16) and a third of its memory (4 to 16 GiB).
 `--cpus` and `--memory <GiB>` override them.
+
+## Disk speed
+
+The disk is virtio on its own I/O thread with io_uring where qemu has it. A throwaway disk skips
+the guest's flushes, since it is deleted anyway. A kept disk bypasses the host page cache where
+the filesystem allows it, and on btrfs both are created without copy on write.
 
 ## Look before it runs
 
