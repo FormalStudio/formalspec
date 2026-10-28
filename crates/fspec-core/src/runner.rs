@@ -163,7 +163,9 @@ impl Runner for LogRunner {
             std::fs::create_dir_all(dir)?;
         }
         let mut f = std::fs::OpenOptions::new().create(true).append(true).open(&self.log)?;
-        writeln!(f, "{cmd}")?;
+        // One write per line: queries run from several threads, and an append of one buffer
+        // does not interleave with another's.
+        f.write_all(format!("{cmd}\n").as_bytes())?;
         Ok(Output::default())
     }
 }
