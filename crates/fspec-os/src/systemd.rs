@@ -76,6 +76,7 @@ impl Backend for SystemdBackend {
 
     fn commit(&self, cx: &Cx, ops: &[Op], staging: &Path, journal: &mut Journal) -> Result<Records> {
         let mut records = Records::new();
+        let mut written = Vec::new();
         for op in ops {
             if let Some(s) = distro(op.resource()) {
                 let rec = crate::distro_unit::commit(cx, Init::Systemd, journal, op, s)?;
@@ -128,7 +129,20 @@ impl Backend for SystemdBackend {
                 journal.backup(&dest)?;
                 write_file(&dest, &fs::read_to_string(staged(staging, op, u))?)?;
             }
-            cx.runner.check(&ctl(&["daemon-reload"]))?;
+            let mut rec = Map::new();
+            rec.insert("units".into(), json!(us.iter().map(|u| u.path.clone()).collect::<Vec<_>>()));
+            records.insert(op.key.clone(), rec);
+            written.push((op, user, main, manual));
+        }
+        // Every unit is on disk before any starts, so one that `Requires=` another from the same
+        // apply finds it whatever order the two commit in.
+        for user in [false, true] {
+            if written.iter().any(|(_, u, _, _)| *u == user) {
+                cx.runner.check(&ctl(user, &["daemon-reload"]))?;
+            }
+        }
+        for (op, user, main, manual) in written {
+            let ctl = |args: &[&str]| ctl(user, args);
             if op.current.is_some() {
                 if manual {
                     cx.runner.check(&ctl(&["restart", &main]))?;
@@ -143,9 +157,6 @@ impl Backend for SystemdBackend {
                     cx.runner.check(&ctl(&["start", &main]))?;
                 }
             }
-            let mut rec = Map::new();
-            rec.insert("units".into(), json!(us.iter().map(|u| u.path.clone()).collect::<Vec<_>>()));
-            records.insert(op.key.clone(), rec);
         }
         Ok(records)
     }

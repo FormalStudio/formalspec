@@ -114,6 +114,26 @@ fn svc(exec: &str) -> Resource {
 }
 
 #[test]
+fn every_new_unit_is_written_before_any_starts() {
+    let w = World::linux(Init::Systemd);
+    let backends: &[&dyn Backend] = &[&SystemdBackend];
+    let needs = resource(json!({"kind": "service", "name": "aura", "exec": "/bin/aura",
+        "systemd": {"unit": {"Requires": "fspec-daemon.service"}}}));
+    let daemon = resource(json!({"kind": "service", "name": "daemon", "exec": "/bin/daemon"}));
+    apply_scope(&w.cx(Scope::System), backends, &[desired(needs), desired(daemon)]).unwrap();
+    assert_eq!(
+        w.runner.lines(),
+        [
+            "systemctl daemon-reload",
+            "systemctl enable fspec-aura.service",
+            "systemctl start fspec-aura.service",
+            "systemctl enable fspec-daemon.service",
+            "systemctl start fspec-daemon.service",
+        ]
+    );
+}
+
+#[test]
 fn add_update_remove_command_sequences() {
     let w = World::linux(Init::Systemd);
     let backends: &[&dyn Backend] = &[&SystemdBackend];
