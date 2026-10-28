@@ -74,8 +74,13 @@ Steps:
    sudo mv /mnt/boot/loader/entries.ext4/*.conf /mnt/boot/loader/entries/
    ```
 
-   Then delete the entry of the btrfs generation, which cannot boot ext4: the newest
-   `nixos-*.conf` in `loader/entries/`, the one with `+3` in its name.
+   Then delete the entry of the btrfs generation, which cannot boot ext4: the `nixos-*.conf` in
+   `loader/entries/` whose `init=` names the system you passed to `--nixos-system`. Once that
+   generation has booted, its name has lost the `+3`, so go by `init=`:
+
+   ```sh
+   grep -l '<hash>-nixos-system' /mnt/boot/loader/entries/nixos-*.conf
+   ```
 5. Reboot and pick an older NixOS generation. From there, `nixos-rebuild boot` rewrites the
    entries for your own configuration.
 
@@ -129,10 +134,13 @@ sudo fspec forget nixos
 ```
 
 This deletes the `@nixos` subvolume, `EFI/nixos` and the `nixos-*.conf` entries on the ESP. It
-refuses the root you booted, and refuses unless the running root owns boot
-(`fspec switch --adopt-boot`).
+refuses the root you booted. It refuses unless the running root owns boot
+(`fspec switch --adopt-boot`), or, for a root installed with `--beside`, unless the running root
+has its own entries on the ESP and `loader.conf` does not name NixOS.
 
 Nothing restores it. After it runs, the NixOS boot menu entries are gone, and the only route back
 to the old system is `btrfs-convert -r` from the section above, which needs `ext2_saved` and
-loses everything written since. Run `forget nixos` only after you have stopped needing NixOS, and
+loses everything written since. The rollback alone does not boot: the entries in
+`loader/entries.ext4/` survive, but `forget` deleted the kernels in `EFI/nixos` they load, so
+step 4 also needs `EFI/nixos` back from a copy of the ESP taken before the migration. Run `forget nixos` only after you have stopped needing NixOS, and
 delete `ext2_saved` last.
