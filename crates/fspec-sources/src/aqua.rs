@@ -148,12 +148,15 @@ impl Registry {
 
     fn find(&self, query: &str) -> Result<&Entry> {
         let by = |f: &dyn Fn(&Entry) -> bool| self.packages.iter().filter(|e| f(e)).collect::<Vec<_>>();
-        let exact = by(&|e| e.full_name().as_deref() == Some(query) || e.repo().as_deref() == Some(query));
+        let exact = by(&|e| e.full_name().as_deref() == Some(query));
+        // `tamasfe/taplo/full` shares its repo with `tamasfe/taplo`, so a repo match only counts
+        // when no package carries the query as its name.
+        let repo = by(&|e| e.repo().as_deref() == Some(query));
         let aliased = by(&|e| e.aliases.iter().any(|a| a.name == query));
         let named = by(&|e| e.repo_name.as_deref().is_some_and(|n| n.eq_ignore_ascii_case(query)));
         // `nextest-rs/nextest/cargo-nextest` is found as `cargo-nextest`.
         let last = by(&|e| e.full_name().is_some_and(|n| n.rsplit('/').next() == Some(query)));
-        for pool in [exact, aliased, named, last] {
+        for pool in [exact, repo, aliased, named, last] {
             match pool.as_slice() {
                 [] => continue,
                 [one] => return Ok(one),
@@ -782,6 +785,25 @@ mod tests {
         assert!(reg.find("cli/cli").is_ok());
         assert!(reg.find("nope").is_err());
         assert_eq!(reg.find("fd").unwrap().repo().unwrap(), "sharkdp/fd");
+    }
+
+    #[test]
+    fn a_name_beats_a_shared_repo() {
+        let yaml = r#"
+packages:
+  - type: github_release
+    repo_owner: tamasfe
+    repo_name: taplo
+    asset: taplo-{{.OS}}-{{.Arch}}.gz
+  - type: github_release
+    repo_owner: tamasfe
+    repo_name: taplo
+    name: tamasfe/taplo/full
+    asset: taplo-full-{{.OS}}-{{.Arch}}.gz
+"#;
+        let reg = Registry::parse(yaml.as_bytes()).unwrap();
+        assert_eq!(reg.find("tamasfe/taplo").unwrap().def.asset.as_deref(), Some("taplo-{{.OS}}-{{.Arch}}.gz"));
+        assert_eq!(reg.find("tamasfe/taplo/full").unwrap().name.as_deref(), Some("tamasfe/taplo/full"));
     }
 
     #[test]

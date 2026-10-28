@@ -64,8 +64,9 @@ pkg("jq", version = "1.7.1"),
 ```
 
 `aqua(name)` names the registry entry when it differs from the package name:
-`pkg("rg", source = aqua("ripgrep"))`. Only registry entries of type `github_release` and `http`
-are supported.
+`pkg("rg", source = aqua("ripgrep"))`. An entry's own name wins over another entry from the same
+repository: `aqua("tamasfe/taplo")` is the plain CLI, `aqua("tamasfe/taplo/full")` the full build.
+Only registry entries of type `github_release` and `http` are supported.
 
 `pkg("python")` is the exception: without a `source`, it installs CPython from
 python-build-standalone.
