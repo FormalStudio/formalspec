@@ -924,7 +924,8 @@ service("syncthing", exec = "syncthing serve --no-browser",
 
 Without `exec`, `service("gdm")` names a unit the distro ships and fspec only
 enables it at boot, without starting it, so the same apply works inside the chroot
-`switch --distro` builds. systemd runs `systemctl enable gdm`, runit links
+`switch --distro` builds. systemd runs `systemctl enable --force gdm` (an alias
+such as display-manager.service may already point at another unit), runit links
 `/etc/sv/gdm` into `/etc/runit/runsvdir/default` (and fails `apply` when the
 package that ships it is missing), OpenRC runs `rc-update add gdm default` and dinit
 `dinitctl enable gdm`. Such a service takes no other field, s6 and launchd refuse

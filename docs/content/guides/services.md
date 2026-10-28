@@ -204,7 +204,7 @@ and the same apply works inside the root `fspec switch --distro` builds.
 
 | Init | Enable | Disable on removal |
 | --- | --- | --- |
-| systemd | `systemctl enable <name>` | `systemctl disable <name>` |
+| systemd | `systemctl enable --force <name>`, which takes over an alias such as `display-manager.service` | `systemctl disable <name>` |
 | runit | links `/etc/sv/<name>` into `/etc/runit/runsvdir/default` | removes the link |
 | OpenRC | `rc-update add <name> default` | `rc-update del <name> default` |
 | dinit | `dinitctl enable <name>` | `dinitctl disable <name>` |

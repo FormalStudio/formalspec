@@ -273,7 +273,7 @@ fn a_display_manager_boots_the_host_to_graphical_and_hands_the_old_default_back(
     apply_scope(&w.cx(Scope::System), backends, &[desired(greetd.clone())]).unwrap();
     assert_eq!(
         w.runner.lines(),
-        ["systemctl enable greetd", "systemctl get-default", "systemctl set-default graphical.target"]
+        ["systemctl enable --force greetd", "systemctl get-default", "systemctl set-default graphical.target"]
     );
     let state = State::load(&w.paths.system_state_dir().join("state.json")).unwrap();
     assert_eq!(state.entries.values().next().unwrap().record["previous_default"], "multi-user.target");
@@ -297,7 +297,7 @@ fn a_service_without_exec_enables_the_distro_unit() {
     let backends: &[&dyn Backend] = &[&SystemdBackend];
     let gdm = resource(json!({"kind": "service", "name": "gdm"}));
     apply_scope(&w.cx(Scope::System), backends, &[desired(gdm.clone())]).unwrap();
-    assert_eq!(w.runner.lines(), ["systemctl enable gdm"]);
+    assert_eq!(w.runner.lines(), ["systemctl enable --force gdm"]);
     assert!(!w.paths.root.join("etc/systemd/system/fspec-gdm.service").exists());
 
     w.runner.calls.lock().unwrap().clear();
@@ -307,7 +307,7 @@ fn a_service_without_exec_enables_the_distro_unit() {
     w.runner.calls.lock().unwrap().clear();
     let timer = resource(json!({"kind": "service", "name": "app.timer", "user": true}));
     apply_scope(&w.cx(Scope::User), backends, &[desired(timer)]).unwrap();
-    assert_eq!(w.runner.lines(), ["systemctl --user enable app.timer"]);
+    assert_eq!(w.runner.lines(), ["systemctl --user enable --force app.timer"]);
 
     let bad = resource(json!({"kind": "service", "name": "gdm", "restart": "always"}));
     let err = SystemdBackend.check(&w.cx(Scope::System), &bad).unwrap_err().to_string();
@@ -345,7 +345,7 @@ fn a_service_running_a_replaced_store_package_restarts() {
     );
     let shell = vec![desired(resource(json!({"kind": "service", "name": "shell.service", "user": true})))];
     apply_scope(&w.cx(Scope::User), backends, &shell).unwrap();
-    assert_eq!(w.runner.lines(), ["systemctl --user enable shell.service"]);
+    assert_eq!(w.runner.lines(), ["systemctl --user enable --force shell.service"]);
 
     let cx = w.cx(Scope::User);
     let state = State::load(&cx.state_dir().join("state.json")).unwrap();

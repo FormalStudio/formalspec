@@ -48,7 +48,7 @@ pub(crate) fn check(init: Init, s: &Service) -> Result<()> {
 }
 
 fn systemctl(verb: &str, s: &Service) -> Cmd {
-    Cmd::new("systemctl").args(s.user.then_some("--user")).args([verb, s.name.as_str()])
+    Cmd::new("systemctl").args(s.user.then_some("--user")).args(verb.split(' ')).arg(&s.name)
 }
 
 fn rc_update(verb: &str, s: &Service) -> Cmd {
@@ -121,7 +121,10 @@ pub(crate) fn commit(cx: &Cx, init: Init, journal: &mut Journal, op: &Op, s: &Se
     let removal = op.is_removal();
     match init {
         Init::Systemd => {
-            let (verb, undo) = if removal { ("disable", "enable") } else { ("enable", "disable") };
+            // `--force`: an alias the unit claims can already point at another unit, as
+            // Tumbleweed's preset leaves display-manager.service on display-manager-legacy.service,
+            // and the spec naming this one is what decides.
+            let (verb, undo) = if removal { ("disable", "enable --force") } else { ("enable --force", "disable") };
             journal.record(Undo::Run { cmd: systemctl(undo, s) })?;
             cx.runner.check(&systemctl(verb, s))?;
             return own_default(cx, journal, op, s);
