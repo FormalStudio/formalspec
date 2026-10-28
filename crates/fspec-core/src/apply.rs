@@ -14,6 +14,7 @@ use crate::facts::Facts;
 use crate::fetch::Fetch;
 use crate::journal::{Journal, remove_any};
 use crate::lock::Lock;
+use crate::par;
 use crate::paths::Paths;
 use crate::plan::{Action, Change, Plan, plan};
 use crate::resource::{Desired, Key, Resource, Scope};
@@ -172,7 +173,8 @@ fn deferral(record: Option<&Map<String, Value>>) -> Option<&str> {
     record?.get(DEFERRED)?.as_str()
 }
 
-pub trait Backend {
+/// `Sync` because `plan` asks every backend for drift at once, from several threads.
+pub trait Backend: Sync {
     fn name(&self) -> &'static str;
 
     /// Whether this backend applies `r` on this host. Exactly one backend must claim each resource.
@@ -266,17 +268,18 @@ pub fn plan_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], state
         }
     }
     p.changes.retain(|c| !moved.contains_key(&c.key));
-    let changed: Vec<Key> = p.changes.iter().map(|c| c.key.clone()).collect();
-    for (key, entry) in &state.entries {
-        if changed.contains(key) {
-            continue;
-        }
-        let Ok(b) = backend_for(cx, backends, &entry.resource) else { continue };
+    let changed: Vec<&Key> = p.changes.iter().map(|c| &c.key).collect();
+    let unchanged: Vec<(&Key, &Entry)> = state.entries.iter().filter(|(key, _)| !changed.contains(key)).collect();
+    // Drift only reads the live system, and each check waits on its own query.
+    let drifted = par::try_map(&unchanged, |(key, entry)| -> Result<Vec<String>> {
+        let Ok(b) = backend_for(cx, backends, &entry.resource) else { return Ok(vec![]) };
         // A moved source is read where it is now; the old path may be gone from the spec.
-        let notes = match moved.get(key) {
-            Some(r) => b.drift(cx, &Entry { resource: r.clone(), ..entry.clone() })?,
-            None => b.drift(cx, entry)?,
-        };
+        match moved.get(*key) {
+            Some(r) => b.drift(cx, &Entry { resource: r.clone(), ..(*entry).clone() }),
+            None => b.drift(cx, entry),
+        }
+    })?;
+    for ((key, _), notes) in unchanged.into_iter().zip(drifted) {
         if !notes.is_empty() {
             let detail = String::new();
             p.changes.push(Change { key: key.clone(), scope: cx.scope, action: Action::Drift { notes }, detail });

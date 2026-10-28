@@ -795,7 +795,7 @@ fn a_unit_file_written_as_a_file_reloads_systemd() {
 struct Provides {
     target: PathBuf,
     link: PathBuf,
-    saw_link: std::cell::Cell<Option<bool>>,
+    saw_link: std::sync::Mutex<Option<bool>>,
 }
 
 impl fspec_core::Backend for Provides {
@@ -812,7 +812,7 @@ impl fspec_core::Backend for Provides {
     }
 
     fn commit(&self, _cx: &Cx, _ops: &[Op], _staging: &Path, _journal: &mut Journal) -> Result<Records> {
-        self.saw_link.set(Some(fs::symlink_metadata(&self.link).is_ok()));
+        *self.saw_link.lock().unwrap() = Some(fs::symlink_metadata(&self.link).is_ok());
         fs::create_dir_all(self.target.parent().unwrap())?;
         fs::write(&self.target, "nameserver 127.0.0.53\n")?;
         Ok(Records::new())
@@ -835,7 +835,7 @@ fn a_link_to_a_target_a_later_phase_creates_waits_for_that_phase() {
     desired.push(Desired { resource: pkg, owner: None });
     let backends: [&dyn fspec_core::Backend; 2] = [&FileBackend, &provides];
     apply_scope(&cx, &backends, &desired).unwrap();
-    assert_eq!(provides.saw_link.get(), Some(false));
+    assert_eq!(*provides.saw_link.lock().unwrap(), Some(false));
     assert_eq!(fs::read_link(&live).unwrap(), PathBuf::from("/run/resolve/stub-resolv.conf"));
     let cx = Cx { scope: Scope::System, ..w.cx() };
     let state = State::load(&state_dir(&w.paths, Scope::System).join("state.json")).unwrap();

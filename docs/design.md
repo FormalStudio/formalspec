@@ -751,6 +751,10 @@ sharing its staging directory.
 Before step 4, FormalSpec takes a btrfs or APFS snapshot of the paths it is
 about to touch when the filesystem supports it.
 
+Only reads run concurrently: the drift checks `plan` makes on unchanged
+resources, up to eight at a time. Every commit runs
+in phase order on one thread, under the journal.
+
 ## State
 
 `/var/lib/fspec/state.json` (system) and `~/.local/state/fspec/state.json`
