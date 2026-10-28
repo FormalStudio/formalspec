@@ -1137,7 +1137,9 @@ whole `fedora(...)` declaration leaves its packages installed. On zypper
 distros a `!name` entry, zypper's own syntax, removes that package in the same
 transaction, for one that conflicts with a wanted one
 (`"tuned-ppd", "!power-profiles-daemon"`); drift reports it when it comes
-back. A failed apply keeps the packages it installed and writes no state, so
+back. zypper removes a dropped name with `--clean-deps`, so the packages only it
+pulled in go too, and an apply that drops a name skips the solver dry run, which
+cannot see a removal that commits before the adds. A failed apply keeps the packages it installed and writes no state, so
 the next apply plans the same installs and finds them done; it reverses
 removals, upgrades and repo changes, not installs. Removing what a first apply
 installed would take thousands of packages and as long again as installing

@@ -159,6 +159,18 @@ fn distro_adds(ops: &[Op]) -> Result<Vec<String>> {
     Ok(adds)
 }
 
+/// Whether a distro change drops names it had.
+fn drops_names(ops: &[Op]) -> Result<bool> {
+    for op in ops.iter().filter(|o| repo(o).is_none()) {
+        let (Some(d), Some(c)) = (&op.desired, &op.current) else { continue };
+        let want = &distro(&d.resource)?.packages;
+        if recorded(c).iter().any(|n| !want.contains(n) && !n.starts_with('!')) {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
 impl DistroBackend {
     /// Returns why the repo was deferred, when it was.
     fn commit_repo(&self, cx: &Cx, op: &Op, journal: &mut Journal) -> Result<Option<String>> {
@@ -265,7 +277,9 @@ impl Backend for DistroBackend {
         if ops.iter().all(Op::is_removal) {
             return Ok(());
         }
-        if family(cx)? == Family::Zypper {
+        // A dropped name can be what an add conflicts with (rust-src under rustup), and its removal
+        // commits before the adds, which one dry run cannot model. The install reports it then.
+        if family(cx)? == Family::Zypper && !drops_names(ops)? {
             let adds = distro_adds(ops)?;
             let file = zypper::staged_adds(staging);
             fs::create_dir_all(file.parent().context("the file has a parent")?)?;

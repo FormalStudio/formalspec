@@ -110,7 +110,10 @@ changes (`zypper --no-refresh install --dry-run`), and about the new `pkg` packa
 with them when the base list changes too. Two packages that conflict, such as `rustup` and
 `rust-src`, stop the apply with zypper's problem text in seconds, not after the snapshot
 upgrade. A name zypper cannot find yet, from a `repo(...)` the same apply adds, is left to the
-install.
+install. When the base list also drops a name, there is no dry run: the removal commits before
+the adds, and a solver run cannot see it, so the install reports any conflict that is left.
+zypper removes a dropped name with `--clean-deps`, which takes the packages only it pulled in,
+such as the distro Rust toolchain behind `rust-src`.
 
 ### Flatpak
 

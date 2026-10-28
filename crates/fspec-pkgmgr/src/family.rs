@@ -89,7 +89,9 @@ impl Family {
             Family::Apt => apt("remove").args(names),
             Family::Xbps => Cmd::new("xbps-remove").arg("-y").args(names),
             Family::Moss => moss(["-y", "remove"].into_iter().map(String::from).chain(names.iter().cloned())),
-            Family::Zypper => zypper(["remove"]).args(names),
+            // A dropped name takes the packages only it pulled in, as rust-src does the distro
+            // toolchain, which would otherwise stay and conflict with what replaces it.
+            Family::Zypper => zypper(["remove", "--clean-deps"]).args(names),
         }
     }
 

@@ -602,7 +602,7 @@ const FAMS: [Fam; 5] = [
         distro: TW,
         kind: "zypper",
         install: "zypper --non-interactive install --auto-agree-with-licenses",
-        remove: "zypper --non-interactive remove",
+        remove: "zypper --non-interactive remove --clean-deps",
         version: "rpm -q --whatprovides --qf %{VERSION}-%{RELEASE}\\n",
         batch: "rpm -q --qf %{NAME}\\t",
         printed: "3.3-1",
@@ -1402,4 +1402,19 @@ fn brew_drift_lists_every_formula_and_cask_once() {
 #[test]
 fn a_capability_two_rpms_provide_reads_the_first() {
     assert_eq!(crate::family::Family::Zypper.parse_version("pkgconfig(pam)", "1.7.1-1.1\n1.6.0-2.1\n"), "1.7.1-1.1");
+}
+
+#[test]
+fn a_dropped_name_skips_the_dry_run_and_takes_its_deps_before_the_adds() {
+    let w = tumbleweed();
+    w.apply(Scope::System, &[distro_res(TW, &["rust-src"])]).unwrap();
+    w.take();
+    // The installed toolchain conflicts with rustup until rust-src goes, so a dry run would fail.
+    w.answer(DRY_RUN, 4, "Problem: 1: rustup conflicts with 'rust+rustc'\n");
+    w.apply(Scope::System, &[distro_res(TW, &["rustup"])]).unwrap();
+    let lines = w.take();
+    assert!(!lines.iter().any(|l| l.starts_with(DRY_RUN)), "{lines:#?}");
+    let rm = lines.iter().position(|l| l == "zypper --non-interactive remove --clean-deps rust-src");
+    let add = lines.iter().position(|l| l.starts_with(FAMS[4].install) && l.ends_with(" rustup"));
+    assert!(rm.is_some() && rm < add, "{lines:#?}");
 }
