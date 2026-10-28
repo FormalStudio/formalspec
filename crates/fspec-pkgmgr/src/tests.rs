@@ -375,34 +375,34 @@ fn dnf(name: &str, names: &[&str], mode: &str) -> Desired {
 }
 
 const QF: &str = "rpm -q --qf %{VERSION}-%{RELEASE}";
+const BATCH: &str = r"rpm -q --qf %{NAME}\t";
+const ALL_AT_3_3: &str = "htop\t3.3-1.fc42\njq\t3.3-1.fc42\nripgrep\t3.3-1.fc42\n";
 
 #[test]
 fn dnf_installs_by_name_and_detects_drift() {
     let w = World::linux();
-    w.answer(QF, 0, "3.3-1.fc42");
+    w.answer(BATCH, 0, ALL_AT_3_3);
     let want = [dnf("htop", &[], "pinned"), dnf("tools", &["jq", "ripgrep"], "pinned")];
     w.apply(Scope::System, &want).unwrap();
     assert_eq!(
         w.take(),
         [
             "dnf install -y --setopt=max_parallel_downloads=10 htop",
-            "rpm -q --qf %{VERSION}-%{RELEASE} htop",
+            r"rpm -q --qf %{NAME}\t%{VERSION}-%{RELEASE}\n htop",
             "dnf install -y --setopt=max_parallel_downloads=10 jq ripgrep",
-            "rpm -q --qf %{VERSION}-%{RELEASE} jq",
-            "rpm -q --qf %{VERSION}-%{RELEASE} ripgrep",
+            r"rpm -q --qf %{NAME}\t%{VERSION}-%{RELEASE}\n jq ripgrep",
         ]
     );
     assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
 
     w.forget_answers();
-    w.answer(QF, 0, "3.3-1.fc42");
-    w.answer("rpm -q --qf %{VERSION}-%{RELEASE} htop", 0, "3.4-1.fc42");
+    w.answer(BATCH, 0, &ALL_AT_3_3.replace("htop\t3.3", "htop\t3.4"));
     let plan = w.plan(Scope::System, &want).unwrap();
     assert!(is_drift(&plan), "{plan}");
 
     w.forget_answers();
-    w.answer(QF, 0, "3.3-1.fc42");
-    w.answer("rpm -q --qf %{VERSION}-%{RELEASE} jq", 1, "package jq is not installed");
+    w.answer(BATCH, 1, &ALL_AT_3_3.replace("jq\t3.3-1.fc42", "package jq is not installed"));
+    w.answer(&format!("{QF} jq"), 1, "package jq is not installed");
     let plan = w.plan(Scope::System, &want).unwrap();
     assert_eq!(plan.changes.len(), 1, "{plan}");
 
@@ -551,6 +551,8 @@ struct Fam {
     install: &'static str,
     remove: &'static str,
     version: &'static str,
+    /// The start of the query that asks for many names at once, empty when there is none.
+    batch: &'static str,
     /// What the version query prints for a package at 3.3.
     printed: &'static str,
     ext: &'static str,
@@ -563,6 +565,7 @@ const FAMS: [Fam; 5] = [
         install: "dnf install -y --setopt=max_parallel_downloads=10",
         remove: "dnf remove -y",
         version: "rpm -q --qf %{VERSION}-%{RELEASE}",
+        batch: "rpm -q --qf %{NAME}\\t",
         printed: "3.3-1",
         ext: "rpm",
     },
@@ -572,6 +575,7 @@ const FAMS: [Fam; 5] = [
         install: "pacman -S --noconfirm --needed",
         remove: "pacman -R --noconfirm",
         version: "pacman -Q",
+        batch: "pacman -Q",
         printed: "htop 3.3-1",
         ext: "pkg.tar.zst",
     },
@@ -581,6 +585,7 @@ const FAMS: [Fam; 5] = [
         install: "apt-get install -y",
         remove: "apt-get remove -y",
         version: "dpkg-query -W -f=${Version}",
+        batch: "dpkg-query -W -f=${Package}",
         printed: "3.3-1",
         ext: "deb",
     },
@@ -590,6 +595,7 @@ const FAMS: [Fam; 5] = [
         install: "xbps-install -y",
         remove: "xbps-remove -y",
         version: "xbps-query -p pkgver",
+        batch: "",
         printed: "htop-3.3_1",
         ext: "xbps",
     },
@@ -599,6 +605,7 @@ const FAMS: [Fam; 5] = [
         install: "zypper --non-interactive install --auto-agree-with-licenses",
         remove: "zypper --non-interactive remove",
         version: "rpm -q --qf %{VERSION}-%{RELEASE}",
+        batch: "rpm -q --qf %{NAME}\\t",
         printed: "3.3-1",
         ext: "rpm",
     },
@@ -629,8 +636,18 @@ impl Fam {
         }
     }
 
+    /// Answers the version queries as if `names` were installed at 3.3.
+    fn answer_installed(&self, w: &World, names: &[&str]) {
+        w.answer(self.version, 0, self.printed);
+        if !self.batch.is_empty() {
+            let sep = if self.kind == "pacman" { " " } else { "\t" };
+            let out: String = names.iter().map(|n| format!("{n}{sep}3.3-1\n")).collect();
+            w.answer(self.batch, 0, &out);
+        }
+    }
+
     fn is_query(&self, line: &str) -> bool {
-        line.starts_with(self.version)
+        line.starts_with(self.version) || (!self.batch.is_empty() && line.starts_with(self.batch))
     }
 
     /// Leaves out version queries and the snapshot move a first Tumbleweed apply makes.
@@ -652,7 +669,7 @@ fn locked_file(w: &mut World, f: &Fam, version: &str, body: &[u8]) -> String {
 fn every_family_installs_by_name_reports_drift_and_removes() {
     for f in &FAMS {
         let w = f.world();
-        w.answer(f.version, 0, f.printed);
+        f.answer_installed(&w, &["htop", "jq", "ripgrep"]);
         let want = [f.pkg("htop", &[]), f.pkg("tools", &["jq", "ripgrep"])];
         w.apply(Scope::System, &want).unwrap();
         let lines = w.take();
@@ -660,12 +677,13 @@ fn every_family_installs_by_name_reports_drift_and_removes() {
             f.without_queries(lines.clone()),
             [format!("{} htop", f.install), format!("{} jq ripgrep", f.install)]
         );
-        // Each name is queried once, after the install, to record its version.
-        assert_eq!(lines.iter().filter(|l| f.is_query(l)).count(), 3, "{}", f.kind);
+        // One query per package records its versions, or one per name without a batched query.
+        let queries = if f.batch.is_empty() { 3 } else { 2 };
+        assert_eq!(lines.iter().filter(|l| f.is_query(l)).count(), queries, "{}", f.kind);
         assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty(), "{}", f.kind);
 
         w.forget_answers();
-        w.answer(f.version, 0, f.printed);
+        f.answer_installed(&w, &["htop", "ripgrep"]);
         w.answer(&format!("{} jq", f.version), 1, "not installed");
         let plan = w.plan(Scope::System, &want).unwrap();
         assert_eq!(plan.changes.len(), 1, "{}: {plan}", f.kind);
@@ -1307,4 +1325,25 @@ fn a_cmdline_file_handed_to_kernel_args_stays_on_disk() {
         "root=UUID=u rootflags=subvol=@tumbleweed rw quiet mitigations=off\n"
     );
     assert!(!w.state(Scope::System).entries.keys().any(|k| k.kind == "file"));
+}
+
+/// A first Tumbleweed apply of a desktop-sized spec, and the plan after it, in spawned commands.
+#[test]
+fn a_large_spec_queries_versions_in_batches() {
+    let base: Vec<String> = (0..2900).map(|i| format!("p{i}")).collect();
+    let extra: Vec<String> = (0..30).map(|i| format!("z{i}")).collect();
+    let base_refs: Vec<&str> = base.iter().map(String::as_str).collect();
+    let w = World::on(TW, &base_refs);
+    let f = &FAMS[4];
+    let mut want = vec![distro_res(TW, &base_refs)];
+    want.extend(extra.iter().map(|n| f.pkg(n, &[])));
+    let installed: Vec<&str> = base.iter().chain(&extra).map(String::as_str).collect();
+    f.answer_installed(&w, &installed);
+
+    w.apply(Scope::System, &want).unwrap();
+    let applied = w.take();
+    assert!(applied.iter().filter(|l| f.is_query(l)).count() <= 33, "{}", applied.len());
+
+    assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
+    assert!(w.take().len() <= 33);
 }

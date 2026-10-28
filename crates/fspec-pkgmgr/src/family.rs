@@ -110,6 +110,34 @@ impl Family {
         }
     }
 
+    /// One query for the installed versions of many names, printing `name<TAB>version` per
+    /// installed package, for the managers that have one. Names it misses (a capability, a
+    /// `name:arch`) go through [`Family::version`] one at a time.
+    pub fn versions(self, names: &[String]) -> Option<Cmd> {
+        match self {
+            Family::Dnf | Family::Zypper => {
+                Some(Cmd::new("rpm").args(["-q", "--qf", r"%{NAME}\t%{VERSION}-%{RELEASE}\n"]).args(names))
+            }
+            Family::Pacman => Some(Cmd::new("pacman").arg("-Q").args(names)),
+            Family::Apt => Some(Cmd::new("dpkg-query").args(["-W", r"-f=${Package}\t${Version}\n"]).args(names)),
+            Family::Xbps | Family::Moss => None,
+        }
+    }
+
+    /// `(name, version)` per installed package out of a [`Family::versions`] query. Lines that
+    /// are not a package, such as rpm's `package x is not installed`, are skipped.
+    pub fn parse_versions(self, stdout: &str) -> Vec<(String, String)> {
+        stdout
+            .lines()
+            .filter_map(|l| match self {
+                Family::Pacman => l.split_once(' '),
+                _ => l.split_once('\t'),
+            })
+            .map(|(n, v)| (n.trim().to_string(), v.trim().to_string()))
+            .filter(|(n, v)| !n.is_empty() && !v.is_empty())
+            .collect()
+    }
+
     /// The installed version out of a successful [`Family::version`] query.
     pub fn parse_version(self, name: &str, stdout: &str) -> String {
         let out = stdout.trim();

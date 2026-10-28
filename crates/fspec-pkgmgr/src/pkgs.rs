@@ -1,6 +1,7 @@
 //! Install, cache, journal and drift logic shared by the four distro package backends and
 //! the base packages of a classic distro.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::PathBuf;
 
@@ -10,6 +11,7 @@ use base64::engine::general_purpose::STANDARD;
 use fspec_core::apply::{Cx, Op, Records};
 use fspec_core::facts::Os;
 use fspec_core::journal::{Journal, Undo, remove_any};
+use fspec_core::par;
 use fspec_core::resource::{Pkg, PkgMode, Resource, Source};
 use fspec_core::runner::Cmd;
 use fspec_core::state::Entry;
@@ -69,16 +71,40 @@ fn sri(bytes: &[u8]) -> String {
     format!("sha256-{}", STANDARD.encode(Sha256::digest(bytes)))
 }
 
-/// `{"names": [...], "versions": {name: version}}` from the live system.
-pub(crate) fn record_names(cx: &Cx, fam: Family, names: &[String]) -> Result<Map<String, Value>> {
-    let mut versions = Map::new();
-    for n in names.iter().filter(|n| !n.starts_with('!')) {
+/// Names per batched version query, well under the kernel's argument limit.
+const QUERY_CHUNK: usize = 1000;
+
+/// The installed version of each of `names` that is installed. Batched queries run first, a few
+/// thousand names in a handful of processes, and only the names they miss are queried one by
+/// one. Several installed versions of one name (kernels) are joined with a space. A query that
+/// succeeds without printing a version, as a rooted apply's runner does, maps the name to "".
+pub(crate) fn live_versions(cx: &Cx, fam: Family, names: &[String]) -> Result<BTreeMap<String, String>> {
+    let mut names: Vec<String> = names.iter().filter(|n| !n.starts_with('!')).cloned().collect();
+    names.sort();
+    names.dedup();
+    let mut found: BTreeMap<String, String> = BTreeMap::new();
+    let chunks: Vec<&[String]> = names.chunks(QUERY_CHUNK).collect();
+    let batches = par::try_map(&chunks, |chunk| match fam.versions(chunk) {
+        Some(cmd) => cx.runner.run(&cmd).map(|o| fam.parse_versions(&o.stdout)),
+        None => Ok(vec![]),
+    })?;
+    for (n, v) in batches.into_iter().flatten().filter(|(n, _)| names.binary_search(n).is_ok()) {
+        found.entry(n).and_modify(|have| *have = format!("{have} {v}")).or_insert(v);
+    }
+    let missed: Vec<&String> = names.iter().filter(|n| !found.contains_key(*n)).collect();
+    let one_by_one = par::try_map(&missed, |n| -> Result<Option<String>> {
         let out = cx.runner.run(&fam.version(n))?;
         let v = fam.parse_version(n, &out.stdout);
-        if out.status == 0 && !v.is_empty() {
-            versions.insert(n.clone(), v.into());
-        }
-    }
+        Ok((out.status == 0).then_some(v))
+    })?;
+    found.extend(missed.into_iter().zip(one_by_one).filter_map(|(n, v)| Some((n.clone(), v?))));
+    Ok(found)
+}
+
+/// `{"names": [...], "versions": {name: version}}` from the live system.
+pub(crate) fn record_names(cx: &Cx, fam: Family, names: &[String]) -> Result<Map<String, Value>> {
+    let versions: Map<String, Value> =
+        live_versions(cx, fam, names)?.into_iter().filter(|(_, v)| !v.is_empty()).map(|(n, v)| (n, v.into())).collect();
     let mut rec = Map::new();
     rec.insert("names".into(), names.to_vec().into());
     if !versions.is_empty() {
@@ -87,23 +113,25 @@ pub(crate) fn record_names(cx: &Cx, fam: Family, names: &[String]) -> Result<Map
     Ok(rec)
 }
 
-/// Notes for names that are gone or at another version than the record says.
+/// Notes for names that are gone or at another version than the record says, and for `!name`
+/// packages that are installed.
 pub(crate) fn drift_names(cx: &Cx, fam: Family, names: &[String], rec: &Map<String, Value>) -> Result<Vec<String>> {
+    let gone: Vec<String> = names.iter().filter_map(|n| n.strip_prefix('!')).map(str::to_string).collect();
+    let queried: Vec<String> = names.iter().filter(|n| !n.starts_with('!')).chain(&gone).cloned().collect();
+    let live = live_versions(cx, fam, &queried)?;
     let mut notes = Vec::new();
     let versions = rec.get("versions").and_then(Value::as_object);
     for n in names {
         if let Some(gone) = n.strip_prefix('!') {
-            if installed(cx, fam, gone)? {
+            if live.get(gone).is_some_and(|v| !v.is_empty()) {
                 notes.push(format!("{gone} is installed"));
             }
             continue;
         }
-        let out = cx.runner.run(&fam.version(n))?;
-        if out.status != 0 {
+        let Some(live) = live.get(n) else {
             notes.push(format!("{n} is not installed"));
             continue;
-        }
-        let live = fam.parse_version(n, &out.stdout);
+        };
         match versions.and_then(|v| v.get(n)).and_then(Value::as_str) {
             Some(r) if !live.is_empty() && live != r => notes.push(format!("{n} is {live}, applied {r}")),
             _ => {}
@@ -191,11 +219,6 @@ fn install_cmds(cx: &Cx, fam: Family, names: &[String], cached: Option<&Cached>)
 /// reinstalling a `!name` the wanted set conflicts with fails anyway.
 pub(crate) fn install(cx: &Cx, fam: Family, names: &[String], cached: Option<&Cached>) -> Result<()> {
     run_all(cx, &install_cmds(cx, fam, names, cached))
-}
-
-fn installed(cx: &Cx, fam: Family, name: &str) -> Result<bool> {
-    let out = cx.runner.run(&fam.version(name))?;
-    Ok(out.status == 0 && !fam.parse_version(name, &out.stdout).is_empty())
 }
 
 /// Installing over an existing package can only be reversed when the previous file is cached.

@@ -7,6 +7,7 @@ pub mod fetch;
 pub mod journal;
 pub mod lock;
 pub mod moss;
+pub mod par;
 pub mod patches;
 pub mod paths;
 pub mod plan;

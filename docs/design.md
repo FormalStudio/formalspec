@@ -1123,6 +1123,12 @@ These packages commit before services, so a `service("sshd")` can enable a unit
 the same apply installed: the `packages` list in the distro phase, `pkg`
 sources in the package phase after it.
 
+Installed versions, for the record after an install and for drift in `plan`,
+come from one query per thousand names (`rpm -q --qf`, `pacman -Q`,
+`dpkg-query -W`), so a 3000-package base costs a few processes, not 3000.
+A name the batch does not report, such as a capability or `name:arch`, is
+queried on its own. xbps and moss have no such query and ask per name.
+
 AerynOS's `aerynos(packages = [...])` and `pkg(..., source = moss())` run
 `moss install` and `moss remove`. moss builds every transaction as a new
 `/usr` from its deduplicated store and swaps it in atomically, recording a
