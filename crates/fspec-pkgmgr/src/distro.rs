@@ -148,6 +148,17 @@ fn repo(op: &Op) -> Option<&Repo> {
     }
 }
 
+/// The base packages this apply installs that the last one did not.
+fn distro_adds(ops: &[Op]) -> Result<Vec<String>> {
+    let mut adds = Vec::new();
+    for op in ops.iter().filter(|o| repo(o).is_none()) {
+        let Some(d) = &op.desired else { continue };
+        let had = op.current.as_ref().map(recorded).unwrap_or_default();
+        adds.extend(distro(&d.resource)?.packages.iter().filter(|n| !had.contains(n)).cloned());
+    }
+    Ok(adds)
+}
+
 impl DistroBackend {
     /// Returns why the repo was deferred, when it was.
     fn commit_repo(&self, cx: &Cx, op: &Op, journal: &mut Journal) -> Result<Option<String>> {
@@ -245,7 +256,7 @@ impl Backend for DistroBackend {
     /// Takes the btrfs snapshot here because every backend prepares before any commits, so the
     /// snapshot holds the system from before the `pkg` packages and the new kernel. Repo keys
     /// are fetched and checked here too, before anything changes.
-    fn prepare(&self, cx: &Cx, ops: &[Op], _staging: &Path) -> Result<()> {
+    fn prepare(&self, cx: &Cx, ops: &[Op], staging: &Path) -> Result<()> {
         for op in ops.iter().filter(|o| o.desired.is_some()) {
             if let Some(r) = repo(op) {
                 zypper::fetch_key(cx, r)?;
@@ -253,6 +264,13 @@ impl Backend for DistroBackend {
         }
         if ops.iter().all(Op::is_removal) {
             return Ok(());
+        }
+        if family(cx)? == Family::Zypper {
+            let adds = distro_adds(ops)?;
+            let file = zypper::staged_adds(staging);
+            fs::create_dir_all(file.parent().context("the file has a parent")?)?;
+            fs::write(&file, adds.join("\n")).with_context(|| format!("writing {}", file.display()))?;
+            zypper::check_solvable(cx, &adds)?;
         }
         let fstype = cx
             .runner

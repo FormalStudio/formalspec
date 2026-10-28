@@ -935,6 +935,7 @@ fn tumbleweed_points_the_repos_at_the_locked_snapshot_then_upgrades() {
     assert_eq!(
         lines,
         [
+            "zypper --non-interactive install --dry-run --auto-agree-with-licenses htop",
             "zypper --non-interactive modifyrepo --disable repo-oss",
             "zypper --non-interactive refresh --force fspec-oss fspec-non-oss",
             "zypper --non-interactive dist-upgrade --auto-agree-with-licenses",
@@ -1349,4 +1350,38 @@ fn a_large_spec_queries_versions_in_batches() {
     assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
     let planned = w.take();
     assert!(planned.len() <= 33, "{planned:#?}");
+}
+
+const DRY_RUN: &str = "zypper --non-interactive install --dry-run --auto-agree-with-licenses";
+
+#[test]
+fn a_zypper_conflict_fails_in_prepare_before_the_snapshot_moves() {
+    let w = tumbleweed();
+    let problem = "Resolving package dependencies...\nProblem: 1: the to be installed rustup-1.28 conflicts with \
+                   'rust-src' provided by the to be installed rust-src-1.90\n Solution 1: do not install rustup\n";
+    w.answer(DRY_RUN, 4, problem);
+    let want = [distro_res(TW, &["rust-src"]), FAMS[4].pkg("rustup", &[])];
+    let err = format!("{:#}", w.apply(Scope::System, &want).unwrap_err());
+    assert!(err.contains("rustup-1.28 conflicts with 'rust-src'"), "{err}");
+    let lines = w.take();
+    assert_eq!(lines.iter().filter(|l| l.starts_with(DRY_RUN)).count(), 1, "{lines:#?}");
+    assert!(lines.iter().all(|l| !is_snapshot_move(l) && !l.starts_with(FAMS[4].install)), "{lines:#?}");
+    assert_eq!(w.state(Scope::System).generation, 0);
+}
+
+#[test]
+fn the_pkg_dry_run_takes_the_distro_adds_and_ignores_what_it_cannot_find() {
+    let w = tumbleweed();
+    // 104: a name no repo has yet, which is the install's to report, not the dry run's.
+    w.answer(DRY_RUN, 104, "Package 'vendor-tool' not found.\n");
+    let want = [distro_res(TW, &["htop"]), FAMS[4].pkg("rustup", &[])];
+    w.apply(Scope::System, &want).unwrap();
+    let runs: Vec<String> = w.take().into_iter().filter(|l| l.starts_with(DRY_RUN)).collect();
+    assert_eq!(runs, [format!("{DRY_RUN} htop"), format!("{DRY_RUN} htop rustup")]);
+
+    // Without a distro change, a new package goes straight to its install.
+    disable_rolling(&w);
+    let want = [distro_res(TW, &["htop"]), FAMS[4].pkg("rustup", &[]), FAMS[4].pkg("jq", &[])];
+    w.apply(Scope::System, &want).unwrap();
+    assert!(!w.take().iter().any(|l| l.starts_with(DRY_RUN)));
 }

@@ -2,7 +2,7 @@
 //! snapshot in `fspec.lock`, and third-party `repo(...)` resources with pinned signing keys.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use fspec_core::apply::Cx;
@@ -117,6 +117,33 @@ pub(crate) fn move_to(cx: &Cx, journal: &mut Journal, snapshot: &str) -> Result<
     cx.runner.check(&zypper(["refresh", "--force"]).args(SNAPSHOT_REPOS.map(|(a, _)| a)))?;
     cx.runner.check(&dup)?;
     Ok(())
+}
+
+/// Where the distro phase leaves the names it will install, for the `pkg` phase's dry run.
+pub(crate) fn staged_adds(staging: &Path) -> PathBuf {
+    staging.join("zypper").join("distro-adds")
+}
+
+/// Ask zypper's solver whether `names` install together with what is installed, without
+/// installing them, so a conflict such as rustup against rust-src fails the apply before the
+/// snapshot move and thousands of packages. Only the solver's own problems fail: a name zypper
+/// cannot find yet (its `repo(...)` is added in the commit) or an unreachable repo is left to
+/// the install to report.
+pub(crate) fn check_solvable(cx: &Cx, names: &[String]) -> Result<()> {
+    if names.is_empty() {
+        return Ok(());
+    }
+    let out = cx.runner.run(&zypper(["install", "--dry-run", "--auto-agree-with-licenses"]).args(names))?;
+    if out.status == 0 {
+        return Ok(());
+    }
+    let text = format!("{}\n{}", out.stdout, out.stderr);
+    let mut lines = text.lines().skip_while(|l| !l.trim_start().starts_with("Problem:")).peekable();
+    if lines.peek().is_none() {
+        return Ok(());
+    }
+    let problems: Vec<&str> = lines.filter(|l| !l.trim().is_empty()).take(40).collect();
+    bail!("zypper cannot install these packages together:\n{}", problems.join("\n"))
 }
 
 /// Notes for the distro repos when they are not at `snapshot`.

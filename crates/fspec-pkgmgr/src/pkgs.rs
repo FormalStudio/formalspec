@@ -3,7 +3,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use base64::Engine;
@@ -290,11 +290,29 @@ impl PkgEngine {
         Ok(notes)
     }
 
-    pub fn prepare(&self, cx: &Cx, ops: &[Op]) -> Result<()> {
+    /// On zypper, when the distro phase also changes the system, the new names go through one
+    /// dry run together with the distro's, so a conflict between the two lists fails before the
+    /// distro phase commits. Without a distro change nothing costly commits first, and the
+    /// install reports the conflict itself.
+    pub fn prepare(&self, cx: &Cx, ops: &[Op], staging: &Path) -> Result<()> {
+        let mut fresh = Vec::new();
         for op in ops {
             let Some(d) = &op.desired else { continue };
-            let Some(c) = want(self.0, cx, pkg(&d.resource)?)?.cached else { continue };
+            let p = pkg(&d.resource)?;
+            let w = want(self.0, cx, p)?;
+            if op.current.is_none() && from_repo(p).is_none() {
+                fresh.extend(w.names.iter().cloned());
+            }
+            let Some(c) = w.cached else { continue };
             cache(cx, &d.resource.key().to_string(), &c)?;
+        }
+        if self.0 == Family::Zypper
+            && !fresh.is_empty()
+            && let Ok(distro) = fs::read_to_string(crate::zypper::staged_adds(staging))
+        {
+            let mut names: Vec<String> = distro.lines().filter(|l| !l.is_empty()).map(str::to_string).collect();
+            names.extend(fresh);
+            crate::zypper::check_solvable(cx, &names)?;
         }
         Ok(())
     }
@@ -422,8 +440,8 @@ macro_rules! family_backend {
                 PkgEngine($fam).drift(cx, entry)
             }
 
-            fn prepare(&self, cx: &Cx, ops: &[Op], _staging: &Path) -> Result<()> {
-                PkgEngine($fam).prepare(cx, ops)
+            fn prepare(&self, cx: &Cx, ops: &[Op], staging: &Path) -> Result<()> {
+                PkgEngine($fam).prepare(cx, ops, staging)
             }
 
             fn commit(&self, cx: &Cx, ops: &[Op], _staging: &Path, journal: &mut Journal) -> Result<Records> {

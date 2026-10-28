@@ -104,6 +104,12 @@ in `image(packages = ...)` instead. The base packages of a classic distro go in
 
 `zypper(repo = ...)` ties the package to a third-party `repo(...)` on openSUSE Tumbleweed.
 
+On Tumbleweed, `apply` asks zypper's solver about the new base packages before anything
+changes (`zypper install --dry-run`), and about the new `pkg` packages together with them when
+the base list changes too. Two packages that conflict, such as `rustup` and `rust-src`, stop the
+apply with zypper's problem text in seconds, not after the snapshot upgrade. A name zypper
+cannot find yet, from a `repo(...)` the same apply adds, is left to the install.
+
 ### Flatpak
 
 ```starlark
