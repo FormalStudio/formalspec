@@ -2062,52 +2062,58 @@ point where FormalSpec becomes usable day to day.
 
 ## First release
 
-v0.1 is the release that replaces NixOS on the g815 and the e1504g. The design
-session decides when it is ready, and every item below is required.
+v0.1 is the release that replaces NixOS on the g815 and the e1504g with
+openSUSE Tumbleweed under FormalSpec. The design session decides when it is
+ready, and every item below is required.
 
-Both hosts boot through UEFI with Secure Boot off, from an ext4 root
-(`/dev/nvme0n1p5` on the g815, `/dev/nvme0n1p2` on the e1504g) and a 1 GB EFI
-partition mounted at `/boot`. The g815 also dual-boots Windows: NTFS partitions
-p3, p4 and p6 share the NVMe, and Windows' boot entry lives on the same EFI
-partition. The current configuration is `~/.config/nix`, which the port reads
-and never edits.
+The spec is the `formalspec` branch of
+[FormalSnake/dotfiles](https://github.com/FormalSnake/dotfiles/tree/formalspec),
+ported from `~/.config/nix`, which the port reads and never edits. Its
+`GAPS.md` lists everything not ported and why.
 
-1. **Parity port.** The `formalspec` branch of
-   [FormalSnake/dotfiles](https://github.com/FormalSnake/dotfiles/tree/formalspec) holds a spec
-   that reproduces both Linux hosts from `~/.config/nix`:
-   - Bazzite: nvidia on the g815, plain on the e1504g;
-   - Hyprland with its Lua config, FormalShell built from git, and the matugen
-     templates;
-   - user autostart services, Flatpaks and Steam;
-   - asusd, tuned and the gpu-mux service;
-   - syncthing, docker, tailscale and nordvpn;
-   - the agenix secrets as `secret()`;
-   - the qylock greeter, and librepods with its patches;
-   - the fish, ssh and herdr configs, and the sudo mesh (`pam_ssh_agent_auth`);
-   - the Windows boot entry, kept.
+The e1504g already runs Tumbleweed from that spec and is applied from the
+macbook. The g815 still runs NixOS: UEFI with Secure Boot off, an ext4 root on
+`/dev/nvme0n1p5`, a 1 GB EFI partition mounted at `/boot`, and Windows on NTFS
+partitions p3, p4 and p6 with its boot entry on the same EFI partition.
 
-   Every gap is listed in the example, and none is left unexplained.
-2. **In-place migration from NixOS on ext4.** Tested in a VM on a NixOS ext4
-   disk image laid out like these hosts. The g815 case adds NTFS neighbours and
-   a Windows EFI entry. Booted once from the ISO, since a mounted root cannot be
-   converted:
-   - `btrfs-convert` turns the root into btrfs;
-   - NixOS moves into `@nixos`;
-   - Bazzite is installed beside it;
-   - NixOS and Windows stay working boot entries.
+Done:
 
-   The 1 GB EFI partition is accepted with a warning, not refused.
-3. **Rollback, proven in the VM.** A bad apply rolls back, a bad image boots the
-   previous deployment, and NixOS still boots from the menu.
-4. **Remote convergence.** `fspec apply --all` from the macbook converges both
+- **Unattended migration from NixOS on ext4.** `fspec disk migrate --stage`
+  converts the root to btrfs, keeps NixOS in `@nixos` and rolls back to ext4
+  on failure; proven in a VM.
+- **Install beside and rollback.** `fspec switch --beside` installs
+  Tumbleweed next to `@nixos`, and a failed boot falls back; proven in a VM.
+- **A recovery page** covers booting back into NixOS and undoing the
+  migration.
+- **CI.** It runs the tests, builds `git(...)` packages into the OCI cache
+  (FormalShell, librepods) and opens an `fspec update` PR on demand. The update
+  runs on `workflow_dispatch` only, since GitHub schedules run from the default
+  branch and the spec lives on `formalspec`.
+
+Open:
+
+1. **Parity gaps.** Decide quickshell (a Qt 6 source build, or dcal without
+   its UI), and apply and check uxplay, colloid-icon-theme and Discord with
+   moonlight, which no host has applied yet.
+2. **The g815 port**, in this order:
+   - port the macos-vm OpenCore EFI as a `git()` build, or drop it;
+   - in Windows, turn off Fast Startup and check `C:` is not BitLocker
+     encrypted;
+   - build a NixOS system that mounts `/` as `subvol=@nixos`, `/home` from
+     `@home` and `/swap` from `@swap`, take a backup, and run `fspec disk
+     migrate --stage <iso> --nixos-system <path>`;
+   - after the reboot into `@nixos`, run `fspec switch --beside tumbleweed`,
+     with the 16G swapfile on the layout that leaves;
+   - boot Tumbleweed and check the Limine menu still boots NixOS and Windows,
+     the NVIDIA G07 driver, the gpu-mux service and the NTFS mounts.
+
+   Not yet proven on real hardware: the 1 GB EFI partition holding the g815's
+   NixOS closure, and booting Windows after the install beside it.
+3. **Remote convergence.** `fspec apply --all` from the macbook converges both
    Linux hosts over ssh, and `fspec plan --all` shows no drift afterwards.
-5. **CI is green.** It runs the tests, builds the ISO on release, opens a nightly
-   `fspec update` PR, and keeps the OCI cache for patched packages (librepods,
-   FormalShell).
-6. **A recovery page** in the docs covers how to boot back into NixOS and how to
-   undo the migration.
+4. **The release ISO workflow** runs once and publishes an ISO.
 
-Rollout starts once 1 to 6 pass. The e1504g goes first, keeping NixOS as a
-fallback boot entry, for two weeks of daily use. The g815 follows. `fspec forget
-nixos` runs only after Kyan says so. Neither host's real disks are touched
-before the design session gives the go.
+Rollout of the g815 starts once 1 and 4 pass and the VM steps of 2 have run
+against a copy of its disk layout. NixOS stays a boot entry; `fspec forget
+nixos` runs only after Kyan says so, on either host. The g815's real disk is
+not touched before the design session gives the go.
