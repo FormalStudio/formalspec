@@ -881,8 +881,15 @@ fn a_ci_built_package_is_pulled_with_oras_and_installed() {
     assert!(calls[0].starts_with(&format!("oras pull {REF} -o ")), "{calls:?}");
     assert_eq!(calls[1], format!("oras manifest fetch {REF}"));
     let record = &w.state().entries[&git_pkg().resource.key()].record;
-    assert_eq!(record["id"], REF);
+    assert!(record["id"].as_str().unwrap().starts_with("https://example/tool@4f1c2a9d"), "{record:?}");
     assert_eq!(record["bins"]["tool"], "tool");
+    drop(calls);
+
+    // The cache holds the build a host would make, so losing or gaining the digest moves nothing.
+    let mut l = w.lock.pkg("tool", "git:https://example/tool@main").unwrap().clone();
+    l.artifacts.clear();
+    w.lock.upsert(l);
+    assert!(w.plan(&[git_pkg()]).changes.is_empty());
 }
 
 #[test]

@@ -299,7 +299,9 @@ title). The lock pins the manifest digest.
 `oras pull <ref> -o <staging>` through the `Runner` (so `oras` must be on
 PATH), the layer file is hashed against the layer digest in
 `oras manifest fetch <ref>`, unpacked, and installed like any other store
-package. A reference without a digest is refused.
+package. A reference without a digest is refused. The store keys a `git`
+package by its url, rev, patches and recipe, not by where the build came from,
+so a host that built it before CI recorded the digest keeps its copy.
 
 **Builders.** A `git` package the lock has no `oci` artifact for (CI has not
 built it, or nobody runs CI for it) is built instead of failing the apply. A

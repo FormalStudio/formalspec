@@ -137,22 +137,19 @@ fn target<'a>(cx: &'a Cx, p: &'a Pkg) -> Result<Target<'a>> {
         .with_context(|| format!("pkg {}", p.name))?;
     let platform = cx.facts.platform();
     let found = locked.artifacts.get(&platform).or_else(|| locked.artifacts.get("any"));
-    if let Source::Git { url, .. } = &p.source
-        && found.and_then(|a| a.oci.as_deref()).is_none()
-    {
+    if let Source::Git { url, .. } = &p.source {
         let rev = locked.rev.as_deref().with_context(|| format!("pkg {} has no rev in fspec.lock", p.name))?;
-        // The recipe is part of what was built: a changed `build` or image builds anew.
+        // The recipe is part of what was built: a changed `build` or image builds anew. The cache
+        // holds the same build, so a host that compiled it before CI pushed keeps its copy.
         let recipe = serde_json::to_string(&(&p.build, &p.build_flags, &p.source))?;
         let id = format!("{url}@{rev}+{}+{}", locked.patches.as_deref().unwrap_or_default(), archive::hash8(&recipe));
         let version = rev.chars().take(12).collect::<String>();
         let dirname = format!("{}-{}-{version}", archive::hash8(&id), p.name);
-        let artifact = found.unwrap_or(&BUILT);
-        return Ok(Target {
-            locked,
-            version,
-            id,
-            kind: Kind::Archive { origin: Origin::Build { url, rev }, dirname, artifact },
-        });
+        let (origin, artifact) = match found.and_then(|a| a.oci.as_deref().map(|r| (r, a))) {
+            Some((reference, a)) => (Origin::Oci { reference }, a),
+            None => (Origin::Build { url, rev }, found.unwrap_or(&BUILT)),
+        };
+        return Ok(Target { locked, version, id, kind: Kind::Archive { origin, dirname, artifact } });
     }
     let artifact = found
         .with_context(|| format!("pkg {} has no artifact for {platform} in fspec.lock, run fspec update", p.name))?;
