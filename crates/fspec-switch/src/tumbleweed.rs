@@ -12,10 +12,9 @@ use crate::classic::{WORK, s};
 use crate::machine::{ESP_TYPE, Firmware, Machine};
 use crate::{Plan, subvol};
 
-/// The official Tumbleweed container zypper runs from, pinned so the bootstrap does not change
-/// under a locked snapshot.
-pub const TUMBLEWEED_IMAGE: &str =
-    "registry.opensuse.org/opensuse/tumbleweed@sha256:43662f6f1a1ffb2346b800bae8032c8f8aa92b9af97155b6044c2b0754efe80d";
+/// The official Tumbleweed container zypper runs from. Not pinned by digest: the registry drops
+/// old digests within weeks, and the packages come from the locked snapshot's repos, not from it.
+pub const TUMBLEWEED_IMAGE: &str = "registry.opensuse.org/opensuse/tumbleweed:latest";
 
 /// What the root gets beyond the minimal base pattern. Recommends stay out, so firmware comes
 /// from the metapackage rather than from what zypper would match against this machine.

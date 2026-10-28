@@ -1619,7 +1619,8 @@ way, at the snapshot `fspec.lock` pins (`[zypper.<host>]`). From a live
 system, `--device <btrfs partition> --inherit @<root>` names the filesystem
 and the root whose identity it keeps, and an ESP that is not mounted is
 mounted for the run. zypper runs from the official
-`registry.opensuse.org/opensuse/tumbleweed` container, pinned by digest, as
+`registry.opensuse.org/opensuse/tumbleweed:latest` container (the registry drops old digests,
+and the locked snapshot fixes the packages), as
 `zypper --root /mnt --gpg-auto-import-keys install --no-recommends` against
 the mounted subvolume, so Tumbleweed's own rpm writes the rpmdb; the live
 system needs only podman and the network; zypper runs at idle CPU and I/O
