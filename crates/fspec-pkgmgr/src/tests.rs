@@ -374,7 +374,7 @@ fn dnf(name: &str, names: &[&str], mode: &str) -> Desired {
     pkg(name, json!({"kind": "dnf", "names": names}), mode)
 }
 
-const QF: &str = "rpm -q --qf %{VERSION}-%{RELEASE}";
+const QF: &str = "rpm -q --whatprovides --qf %{VERSION}-%{RELEASE}\\n";
 const BATCH: &str = r"rpm -q --qf %{NAME}\t";
 const ALL_AT_3_3: &str = "htop\t3.3-1.fc42\njq\t3.3-1.fc42\nripgrep\t3.3-1.fc42\n";
 
@@ -563,7 +563,7 @@ const FAMS: [Fam; 5] = [
         kind: "dnf",
         install: "dnf install -y --setopt=max_parallel_downloads=10",
         remove: "dnf remove -y",
-        version: "rpm -q --qf %{VERSION}-%{RELEASE}",
+        version: "rpm -q --whatprovides --qf %{VERSION}-%{RELEASE}\\n",
         batch: "rpm -q --qf %{NAME}\\t",
         printed: "3.3-1",
         ext: "rpm",
@@ -603,7 +603,7 @@ const FAMS: [Fam; 5] = [
         kind: "zypper",
         install: "zypper --non-interactive install --auto-agree-with-licenses",
         remove: "zypper --non-interactive remove",
-        version: "rpm -q --qf %{VERSION}-%{RELEASE}",
+        version: "rpm -q --whatprovides --qf %{VERSION}-%{RELEASE}\\n",
         batch: "rpm -q --qf %{NAME}\\t",
         printed: "3.3-1",
         ext: "rpm",
@@ -1170,8 +1170,8 @@ fn a_failed_apply_keeps_the_distro_packages_it_installed() {
 fn a_bang_name_swaps_out_a_conflicting_package_and_a_failed_apply_keeps_the_swap() {
     let w = tumbleweed();
     disable_rolling(&w);
-    w.answer("rpm -q --qf %{VERSION}-%{RELEASE} power-profiles-daemon", 0, "0.30-1.6");
-    w.answer("rpm -q --qf %{VERSION}-%{RELEASE} tuned-ppd", 1, "");
+    w.answer("rpm -q --whatprovides --qf %{VERSION}-%{RELEASE}\\n power-profiles-daemon", 0, "0.30-1.6");
+    w.answer("rpm -q --whatprovides --qf %{VERSION}-%{RELEASE}\\n tuned-ppd", 1, "");
     let want = [
         distro_res(TW, &["tuned-ppd", "!power-profiles-daemon"]),
         pkg("zzz", json!({"kind": "zypper", "names": []}), "pinned"),
@@ -1397,4 +1397,9 @@ fn brew_drift_lists_every_formula_and_cask_once() {
     w.answer("brew list --cask --versions", 0, "ghostty 1.2.0\n");
     assert!(w.plan(Scope::User, &want).unwrap().changes.is_empty());
     assert_eq!(w.take(), ["brew list --versions", "brew list --cask --versions"]);
+}
+
+#[test]
+fn a_capability_two_rpms_provide_reads_the_first() {
+    assert_eq!(crate::family::Family::Zypper.parse_version("pkgconfig(pam)", "1.7.1-1.1\n1.6.0-2.1\n"), "1.7.1-1.1");
 }

@@ -95,7 +95,11 @@ impl Family {
 
     pub fn version(self, name: &str) -> Cmd {
         match self {
-            Family::Dnf | Family::Zypper => Cmd::new("rpm").args(["-q", "--qf", "%{VERSION}-%{RELEASE}"]).arg(name),
+            // A package provides its own name, so this also answers a capability (`pkgconfig(pam)`,
+            // a file path), which plain `rpm -q` reports as not installed.
+            Family::Dnf | Family::Zypper => {
+                Cmd::new("rpm").args(["-q", "--whatprovides", "--qf", r"%{VERSION}-%{RELEASE}\n"]).arg(name)
+            }
             Family::Pacman => Cmd::new("pacman").arg("-Q").arg(name),
             Family::Apt => Cmd::new("dpkg-query").args(["-W", "-f=${Version}"]).arg(name),
             Family::Xbps => Cmd::new("xbps-query").args(["-p", "pkgver"]).arg(name),
@@ -144,7 +148,9 @@ impl Family {
         match self {
             Family::Pacman => out.split_whitespace().nth(1).unwrap_or_default().to_string(),
             Family::Xbps => out.strip_prefix(&format!("{name}-")).unwrap_or(out).to_string(),
-            Family::Dnf | Family::Apt | Family::Moss | Family::Zypper => out.to_string(),
+            // Several packages can provide one capability; the first answers.
+            Family::Dnf | Family::Zypper => out.lines().next().unwrap_or_default().to_string(),
+            Family::Apt | Family::Moss => out.to_string(),
         }
     }
 }
