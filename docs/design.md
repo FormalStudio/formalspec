@@ -934,9 +934,14 @@ enables it at boot, without starting it, so the same apply works inside the chro
 such as display-manager.service may already point at another unit), runit links
 `/etc/sv/gdm` into `/etc/runit/runsvdir/default` (and fails `apply` when the
 package that ships it is missing), OpenRC runs `rc-update add gdm default` and dinit
-`dinitctl enable gdm`. Such a service takes no other field, s6 and launchd refuse
+`dinitctl enable gdm`. On systemd a `.swap`, `.mount`, `.automount`, `.timer`,
+`.path` or `.socket` unit is also started, since activating one never runs a
+daemon by itself: a declared swapfile or disk is up after the apply, not after
+the next reboot. A start that fails is deferred like a declared service's, and
+drift includes such a unit not being active. Such a service takes no other field, s6 and launchd refuse
 it, and drift is the unit no longer being enabled. Removing it disables the unit
-and leaves the distro's files alone. On systemd it may set `user = True` to enable
+(without stopping it, as unmounting a busy mount would fail the apply) and leaves
+the distro's files alone. On systemd it may set `user = True` to enable
 a user unit, and `display_manager = True` marks the login screen: the host then
 boots to `graphical.target` (a distro can default to `multi-user.target`, which
 never starts a display manager wanted by the graphical one), drift includes

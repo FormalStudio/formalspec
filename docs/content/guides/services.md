@@ -199,8 +199,19 @@ host desktop
   2 to add, 0 to change, 0 to remove
 ```
 
-fspec does not start the unit, so a new display manager or sshd takes effect at the next boot,
-and the same apply works inside the root `fspec switch --distro` builds.
+fspec does not start a service, so a new display manager or sshd takes effect at the next boot,
+and the same apply works inside the root `fspec switch --distro` builds. On systemd, a unit that
+only activates something (`.swap`, `.mount`, `.automount`, `.timer`, `.path`, `.socket`) is
+started too, so a declared swapfile or disk is up as soon as the apply finishes:
+
+```starlark
+service("swap-swapfile.swap"),
+service("mnt-games.mount"),
+```
+
+If it fails to start (the disk is missing), the apply defers it and the next apply tries again.
+Removing one disables it but leaves it active until the next boot, since unmounting a busy mount
+would fail the apply.
 
 | Init | Enable | Disable on removal |
 | --- | --- | --- |

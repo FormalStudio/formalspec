@@ -330,11 +330,50 @@ fn a_service_without_exec_enables_the_distro_unit() {
     w.runner.calls.lock().unwrap().clear();
     let timer = resource(json!({"kind": "service", "name": "app.timer", "user": true}));
     apply_scope(&w.cx(Scope::User), backends, &[desired(timer)]).unwrap();
-    assert_eq!(w.runner.lines(), ["systemctl --user enable --force app.timer"]);
+    assert_eq!(w.runner.lines(), ["systemctl --user enable --force app.timer", "systemctl --user start app.timer"]);
 
     let bad = resource(json!({"kind": "service", "name": "gdm", "restart": "always"}));
     let err = SystemdBackend.check(&w.cx(Scope::System), &bad).unwrap_err().to_string();
     assert!(err.contains("takes no restart"), "{err}");
+}
+
+#[test]
+fn a_distro_swap_starts_on_a_running_system_and_retries_until_it_is_active() {
+    let w = World::linux(Init::Systemd);
+    let backends: &[&dyn Backend] = &[&SystemdBackend];
+    let swap = vec![desired(resource(json!({"kind": "service", "name": "swap-swapfile.swap"})))];
+    let cx = || w.cx(Scope::System);
+    let state = || State::load(&w.paths.system_state_dir().join("state.json")).unwrap();
+
+    w.runner.respond(
+        "systemctl start swap-swapfile.swap",
+        Output { status: 1, stderr: "Job failed.\n".into(), ..Default::default() },
+    );
+    apply_scope(&cx(), backends, &swap).unwrap();
+    assert_eq!(
+        w.runner.lines(),
+        [
+            "systemctl enable --force swap-swapfile.swap",
+            "systemctl start swap-swapfile.swap",
+            "systemctl reset-failed swap-swapfile.swap"
+        ]
+    );
+    assert!(state().entries.is_empty(), "a unit that did not start is tried again");
+
+    w.runner.calls.lock().unwrap().clear();
+    w.runner.responses.lock().unwrap().clear();
+    apply_scope(&cx(), backends, &swap).unwrap();
+    assert_eq!(w.runner.lines(), ["systemctl enable --force swap-swapfile.swap", "systemctl start swap-swapfile.swap"]);
+
+    // Enabled by an earlier engine but never started: drift, and apply starts it.
+    w.runner.respond("systemctl is-enabled", Output { stdout: "enabled\n".into(), ..Default::default() });
+    w.runner.respond("systemctl is-active", Output { stdout: "inactive\n".into(), ..Default::default() });
+    let p = plan_scope(&cx(), backends, &swap, &state()).unwrap();
+    assert_eq!(p.changes[0].action, Action::Drift { notes: vec!["swap-swapfile.swap is inactive".into()] });
+
+    w.runner.calls.lock().unwrap().clear();
+    apply_scope(&cx(), backends, &[]).unwrap();
+    assert_eq!(w.runner.lines(), ["systemctl disable swap-swapfile.swap"], "removal leaves it mounted");
 }
 
 #[test]

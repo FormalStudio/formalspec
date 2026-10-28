@@ -1,6 +1,9 @@
-//! `service("gdm")` without `exec`: a unit the distro ships, which fspec only enables at boot. It
-//! is not started, so enabling a display manager or sshd on a running system takes effect at the
-//! next boot, and the same apply works inside a chroot. On systemd, `user = True` enables a user
+//! `service("gdm")` without `exec`: a unit the distro ships, which fspec only enables at boot. A
+//! service is not started, so enabling a display manager or sshd on a running system takes effect
+//! at the next boot, and the same apply works inside a chroot. On systemd, a swap, mount,
+//! automount, timer, path or socket unit is also started, since activating one never brings up a
+//! daemon by itself; removing one only disables it, as unmounting a busy mount would fail the
+//! apply. On systemd, `user = True` enables a user
 //! unit, such as one an app's own installer would write. `display_manager = True` also makes the
 //! host boot to graphical.target, since a distro's default can be multi-user.target, under which
 //! a login screen wanted by graphical.target never starts.
@@ -21,6 +24,14 @@ const RUNLEVEL: &str = "/etc/runit/runsvdir/default";
 /// The service when it names a distro unit rather than declaring its own.
 pub(crate) fn of(s: &Service) -> Option<&Service> {
     s.exec.is_none().then_some(s)
+}
+
+/// Unit types systemd activates without running a daemon, so apply starts them as well as
+/// enabling them.
+const STARTED: [&str; 6] = [".swap", ".mount", ".automount", ".timer", ".path", ".socket"];
+
+fn starts(s: &Service) -> bool {
+    STARTED.iter().any(|t| s.name.ends_with(t))
 }
 
 pub(crate) fn check(init: Init, s: &Service) -> Result<()> {
@@ -76,6 +87,12 @@ pub(crate) fn drift(cx: &Cx, init: Init, s: &Service) -> Result<Vec<String>> {
         _ => true,
     };
     let mut notes = if enabled { vec![] } else { vec![format!("{} is not enabled", s.name)] };
+    if init == Init::Systemd && starts(s) {
+        let out = cx.runner.run(&systemctl("is-active", s))?.stdout;
+        if !matches!(out.trim(), "" | "active" | "activating" | "reloading") {
+            notes.push(format!("{} is {}", s.name, out.trim()));
+        }
+    }
     if init == Init::Systemd && s.display_manager {
         let default = cx.runner.run(&default_target("get-default"))?.stdout;
         if !matches!(default.trim(), "" | GRAPHICAL) {
@@ -117,6 +134,21 @@ fn own_default(cx: &Cx, journal: &mut Journal, op: &Op, s: &Service) -> Result<M
     Ok(rec)
 }
 
+/// A unit that is enabled but will not start (a missing disk behind a mount) is deferred like a
+/// declared service that fails to start, so the next apply tries again.
+fn start(cx: &Cx, s: &Service) -> Result<Map<String, Value>> {
+    let start = systemctl("start", s);
+    let out = cx.runner.run(&start)?;
+    if out.status == 0 {
+        return Ok(Map::new());
+    }
+    let why = out.stderr.lines().chain(out.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("");
+    let journalctl = if s.user { "journalctl --user -u" } else { "journalctl -u" };
+    // A failed mount or swap counts towards the start limit, which would refuse the next try.
+    cx.runner.run(&systemctl("reset-failed", s))?;
+    Ok(fspec_core::apply::deferred(format!("`{start}` failed: {}; see `{journalctl} {}`", why.trim(), s.name)))
+}
+
 pub(crate) fn commit(cx: &Cx, init: Init, journal: &mut Journal, op: &Op, s: &Service) -> Result<Map<String, Value>> {
     let removal = op.is_removal();
     match init {
@@ -127,7 +159,11 @@ pub(crate) fn commit(cx: &Cx, init: Init, journal: &mut Journal, op: &Op, s: &Se
             let (verb, undo) = if removal { ("disable", "enable --force") } else { ("enable --force", "disable") };
             journal.record(Undo::Run { cmd: systemctl(undo, s) })?;
             cx.runner.check(&systemctl(verb, s))?;
-            return own_default(cx, journal, op, s);
+            let mut rec = own_default(cx, journal, op, s)?;
+            if !removal && starts(s) {
+                rec.extend(start(cx, s)?);
+            }
+            return Ok(rec);
         }
         Init::Openrc => {
             let (verb, undo) = if removal { ("del", "add") } else { ("add", "del") };

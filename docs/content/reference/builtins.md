@@ -273,7 +273,7 @@ A service, rendered for the host's init system. See [Services and timers](../gui
 | Argument | Type | Default | Meaning |
 | --- | --- | --- | --- |
 | `name` | string | required | Letters, digits and `_ . - @` |
-| `exec` | string | none | The command. Without it, the service is a unit the distro ships, which fspec only enables |
+| `exec` | string | none | The command. Without it, the service is a unit the distro ships, which fspec enables, and on systemd also starts when it is a `.swap`, `.mount`, `.automount`, `.timer`, `.path` or `.socket` |
 | `user` | bool | `False` | A user service instead of a system one |
 | `restart` | string | `"no"` | `"no"`, `"on_failure"` or `"always"` |
 | `after` | list of strings | `[]` | `"network"`, another service's name, or (systemd) a literal `*.target` |
