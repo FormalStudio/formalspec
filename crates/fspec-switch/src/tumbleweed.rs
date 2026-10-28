@@ -18,7 +18,7 @@ pub const TUMBLEWEED_IMAGE: &str = "registry.opensuse.org/opensuse/tumbleweed:la
 
 /// What the root gets beyond the minimal base pattern. Recommends stay out, so firmware comes
 /// from the metapackage rather than from what zypper would match against this machine.
-const PACKAGES: [&str; 21] = [
+const PACKAGES: [&str; 22] = [
     "patterns-base-minimal_base",
     // The pattern leaves zypper itself to recommends.
     "zypper",
@@ -43,6 +43,8 @@ const PACKAGES: [&str; 21] = [
     "tar",
     // A spec's /etc/localtime link points into it before any package is applied.
     "timezone",
+    // `git(...)` sources, built here or for another host, are checked out with it.
+    "git-core",
 ];
 
 /// Runs in the Tumbleweed container with the new root at `/mnt`: `$1` is the snapshot, `$2` the

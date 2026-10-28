@@ -175,7 +175,7 @@ fn switching_on_the_default_layout_builds_a_uki_root() {
             < at("test -e /r/run/fspec/switch/top/@fedora")
     );
     assert!(at("btrfs subvolume create /r/run/fspec/switch/top/@fedora") < at("dnf --installroot"));
-    assert!(lines[at("dnf --installroot")].ends_with("kernel systemd-ukify systemd-boot-unsigned"));
+    assert!(lines[at("dnf --installroot")].ends_with("kernel git-core systemd-ukify systemd-boot-unsigned"));
     assert!(at("tee /r/run/fspec/switch/fedora/etc/kernel/install.conf") < at("mount --rbind /r/efi"));
     assert!(
         at("chroot /r/run/fspec/switch/fedora /usr/local/bin/fspec")
@@ -216,7 +216,7 @@ fn switching_on_the_bios_layout_puts_the_kernels_in_the_shared_partition() {
     let lines = plan.lines();
     let at = |p: &str| position(&lines, p);
     assert!(at("mount --bind /r/var/lib/fspec/boot/arch /r/run/fspec/switch/arch/boot") < at("pacstrap"));
-    assert!(lines[at("pacstrap")].ends_with("btrfs-progs grub"));
+    assert!(lines[at("pacstrap")].ends_with("btrfs-progs git grub"));
     assert!(stdin_of(&plan, "tee /r/run/fspec/switch/arch/etc/fstab").ends_with(
         "UUID=boot-uuid /var/lib/fspec/boot ext4 defaults 0 2\n/var/lib/fspec/boot/arch /boot none bind 0 0\n"
     ));
@@ -237,7 +237,7 @@ fn switching_on_zfs_makes_a_boot_environment() {
         at("zfs list -H -o name rpool/ROOT/void") < at("zfs create -o canmount=noauto -o mountpoint=/ rpool/ROOT/void")
     );
     assert!(at("mount -t zfs -o zfsutil rpool/ROOT/void /r/run/fspec/switch/void") < at("xbps-install"));
-    assert!(lines[at("xbps-install")].ends_with("btrfs-progs zfs linux-headers"));
+    assert!(lines[at("xbps-install")].ends_with("btrfs-progs git zfs linux-headers"));
     assert!(lines.contains(&"cp /r/etc/hostid /r/run/fspec/switch/void/etc/hostid".to_string()));
     assert!(lines.contains(&"zfs set org.zfsbootmenu:commandline= rpool/ROOT/void".to_string()));
     assert_eq!(stdin_of(&plan, "tee /r/run/fspec/switch/void/etc/fstab"), "UUID=EEEE-0001 /efi vfat umask=0077 0 2\n");
@@ -281,7 +281,7 @@ fn the_kernel_command_line_keeps_the_machine_options_and_adds_luks() {
     let lines = plan.lines();
     let at = |p: &str| lines.iter().position(|l| l.contains(p)).unwrap_or_else(|| panic!("no `{p}`"));
     assert!(
-        lines[at("apt-get full-upgrade")].contains("systemd-ukify systemd-boot-efi cryptsetup cryptsetup-initramfs")
+        lines[at("apt-get full-upgrade")].contains("systemd-ukify systemd-boot-efi cryptsetup cryptsetup-initramfs git")
     );
     // The apply installs from the upgraded lists, so nothing it installs moves past what it records.
     assert!(at("apt-get full-upgrade") < at(" apply --local") && at(" apply --local") < at("update-initramfs -c -k"));
@@ -1324,7 +1324,7 @@ fn switching_to_aerynos_lets_moss_sync_boot_with_the_subvolume_in_the_options() 
     assert!(at(&format!("mount --rbind /r/efi {root}/efi")) < at("sh -c 'command -v moss"));
     assert_eq!(lines.iter().filter(|l| l.starts_with("mount --rbind /r/efi")).count(), 1);
     let install = &lines[at(&format!("/r/efi/loader/loader.conf -D {root} -y install pkgset-aeryn-base"))];
-    assert!(install.ends_with("linux-firmware btrfs-progs"), "{install}");
+    assert!(install.ends_with("linux-firmware btrfs-progs git"), "{install}");
     assert!(
         stdin_of(&plan, &format!("tee {root}/etc/kernel/cmdline.d/fspec.cmdline"))
             .starts_with("root=UUID=1111-aaaa rootflags=subvol=@aerynos rw console=ttyS0,115200")

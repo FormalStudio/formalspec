@@ -1451,7 +1451,9 @@ root and its kernel command line. Then it:
    `xbps-install -r` (answering its repository key prompt). dnf downloads ten
    packages at a time (`max_parallel_downloads=10`, also on every apply's
    `dnf install`). The bootstrap includes the recipe's boot packages for the
-   layout: UKI tooling, GRUB, `cryptsetup` or ZFS. Debian and Ubuntu get theirs from apt in the new
+   layout: UKI tooling, GRUB, `cryptsetup` or ZFS, and git on every distro, since
+   fspec checks out `git(...)` sources with it, for itself and as a builder.
+   Debian and Ubuntu get theirs from apt in the new
    root right before the apply, along with the `-updates` and `-security`
    pockets and a `full-upgrade`, so the apply installs current versions once
    and records the versions that stay installed.
@@ -1637,7 +1639,8 @@ priority. The root gets the same
 base pattern with zypper itself (the pattern leaves it to recommends, which
 the bootstrap skips), `kernel-default`, `kernel-firmware-all`, NetworkManager,
 openssh, sudo, the `wheel` group, tailscale, power-profiles-daemon, snapper
-with its zypp plugin, zram-generator, tar for the spec a remote apply ships, and timezone. `fspec-power-saver.service` picks
+with its zypp plugin, zram-generator, tar for the spec a remote apply ships, timezone, and git-core
+for `git(...)` builds. `fspec-power-saver.service` picks
 the power-saver profile on the first boot.
 Swap is zram, not the other root's swapfile, which a Tumbleweed boot would
 overwrite while that root is hibernated. `snapper create-config /` puts

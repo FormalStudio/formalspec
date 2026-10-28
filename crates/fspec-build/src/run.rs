@@ -60,7 +60,14 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     fs::create_dir_all(&dirs.cache)?;
     let src = dirs.src.display().to_string();
     if !dirs.src.join(".git").is_dir() {
-        runner.check(&Cmd::new("git").args(["init", "-q", &src]))?;
+        runner.check(&Cmd::new("git").args(["init", "-q", &src])).map_err(|e| {
+            match e.root_cause().downcast_ref::<std::io::Error>() {
+                Some(io) if io.kind() == std::io::ErrorKind::NotFound => {
+                    anyhow::anyhow!("git is not installed; building `git(...)` packages needs it")
+                }
+                _ => e,
+            }
+        })?;
         runner.check(&Cmd::new("git").args(["-C", &src, "remote", "add", "origin", job.url]))?;
     }
     // A forced checkout and a clean drop the last build's patches and untracked files; ignored

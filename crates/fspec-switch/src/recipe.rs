@@ -39,7 +39,9 @@ const AERYNOS_REPO: &str = "https://cdn.aerynos.dev/stream/unstable/x86_64/stone
 
 /// AerynOS's own metapackage for a bootable base, a kernel with firmware, and what the layout
 /// needs. `systemd` carries systemd-boot, and the kernel package a prebuilt initramfs.
-const AERYNOS_BASE: [&str; 4] = ["pkgset-aeryn-base", "linux-stable", "linux-firmware", "btrfs-progs"];
+// Every base below carries git: fspec checks out `git(...)` sources with it, for its own builds and
+// as a builder for other hosts.
+const AERYNOS_BASE: [&str; 5] = ["pkgset-aeryn-base", "linux-stable", "linux-firmware", "btrfs-progs", "git"];
 
 /// The file the distro's kernel tooling reads the kernel options from. blsforme appends
 /// `/etc/kernel/cmdline.d` to the root it detects, and writes `rootfsflags=`, which neither dracut
@@ -115,6 +117,7 @@ fn apt_packages(distro: &str, arch: &str, boot: Boot, luks: bool) -> Vec<String>
     if luks {
         pkgs.extend(["cryptsetup".into(), "cryptsetup-initramfs".into()]);
     }
+    pkgs.push("git".into());
     pkgs
 }
 
@@ -152,14 +155,23 @@ pub fn bootstrap(t: &Target, boot: Boot, luks: bool, root: &str, esp: &str) -> R
                     .arg(format!("--setopt={id}.gpgcheck=1"))
                     .arg(format!("--setopt={id}.gpgkey={key}"));
             }
-            let base =
-                ["systemd", "dbus-broker", "dnf", "fedora-release", "fedora-repos", "passwd", "btrfs-progs", "kernel"];
+            let base = [
+                "systemd",
+                "dbus-broker",
+                "dnf",
+                "fedora-release",
+                "fedora-repos",
+                "passwd",
+                "btrfs-progs",
+                "kernel",
+                "git-core",
+            ];
             vec![dnf.arg("install").args(base).args(extra.iter().copied())]
         }
         "arch" => {
             vec![
                 Cmd::new("pacstrap")
-                    .args(["-K", root, "base", "linux", "linux-firmware", "btrfs-progs"])
+                    .args(["-K", root, "base", "linux", "linux-firmware", "btrfs-progs", "git"])
                     .args(extra.iter().copied()),
             ]
         }
@@ -183,7 +195,7 @@ pub fn bootstrap(t: &Target, boot: Boot, luks: bool, root: &str, esp: &str) -> R
         "void" => vec![
             Cmd::new("xbps-install")
                 .args(["-S", "-y", "-r", root, "-R", "https://repo-default.voidlinux.org/current"])
-                .args(["base-system", "linux", "btrfs-progs"])
+                .args(["base-system", "linux", "btrfs-progs", "git"])
                 .args(extra.iter().copied())
                 .env("XBPS_ARCH", arch)
                 // A fresh root has no repository key yet, and `-y` does not answer the import prompt.
