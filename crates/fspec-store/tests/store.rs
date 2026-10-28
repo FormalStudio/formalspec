@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use fspec_core::apply::{apply_scope, desired_from_generation, plan_scope, state_dir};
 use fspec_core::fetch::MapFetch;
 use fspec_core::lock::{Artifact, LockedPkg};
+use fspec_core::resource::Resource;
 use fspec_core::runner::{Cmd, Output, RecordingRunner, Runner};
 use fspec_core::{Backend, Cx, Desired, Facts, Lock, Paths, Plan, Scope, State};
 use fspec_store::{StoreBackend, lock_from_state, sri_sha256};
@@ -846,19 +847,31 @@ fn git_pkg() -> Desired {
     pkg("tool", json!({"kind": "git", "url": "https://example/tool", "rev": "main"}), "pinned")
 }
 
-fn lock_git(w: &mut World, reference: &str) {
+const GIT_REV: &str = "4f1c2a9d3e5b7a8c9d0e1f2a3b4c5d6e7f8a9b0c";
+
+/// The build key CI records for `desired` at [`GIT_REV`].
+fn build_key(desired: &Desired) -> String {
+    let Resource::Pkg(p) = &desired.resource else { unreachable!() };
+    fspec_build::key(&fspec_build::identity(p, "https://example/tool", GIT_REV, None).unwrap())
+}
+
+fn lock_git_for(w: &mut World, reference: &str, build: String) {
     w.lock.upsert(LockedPkg {
         name: "tool".into(),
         source: "git:https://example/tool@main".into(),
         version: None,
-        rev: Some("4f1c2a9d3e5b7a8c9d0e1f2a3b4c5d6e7f8a9b0c".into()),
+        rev: Some(GIT_REV.into()),
         patches: None,
         parts: Default::default(),
         artifacts: BTreeMap::from([(
             PLATFORM.to_string(),
-            Artifact { oci: Some(reference.into()), ..Default::default() },
+            Artifact { oci: Some(reference.into()), build: Some(build), ..Default::default() },
         )]),
     });
+}
+
+fn lock_git(w: &mut World, reference: &str) {
+    lock_git_for(w, reference, build_key(&git_pkg()));
 }
 
 #[test]
@@ -926,6 +939,20 @@ impl Runner for BuildHere {
         let out = std::process::Command::new("sh").args(&cmd.args).envs(cmd.env.iter().cloned()).output()?;
         Ok(Output { status: out.status.code().unwrap_or(1), ..Output::default() })
     }
+}
+
+#[test]
+fn a_ci_artifact_of_another_recipe_is_built_on_the_host_instead() {
+    let mut w = World::new();
+    let script = r#"mkdir -p "$FSPEC_OUT/bin" && printf '#!/bin/sh\necho new recipe\n' > "$FSPEC_OUT/bin/tool" && chmod +x "$FSPEC_OUT/bin/tool""#;
+    let resource = serde_json::from_value(json!({"kind": "pkg", "name": "tool", "mode": "pinned",
+        "source": {"kind": "git", "url": "https://example/tool", "rev": "main"}, "build": ["sh", "-c", script]}));
+    let desired = Desired { resource: resource.unwrap(), owner: None };
+    lock_git_for(&mut w, REF, build_key(&git_pkg()));
+    assert_ne!(build_key(&git_pkg()), build_key(&desired));
+    w.runner = Box::new(BuildHere);
+    w.apply(&[desired]).unwrap();
+    assert_eq!(w.run("tool"), "new recipe");
 }
 
 #[test]

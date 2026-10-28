@@ -269,7 +269,10 @@ change: GitHub's Ubuntu runners have podman.
 - `fspec build --pkg <name> --platform <p> --out <dir>` builds on this
   machine, which must be platform `<p>`. It writes
   `<dir>/<name>-<p>.tar.zst` with the executables at the top (sorted names,
-  zeroed owners and times) and `<dir>/tag` holding `<rev>-<p>`. With
+  zeroed owners and times) and `<dir>/tag` holding `<rev>-<key>-<p>`, where
+  `<key>` is eight hex digits over the commit, the patches and the recipe
+  (`build`, `build_flags`, `image`, `deps`). `--tag` prints that tag and
+  builds nothing. With
   `--host <h>` it builds on that host's builders first (below). When one
   name is `git(...)` on one host and another source elsewhere, it builds the
   git one, preferring a host of platform `<p>`.
@@ -277,23 +280,26 @@ change: GitHub's Ubuntu runners have podman.
   spec: a matrix with one job per `git(...)` package and platform that a host
   declares (`ubuntu-24.04` for x86_64-linux, `ubuntu-24.04-arm` for
   aarch64-linux, `macos-26` for aarch64-darwin). Each job installs fspec and
-  oras, runs `fspec build` and pushes with `oras push`. A `record` job then
+  oras, skips a package whose tag the registry already has, else runs
+  `fspec build` and pushes with `oras push`. A `record` job then
   runs `fspec update --cache` on the branch and commits the lock with
   GITHUB_TOKEN, whose push starts no workflow; pull requests skip it.
   Regenerate it when the
-  set of packages or platforms changes; the lock and `patches/` changes on the
-  branch checked out when it was written (main when HEAD is detached) trigger
+  set of packages or platforms changes; the lock, `patches/` and `.star`
+  changes on the branch checked out when it was written (main when HEAD is detached) trigger
   it, so a spec kept on its own branch rebuilds from that branch.
 - `fspec update --cache [--registry r]` resolves no versions, only
-  `<registry>/<name>:<rev>-<platform>` with
+  the tag of each package's current build,
+  `<registry>/<name>:<rev>-<key>-<platform>`, with
   `oras manifest fetch --descriptor` and records
-  `<platform> = { oci = "<registry>/<name>@sha256:…" }`. The registry defaults
-  to `ghcr.io/<origin owner>/fspec-cache`. A plain `fspec update` keeps the
-  recorded digests while the commit and the patches are unchanged.
+  `<platform> = { oci = "<registry>/<name>@sha256:…", build = "<key>" }`. The
+  registry defaults to `ghcr.io/<origin owner>/fspec-cache`. A plain
+  `fspec update` keeps the recorded digests while the commit and the patches
+  are unchanged.
 
 **Registry layout.** One repository per package,
-`ghcr.io/<owner>/fspec-cache/<name>`, one tag per commit and platform
-(`<rev>-<platform>`), each a one-layer artifact whose layer is the `.tar.zst`
+`ghcr.io/<owner>/fspec-cache/<name>`, one tag per build and platform
+(`<rev>-<key>-<platform>`), each a one-layer artifact whose layer is the `.tar.zst`
 (media type `application/vnd.fspec.package.v1.tar+zstd`, file name as its
 title). The lock pins the manifest digest.
 
@@ -303,9 +309,12 @@ PATH), the layer file is hashed against the layer digest in
 `oras manifest fetch <ref>`, unpacked, and installed like any other store
 package. A reference without a digest is refused. The store keys a `git`
 package by its url, rev, patches and recipe, not by where the build came from,
-so a host that built it before CI recorded the digest keeps its copy.
+so a host that built it before CI recorded the digest keeps its copy. The host
+takes `oci` only when the artifact's `build` is its own key for the package: a
+recipe changed after CI built it is a cache miss, built on the builders or the
+host until CI pushes and records the new build.
 
-**Builders.** A `git` package the lock has no `oci` artifact for (CI has not
+**Builders.** A `git` package the lock has no `oci` artifact of its build for (CI has not
 built it, or nobody runs CI for it) is built instead of failing the apply. A
 host names the machines that build for it:
 
@@ -365,7 +374,7 @@ name = "librepods"
 source = "git:https://github.com/…/librepods"
 rev = "4f1c2a9…"
 patches = "sha256-…"
-x86_64-linux = { oci = "ghcr.io/formalstudio/fspec-cache/librepods@sha256:…" }
+x86_64-linux = { oci = "ghcr.io/formalstudio/fspec-cache/librepods@sha256:…", build = "1f2e3d4c" }
 
 [system.g815]
 image = "ghcr.io/ublue-os/bazzite-nvidia@sha256:…"

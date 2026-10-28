@@ -106,6 +106,10 @@ pub struct Artifact {
     /// `registry/repo@sha256:…` for CI-built artifacts.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub oci: Option<String>,
+    /// The build key of a CI-built `git(...)` artifact: eight hex digits over its commit, patches
+    /// and recipe. A host installs `oci` only while its own key for the package is the same.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
     /// Flatpak commit, git rev, or another source-specific exact id.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub commit: Option<String>,

@@ -158,7 +158,7 @@ See [Sync between hosts](../guides/sync.md).
 
 | Command | Does |
 | --- | --- |
-| `fspec build --pkg <p> --platform <t> --out <dir> [--host <h>]` | Builds a `git(...)` package at its locked commit into `<dir>/<p>-<t>.tar.zst`. `<t>` must be this machine's platform. With `--host`, tries that host's builders first |
+| `fspec build --pkg <p> --platform <t> --out <dir> [--host <h>] [--tag]` | Builds a `git(...)` package at its locked commit into `<dir>/<p>-<t>.tar.zst` and writes its registry tag, `<rev>-<key>-<t>`, to `<dir>/tag`. `<t>` must be this machine's platform. With `--host`, tries that host's builders first. `--tag` prints the tag and builds nothing |
 | `fspec ci packages` | Writes `.github/workflows/fspec-packages.yml`, which builds every `git(...)` package per platform and pushes it to the OCI cache |
 | `fspec ci init [--registry <r>]` | Writes `.github/workflows/fspec-images.yml`, which builds and pushes every image host's bootc image |
 | `fspec image containerfile [--host <h>]` | Prints the Containerfile CI builds for an image host |

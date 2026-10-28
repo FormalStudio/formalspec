@@ -43,7 +43,10 @@ fn workflow_golden() {
     assert_eq!(workflow(&jobs, "spec.star", "main").unwrap(), expected);
     let nested = workflow(&jobs, "examples/kyan/spec.star", "formalspec").unwrap();
     assert!(nested.contains("branches: [formalspec]"), "{nested}");
-    assert!(nested.contains(r#"paths: ["examples/kyan/fspec.lock", "examples/kyan/patches/**"]"#), "{nested}");
+    assert!(
+        nested.contains(r#"paths: ["examples/kyan/fspec.lock", "examples/kyan/patches/**", "examples/kyan/**.star"]"#),
+        "{nested}"
+    );
     assert!(nested.contains("fspec --spec examples/kyan/spec.star build --pkg"), "{nested}");
 }
 

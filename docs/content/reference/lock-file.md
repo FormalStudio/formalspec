@@ -44,6 +44,7 @@ Each artifact has some of these keys:
 | `url` | Where to download it |
 | `hash` | `sha256-` or `sha512-` SRI hash, checked before anything is unpacked |
 | `oci` | `registry/repo@sha256:...` for a CI-built package |
+| `build` | The build key of a CI-built package: eight hex digits over its commit, patches and recipe. A host installs `oci` only when it matches its own |
 | `commit` | A Flatpak commit or another exact id |
 | `bins` | Executables inside the artifact, relative to its root. `<command>=<path>` names a command differently |
 | `requirements` | For `pypi(...)`: the hashed requirement lines uv compiled |
@@ -123,7 +124,7 @@ pacman = "gcc"
 | --- | --- |
 | `fspec update` | Every package, every `gh:` load, every Tumbleweed snapshot |
 | `fspec update <pkg>...` | Only those packages. Loads stay at their commit |
-| `fspec update --cache` | Only the `oci` digests of CI-built packages |
+| `fspec update --cache` | Only the `oci` digests and `build` keys of CI-built packages |
 | `fspec update --images` | Only the `[system.<host>]` image digests |
 
 Resolvers read GitHub's API with `GITHUB_TOKEN`, or with what `gh auth token` prints. Without a

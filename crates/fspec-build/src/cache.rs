@@ -4,7 +4,7 @@ use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use fspec_core::lock::Lock;
-use fspec_core::resource::{Host, Resource, Source};
+use fspec_core::resource::{Host, Pkg, Resource, Source};
 use fspec_core::runner::{Cmd, Runner};
 
 use crate::ci::jobs;
@@ -27,9 +27,10 @@ pub fn registry(runner: &dyn Runner, spec_dir: &Path, registry: Option<&str>) ->
     }
 }
 
-/// For each locked git package and each platform a host declares, resolve the pushed tag
-/// `<rev>-<platform>` to a digest and store `<registry>/<name>@<digest>` as the artifact's `oci`.
-/// Returns one line per recorded digest; a tag CI has not pushed yet goes to the error list.
+/// For each locked git package and each platform a host declares, resolve the pushed tag of its
+/// current build ([`crate::tag`]) to a digest and store `<registry>/<name>@<digest>` as the
+/// artifact's `oci`, with the build key as its `build`. Returns one line per recorded digest; a
+/// tag CI has not pushed yet goes to the error list and leaves the artifact as it was.
 pub fn record(
     lock: &mut Lock,
     hosts: &[Host],
@@ -38,13 +39,20 @@ pub fn record(
 ) -> Result<(Vec<String>, Vec<String>)> {
     let (mut lines, mut errors) = (Vec::new(), Vec::new());
     for (name, platform) in jobs(hosts) {
-        let source = git_source(hosts, &name);
-        let Some(rev) = lock.pkg(&name, &source).and_then(|p| p.rev.clone()) else {
+        let Some(pkg) = git_pkg(hosts, &name) else { continue };
+        let Source::Git { url, .. } = &pkg.source else { continue };
+        let source = pkg.source.to_string();
+        let Some(locked) = lock.pkg(&name, &source) else {
             errors.push(format!("{name}: not in fspec.lock, run fspec update"));
             continue;
         };
+        let Some(rev) = locked.rev.clone() else {
+            errors.push(format!("{name}: no rev in fspec.lock, run fspec update"));
+            continue;
+        };
+        let identity = crate::identity(pkg, url, &rev, locked.patches.as_deref())?;
         let repo = format!("{registry}/{name}");
-        let tagged = format!("{repo}:{rev}-{platform}");
+        let tagged = format!("{repo}:{}", crate::tag(&rev, &identity, &platform));
         let described = runner
             .check(&Cmd::new("oras").args(["manifest", "fetch", "--descriptor", &tagged]))
             .and_then(|o| digest(&o.stdout).with_context(|| format!("reading the descriptor of {tagged}")));
@@ -52,7 +60,9 @@ pub fn record(
             Ok(digest) => {
                 let locked = lock.pkg(&name, &source).context("package vanished")?.clone();
                 let mut locked = locked;
-                locked.artifacts.entry(platform.clone()).or_default().oci = Some(format!("{repo}@{digest}"));
+                let artifact = locked.artifacts.entry(platform.clone()).or_default();
+                artifact.oci = Some(format!("{repo}@{digest}"));
+                artifact.build = Some(crate::key(&identity));
                 lock.upsert(locked);
                 lines.push(format!("{name} {platform} {digest}"));
             }
@@ -74,14 +84,10 @@ fn digest(descriptor: &str) -> Result<String> {
 #[cfg(test)]
 mod tests;
 
-/// The source of the `git(...)` package `name`, as the lock keys it.
-fn git_source(hosts: &[Host], name: &str) -> String {
-    hosts
-        .iter()
-        .flat_map(|h| &h.resources)
-        .find_map(|r| match r {
-            Resource::Pkg(p) if p.name == name && matches!(p.source, Source::Git { .. }) => Some(p.source.to_string()),
-            _ => None,
-        })
-        .unwrap_or_default()
+/// The first host's `git(...)` package `name`; its source is the lock's key.
+fn git_pkg<'a>(hosts: &'a [Host], name: &str) -> Option<&'a Pkg> {
+    hosts.iter().flat_map(|h| &h.resources).find_map(|r| match r {
+        Resource::Pkg(p) if p.name == name && matches!(p.source, Source::Git { .. }) => Some(p),
+        _ => None,
+    })
 }

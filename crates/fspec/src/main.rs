@@ -110,6 +110,9 @@ enum Command {
         /// Build on this host's builders, falling back to this machine.
         #[arg(long, conflicts_with = "job")]
         host: Option<String>,
+        /// Print the registry tag the build would push and build nothing.
+        #[arg(long, conflicts_with = "job")]
+        tag: bool,
     },
     /// Generate CI that builds image hosts and packages.
     Ci {
@@ -563,7 +566,7 @@ fn main() -> Result<()> {
             println!("{}", fspec_build::build(&LiveRunner, &job)?.archive.display());
             Ok(())
         }
-        Command::Build { pkg, platform, out, host, .. } => {
+        Command::Build { pkg, platform, out, host, tag, .. } => {
             let pkg = pkg.as_ref().context("--pkg is required")?;
             let spec = fspec_eval::evaluate(&spec_path)?;
             let builders = match host {
@@ -606,6 +609,10 @@ fn main() -> Result<()> {
             let rev = locked.rev.as_deref().with_context(|| format!("pkg {} has no rev in fspec.lock", pkg.name))?;
             let cache = fspec_build::cache_root()?;
             let job = fspec_build::Job { pkg, url, rev, platform, spec_dir: &spec_dir, out, cache: &cache };
+            if *tag {
+                println!("{}", fspec_build::job_tag(&job)?);
+                return Ok(());
+            }
             println!("{}", fspec_build::builders::build_anywhere(&LiveRunner, &builders, &job)?.display());
             Ok(())
         }

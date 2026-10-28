@@ -104,10 +104,11 @@ fn cargo_build_runs_the_exact_sequence_and_packs_executables_at_the_top() {
     assert!(calls[7].ends_with("--features pipewire"));
     assert_eq!(calls.len(), 8);
 
-    assert_eq!(built.tag, "abc123-x86_64-linux");
+    assert!(built.tag.starts_with("abc123-") && built.tag.ends_with("-x86_64-linux"), "{}", built.tag);
+    assert_eq!(built.tag, job_tag(&job(&p, spec.path(), out.path())).unwrap());
     assert_eq!(built.archive, out.path().join("tool-x86_64-linux.tar.zst"));
     assert_eq!(names(&built.archive), ["tool"]);
-    assert_eq!(fs::read_to_string(out.path().join("tag")).unwrap(), "abc123-x86_64-linux");
+    assert_eq!(fs::read_to_string(out.path().join("tag")).unwrap(), built.tag);
 }
 
 #[test]

@@ -200,7 +200,9 @@ fspec build --pkg hyperfine --platform aarch64-darwin --out out
 ```
 
 It prints the archive's path, `out/hyperfine-aarch64-darwin.tar.zst`, and writes `out/tag` with
-`<rev>-<platform>`. The archive has the executables at the top, with sorted names and zeroed
+`<rev>-<key>-<platform>`. The key is eight hex digits over the commit, the patches and the recipe
+(`build`, `build_flags`, `image`, `deps`), so a changed recipe gets a tag of its own. `--tag`
+prints the tag and builds nothing. The archive has the executables at the top, with sorted names and zeroed
 owners and times. `--platform` must be this machine's platform. `--host laptop` builds on that
 host's builders first.
 
@@ -266,8 +268,9 @@ Prerequisites:
 
    It writes `.github/workflows/fspec-packages.yml` at the repository root: a matrix with one job
    per `git(...)` package and platform that a host declares. Each job installs fspec and oras,
-   runs `fspec build` and pushes the archive with `oras push`. It runs when `fspec.lock` or
-   `patches/` changes on the branch you ran it from (`main` when HEAD is detached), so a spec kept
+   skips the package when the registry already has its tag, else runs `fspec build` and pushes
+   the archive with `oras push`. It runs when `fspec.lock`, `patches/` or a `.star` file changes
+   on the branch you ran it from (`main` when HEAD is detached), so a spec kept
    on a branch of its own, such as a dotfiles repo's `formalspec` branch, rebuilds from that branch.
 
    | Platform | Runner |
@@ -278,12 +281,14 @@ Prerequisites:
 
 2. Commit and push the workflow. Once the builds finish, its `record` job runs
    `fspec update --cache` and commits the lock to the same branch. For each git package and
-   platform that reads `<registry>/<name>:<rev>-<platform>` with `oras manifest fetch --descriptor`
-   and records the digest, resolving nothing else:
+   platform that reads the tag of its current build, `<registry>/<name>:<rev>-<key>-<platform>`,
+   with `oras manifest fetch --descriptor` and records the digest and the key, resolving nothing
+   else:
 
    ```toml
    [pkg.x86_64-linux]
    oci = "ghcr.io/alex/fspec-cache/hyperfine@sha256:..."
+   build = "1f2e3d4c"
    ```
 
    A build that failed leaves its entry without a digest; the others are still recorded.
@@ -298,7 +303,9 @@ fspec update --cache --registry ghcr.io/alex/builds
 
 A plain `fspec update` keeps the recorded digests while the commit and the patches stay the same.
 When either changes, the entry loses its digest until the `record` job has run for the new
-commit. Until then, hosts build it on their builders or themselves. Pull requests build but do not
+commit. A host installs the `oci` artifact only when its `build` matches the key of the recipe the
+spec now has, so a changed `build_flags`, `deps` or `image` never installs the old build. Until
+the `record` job has run for the new build, hosts build it on their builders or themselves. Pull requests build but do not
 record; run `fspec update --cache` yourself (it needs `oras`) to record outside CI.
 
 Run `fspec ci packages` again when the set of git packages or platforms changes.
@@ -317,8 +324,8 @@ have no ssh key.
 
 ### Registry layout
 
-Each package is one repository, `ghcr.io/<owner>/fspec-cache/<name>`, with one tag per commit and
-platform, `<rev>-<platform>`. Each tag is a one-layer artifact whose layer is the `.tar.zst`, with
+Each package is one repository, `ghcr.io/<owner>/fspec-cache/<name>`, with one tag per build and
+platform, `<rev>-<key>-<platform>`. Each tag is a one-layer artifact whose layer is the `.tar.zst`, with
 media type `application/vnd.fspec.package.v1.tar+zstd`. The lock pins the manifest digest, never
 the tag.
 
@@ -357,7 +364,8 @@ each `fspec update`, a tag tracks the tag, and a 40-digit commit pins. Paths in 
 
 - The store directory of a built package hashes the URL, the commit, the patches and the recipe
   (`build`, `build_flags`, `image`, `deps`). Changing any of them builds anew; nothing else does.
-- An apply takes a git package from, in order: the lock's `oci` artifact, the host's builders in
+- An apply takes a git package from, in order: the lock's `oci` artifact when its `build` key
+  matches the spec's recipe, the host's builders in
   the order listed, then the host itself.
 - A git package has no downloaded archive, so it takes no `parts` and no `version`.
 

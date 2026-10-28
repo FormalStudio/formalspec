@@ -37,7 +37,7 @@ pub fn cache_root() -> Result<PathBuf> {
 pub struct Built {
     /// `<out>/<name>-<platform>.tar.zst`
     pub archive: PathBuf,
-    /// The registry tag the workflow pushes it under, `<rev>-<platform>`; also written to
+    /// The registry tag the workflow pushes it under, [`crate::tag`]; also written to
     /// `<out>/tag`.
     pub tag: String,
 }
@@ -135,10 +135,19 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     let archive = job.out.join(format!("{}-{}.tar.zst", job.pkg.name, job.platform));
     fs::create_dir_all(job.out)?;
     fs::write(&archive, body).with_context(|| format!("writing {}", archive.display()))?;
-    let tag = format!("{}-{}", job.rev, job.platform);
+    let tag = job_tag(job)?;
     fs::write(job.out.join("tag"), &tag)?;
     drop(lock);
     Ok(Built { archive, tag })
+}
+
+/// The registry tag of `job`, its patches hashed as `fspec update` locks them.
+pub fn job_tag(job: &Job) -> Result<String> {
+    let patches = match job.pkg.patches.is_empty() {
+        true => None,
+        false => Some(fspec_core::patches::hash(job.spec_dir, &job.pkg.patches)?),
+    };
+    Ok(crate::tag(job.rev, &crate::identity(job.pkg, job.url, job.rev, patches.as_deref())?, job.platform))
 }
 
 /// Homebrew refuses to run as root, and a macOS recipe installs its tools with it. When the

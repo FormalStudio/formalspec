@@ -147,11 +147,13 @@ fn target<'a>(cx: &'a Cx, p: &'a Pkg) -> Result<Target<'a>> {
         let rev = locked.rev.as_deref().with_context(|| format!("pkg {} has no rev in fspec.lock", p.name))?;
         // The recipe is part of what was built: a changed `build` or image builds anew. The cache
         // holds the same build, so a host that compiled it before CI pushed keeps its copy.
-        let recipe = serde_json::to_string(&(&p.build, &p.build_flags, &p.source))?;
-        let id = format!("{url}@{rev}+{}+{}", locked.patches.as_deref().unwrap_or_default(), archive::hash8(&recipe));
+        let id = fspec_build::identity(p, url, rev, locked.patches.as_deref())?;
+        let key = fspec_build::key(&id);
         let version = rev.chars().take(12).collect::<String>();
-        let dirname = format!("{}-{}-{version}", archive::hash8(&id), p.name);
-        let (origin, artifact) = match found.and_then(|a| a.oci.as_deref().map(|r| (r, a))) {
+        let dirname = format!("{key}-{}-{version}", p.name);
+        // A CI artifact recorded for another recipe is not this build.
+        let cached = found.filter(|a| a.build.as_deref() == Some(key.as_str()));
+        let (origin, artifact) = match cached.and_then(|a| a.oci.as_deref().map(|r| (r, a))) {
             Some((reference, a)) => (Origin::Oci { reference }, a),
             None => (Origin::Build { url, rev }, found.unwrap_or(&BUILT)),
         };
