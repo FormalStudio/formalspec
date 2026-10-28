@@ -767,6 +767,8 @@ sharing its staging directory.
 
 Before step 4, FormalSpec takes a btrfs or APFS snapshot of the paths it is
 about to touch when the filesystem supports it.
+On btrfs the distro step keeps `/.snapshots/fspec-<generation>` for the five
+newest generations and deletes older ones after taking its own.
 
 Only reads and staging run concurrently, up to eight at a time: the drift
 checks `plan` makes on unchanged resources (one batched query per package

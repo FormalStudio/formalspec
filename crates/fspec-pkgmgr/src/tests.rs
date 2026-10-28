@@ -872,6 +872,21 @@ fn btrfs_snapshot_is_taken_before_the_commit_only_on_btrfs() {
     assert!(w.take().iter().all(|l| !l.starts_with("btrfs")));
 }
 
+#[test]
+fn a_new_snapshot_leaves_only_the_newest_five() {
+    let w = World::on("arch", &[]);
+    w.answer("findmnt -no FSTYPE", 0, "btrfs\n");
+    let dir = w.paths.system("/.snapshots");
+    for g in [2, 3, 9, 10, 11, 12] {
+        fs::create_dir_all(dir.join(format!("fspec-{g}"))).unwrap();
+    }
+    fs::create_dir_all(dir.join("187")).unwrap();
+    w.apply(Scope::System, &[distro_res("arch", &["linux"])]).unwrap();
+    let deletes: Vec<String> = w.take().into_iter().filter(|l| l.starts_with("btrfs subvolume delete")).collect();
+    let del = |g: u32| format!("btrfs subvolume delete {}", dir.join(format!("fspec-{g}")).display());
+    assert_eq!(deletes, [del(2)]);
+}
+
 fn moss_line(args: &[&str]) -> String {
     fspec_core::moss::moss(crate::family::LOADER_CONF, args.iter().copied()).to_string()
 }

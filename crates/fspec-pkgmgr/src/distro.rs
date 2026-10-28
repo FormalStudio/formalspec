@@ -40,6 +40,23 @@ fn snapshot_path(cx: &Cx) -> String {
     cx.paths.system(format!("/.snapshots/fspec-{}", cx.generation)).display().to_string()
 }
 
+/// How many `fspec-<generation>` snapshots an apply leaves, the newest ones.
+const KEEP_SNAPSHOTS: usize = 5;
+
+fn prune_snapshots(cx: &Cx) -> Result<()> {
+    let dir = cx.paths.system("/.snapshots");
+    let mut gens: Vec<u64> = fs::read_dir(&dir)
+        .with_context(|| format!("reading {}", dir.display()))?
+        .filter_map(|e| e.ok()?.file_name().to_str()?.strip_prefix("fspec-")?.parse().ok())
+        .collect();
+    gens.sort_unstable_by(|a, b| b.cmp(a));
+    for g in gens.iter().skip(KEEP_SNAPSHOTS) {
+        let old = dir.join(format!("fspec-{g}")).display().to_string();
+        cx.runner.check(&Cmd::new("btrfs").args(["subvolume", "delete"]).arg(old))?;
+    }
+    Ok(())
+}
+
 /// The record key for the Tumbleweed snapshot the last apply moved the repos to. `snapshot`
 /// already names the btrfs one.
 const REPO_SNAPSHOT: &str = "repo_snapshot";
@@ -301,7 +318,7 @@ impl Backend for DistroBackend {
         }
         let root = cx.paths.system("/").display().to_string();
         cx.runner.check(&Cmd::new("btrfs").args(["subvolume", "snapshot", "-r"]).arg(root).arg(&dest))?;
-        Ok(())
+        prune_snapshots(cx)
     }
 
     /// Repos first, then the snapshot, then the base packages, which may come from either.
