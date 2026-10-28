@@ -600,6 +600,7 @@ impl Parser<'_> {
         let word = match op {
             "||" => Some("or"),
             "&&" => Some("and"),
+            "!" => Some("not"),
             _ => None,
         };
         let hit = match self.peek() {
@@ -818,6 +819,10 @@ packages:
         assert!(eval_constraint(nextest, "cargo-nextest-0.9.60", "0.9.60").unwrap());
         assert!(!eval_constraint(nextest, "cargo-nextest-0.9.100", "0.9.100").unwrap());
         assert!(eval_constraint(r#"true and not_a_word"#, "v1", "1").is_err());
+        let taplo = r#"not (Version startsWith "release-taplo-cli-") and not (Version startsWith "release-cli-") and semver(">= 0.8.0")"#;
+        assert!(eval_constraint(taplo, "0.10.0", "0.10.0").unwrap());
+        assert!(!eval_constraint(taplo, "release-taplo-cli-0.7.0", "0.7.0").unwrap());
+        assert!(!eval_constraint(r#"not Version startsWith "v1""#, "v1.2", "1.2").unwrap());
         let v = Vars {
             version: "v1.2.3".into(),
             semver: "1.2.3".into(),
