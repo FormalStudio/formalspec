@@ -410,3 +410,39 @@ fn a_service_running_a_replaced_store_package_restarts() {
     let state = State::load(&cx.state_dir().join("state.json")).unwrap();
     assert!(plan_scope(&cx, backends, &shell, &state).unwrap().changes.is_empty());
 }
+
+#[test]
+fn one_systemctl_show_finds_the_stale_service_among_many() {
+    let w = World::linux(Init::Systemd);
+    let backends: &[&dyn Backend] = &[&SystemdBackend];
+    let store = w.paths.fspec_root().join("store");
+    for id in ["aaa-shell", "bbb-shell"] {
+        fs::create_dir_all(store.join(id).join("bin")).unwrap();
+        fs::write(store.join(id).join("bin/shell"), "").unwrap();
+    }
+    let bin = w.paths.fspec_root().join("current/bin");
+    fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink("../../store/bbb-shell/bin/shell", bin.join("shell")).unwrap();
+    let proc = w.paths.root.join("proc/42");
+    fs::create_dir_all(&proc).unwrap();
+    std::os::unix::fs::symlink("/opt/fspec/store/aaa-shell/bin/shell", proc.join("exe")).unwrap();
+    let exec =
+        "ExecStart={ path=/opt/fspec/current/bin/shell ; argv[]=/opt/fspec/current/bin/shell ; ignore_errors=no }";
+    let idle = "MainPID=0\nExecStart=\n";
+    w.runner.respond(
+        "systemctl --user show -p MainPID -p ExecStart a.service b.service c.service",
+        Output { stdout: format!("{idle}\nMainPID=42\n{exec}\n\n{idle}"), ..Default::default() },
+    );
+    let svc = |n: &str| desired(resource(json!({"kind": "service", "name": format!("{n}.service"), "user": true})));
+    let want = vec![svc("a"), svc("b"), svc("c")];
+    apply_scope(&w.cx(Scope::User), backends, &want).unwrap();
+    w.runner.calls.lock().unwrap().clear();
+
+    let cx = w.cx(Scope::User);
+    let state = State::load(&cx.state_dir().join("state.json")).unwrap();
+    let p = plan_scope(&cx, backends, &want, &state).unwrap();
+    assert_eq!(p.changes.len(), 1, "{p}");
+    assert_eq!(p.changes[0].key.id, "b.service");
+    let shows = w.runner.lines().into_iter().filter(|l| l.contains(" show ")).count();
+    assert_eq!(shows, 1, "{:#?}", w.runner.lines());
+}

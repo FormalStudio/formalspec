@@ -48,20 +48,17 @@ impl Backend for SystemdBackend {
     }
 
     fn drift(&self, cx: &Cx, entry: &Entry) -> Result<Vec<String>> {
-        if let Some(s) = distro(&entry.resource) {
-            let mut notes = crate::distro_unit::drift(cx, Init::Systemd, s)?;
-            notes.extend(stale(cx, &entry.resource)?);
-            return Ok(notes);
+        Ok(self.drift_all(cx, std::slice::from_ref(entry))?.remove(0))
+    }
+
+    /// One `systemctl show` per manager finds the stale services among all of them.
+    fn drift_all(&self, cx: &Cx, entries: &[Entry]) -> Result<Vec<Vec<String>>> {
+        let rs: Vec<&Resource> = entries.iter().map(|e| &e.resource).collect();
+        let stale = stale_all(cx, &rs)?;
+        let mut notes = fspec_core::par::try_map(entries, |e| unit_drift(cx, &e.resource))?;
+        for (n, s) in notes.iter_mut().zip(stale) {
+            n.extend(s);
         }
-        let mut notes = Vec::new();
-        for u in units(&entry.resource)? {
-            match read_or_empty(&cx.resolve(&u.path)?) {
-                None => notes.push(format!("{} is missing", u.path)),
-                Some(on_disk) if on_disk != u.content => notes.push(format!("{} was edited", u.path)),
-                Some(_) => {}
-            }
-        }
-        notes.extend(stale(cx, &entry.resource)?);
         Ok(notes)
     }
 
@@ -169,11 +166,30 @@ impl Backend for SystemdBackend {
     }
 
     fn refresh(&self, cx: &Cx, entries: &[Entry], journal: &mut Journal) -> Result<()> {
-        for e in entries {
-            restart_stale(cx, journal, &e.resource)?;
+        let rs: Vec<&Resource> = entries.iter().map(|e| &e.resource).collect();
+        for (r, why) in rs.iter().zip(stale_all(cx, &rs)?) {
+            if let Some(why) = why {
+                restart(cx, journal, r, &why)?;
+            }
         }
         Ok(())
     }
+}
+
+/// How the unit files or a distro unit's enablement diverged from the spec.
+fn unit_drift(cx: &Cx, r: &Resource) -> Result<Vec<String>> {
+    if let Some(s) = distro(r) {
+        return crate::distro_unit::drift(cx, Init::Systemd, s);
+    }
+    let mut notes = Vec::new();
+    for u in units(r)? {
+        match read_or_empty(&cx.resolve(&u.path)?) {
+            None => notes.push(format!("{} is missing", u.path)),
+            Some(on_disk) if on_disk != u.content => notes.push(format!("{} was edited", u.path)),
+            Some(_) => {}
+        }
+    }
+    Ok(notes)
 }
 
 /// The unit fspec starts and stops for `r`: its own unit, or the distro's for a service
@@ -189,13 +205,41 @@ fn unit_name(r: &Resource) -> String {
 /// the one its main process was started from, as after an apply that moved the package's
 /// `current` link. A unit that refuses manual restarts is left to the next session.
 fn stale(cx: &Cx, r: &Resource) -> Result<Option<String>> {
+    Ok(stale_all(cx, &[r])?.remove(0))
+}
+
+/// [`stale`] for many resources, with one `systemctl show` per manager. systemd prints each
+/// unit's properties in the order the units were named, separated by a blank line.
+fn stale_all(cx: &Cx, rs: &[&Resource]) -> Result<Vec<Option<String>>> {
+    let mut out = vec![None; rs.len()];
     let store = cx.paths.fspec_root().join("store");
-    if !matches!(r, Resource::Service(_)) || refuses_manual(r) || !store.is_dir() {
-        return Ok(None);
+    if !store.is_dir() {
+        return Ok(out);
     }
-    let unit = unit_name(r);
-    let out = cx.runner.run(&ctl(is_user(r), &["show", "-p", "MainPID", "-p", "ExecStart", &unit]))?.stdout;
-    let prop = |k: &str| out.lines().find_map(|l| l.strip_prefix(k)?.strip_prefix('='));
+    for user in [false, true] {
+        let asked: Vec<usize> = (0..rs.len())
+            .filter(|&i| matches!(rs[i], Resource::Service(_)) && !refuses_manual(rs[i]) && is_user(rs[i]) == user)
+            .collect();
+        if asked.is_empty() {
+            continue;
+        }
+        let units: Vec<String> = asked.iter().map(|&i| unit_name(rs[i])).collect();
+        let mut args = vec!["show", "-p", "MainPID", "-p", "ExecStart"];
+        args.extend(units.iter().map(String::as_str));
+        let shown = cx.runner.run(&ctl(user, &args))?.stdout;
+        let blocks: Vec<&str> = shown.split("\n\n").collect();
+        if blocks.len() != asked.len() {
+            continue;
+        }
+        for ((&i, unit), block) in asked.iter().zip(&units).zip(blocks) {
+            out[i] = stale_from(cx, &store, unit, block)?;
+        }
+    }
+    Ok(out)
+}
+
+fn stale_from(cx: &Cx, store: &Path, unit: &str, shown: &str) -> Result<Option<String>> {
+    let prop = |k: &str| shown.lines().find_map(|l| l.strip_prefix(k)?.strip_prefix('='));
     let Some(pid) = prop("MainPID").filter(|p| !matches!(*p, "" | "0")) else { return Ok(None) };
     // `{ path=/opt/fspec/current/bin/x ; argv[]=... }`. A distro unit may name a bare command
     // (`path=greetd`), which can never be a store path.
@@ -211,8 +255,8 @@ fn stale(cx: &Cx, r: &Resource) -> Result<Option<String>> {
     let package = |p: &Path, store: &Path| {
         Some(p.strip_prefix(store).ok()?.components().next()?.as_os_str().to_string_lossy().into_owned())
     };
-    let was = package(&cx.resolve(&running.to_string_lossy())?, &store);
-    let is = fs::canonicalize(&store).ok().and_then(|store| package(&now, &store));
+    let was = package(&cx.resolve(&running.to_string_lossy())?, store);
+    let is = fs::canonicalize(store).ok().and_then(|store| package(&now, &store));
     Ok(match (was, is) {
         (Some(was), Some(is)) if was != is => Some(format!("{unit} runs {was}, the store now has {is}")),
         _ => None,
@@ -220,7 +264,13 @@ fn stale(cx: &Cx, r: &Resource) -> Result<Option<String>> {
 }
 
 fn restart_stale(cx: &Cx, journal: &mut Journal, r: &Resource) -> Result<()> {
-    let Some(why) = stale(cx, r)? else { return Ok(()) };
+    match stale(cx, r)? {
+        Some(why) => restart(cx, journal, r, &why),
+        None => Ok(()),
+    }
+}
+
+fn restart(cx: &Cx, journal: &mut Journal, r: &Resource, why: &str) -> Result<()> {
     let restart = ctl(is_user(r), &["restart", &unit_name(r)]);
     journal.record(Undo::Run { cmd: restart.clone() })?;
     cx.runner.check(&restart)?;
