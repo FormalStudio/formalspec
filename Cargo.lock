@@ -1452,6 +1452,7 @@ dependencies = [
  "fspec-store",
  "fspec-switch",
  "fspec-sync",
+ "fspec-try",
  "libc",
  "serde_json",
  "tempfile",
@@ -1679,6 +1680,16 @@ dependencies = [
  "shell-words",
  "tar",
  "tempfile",
+]
+
+[[package]]
+name = "fspec-try"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "fspec-core",
+ "serde_json",
+ "shell-words",
 ]
 
 [[package]]

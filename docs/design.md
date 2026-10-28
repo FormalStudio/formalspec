@@ -1780,6 +1780,50 @@ Only the `system` block differs per distro. Everything from FormalSpec's own
 sources, Flatpaks and files moves unchanged. Base packages are named per
 distro, so the `system` block is where those names live.
 
+## Trying distros
+
+`fspec try <distro>` boots a distro's live ISO in a KVM VM so its desktop can be
+used before a host switches to it. It changes no state on any host: no
+resource, no generation, no lock key. It is a command, not a builtin, so the
+spec does not name it and the engine version does not move.
+
+The `fspec-try` crate holds the parts. `resolve` turns a distro name into the
+project's current ISO by reading what the project publishes: a checksum list
+(Debian, Ubuntu, Arch, Void, and the `.sha256` beside the Tumbleweed and NixOS
+alias URLs), Fedora's `releases.json`, or AerynOS's download page. The
+versioned file name names the cached copy, and its checksum is verified after
+the download. A stable alias URL is downloaded where one exists, so a release
+that lands between resolving and downloading fails the checksum instead of
+caching the wrong file under the old name.
+
+`script` returns one bash script that does the whole run on the VM's host:
+pick the OVMF pair the distro ships, download into
+`~/.cache/fspec/try/iso/<distro>/` (dropping the older release), create the
+disk, start qemu in the background and wait for it. An `EXIT` trap, with
+`INT`, `HUP` and `TERM` turned into an exit, stops qemu and deletes the run
+directory `/tmp/fspec-try-<id>` and a throwaway disk. The next run deletes the
+leftovers of one killed without its trap, recognised by a pid file whose
+process is gone. The script needs qemu and OVMF, not fspec, so a host runs it
+whatever engine it has.
+
+qemu runs from inside the run directory, where the script links the firmware,
+the variables, the disk and the ISO under fixed names; that keeps `qemu` a
+fixed, testable command. The machine is q35 with `-cpu host`, UEFI from
+pflash, the ISO at boot index 0 and the virtio disk at 1, user-mode networking
+and a USB tablet for an absolute pointer. A run on the local desktop shows
+`virtio-vga-gl` in a GTK window with GL. Otherwise qemu serves `virtio-vga`
+over VNC on `vnc.sock` with a random password from a secret file, and a QMP
+socket sits beside it.
+
+With `--host`, the CLI stages the script with one batch ssh and runs it with
+`ssh -tt -L 127.0.0.1:<port>:/tmp/fspec-try-<id>/vnc.sock`. The forced pty
+makes a dropped connection hang up the script, so its trap cleans up. A thread
+polls the local port until a VNC greeting comes through, then opens Screen
+Sharing on macOS or `remote-viewer` on Linux.
+
+`--keep <name>` puts the disk and UEFI variables in
+`~/.local/share/fspec/try/<name>/` and leaves them on exit.
+
 ## Installer
 
 The installer puts a FormalSpec-managed system on a blank machine. It is a
@@ -1901,6 +1945,7 @@ self-signed chain are unverified.
 | `fspec disk migrate --stage <iso> --nixos-system <path>` | Boot the live ISO once from the disk and migrate this NixOS root there |
 | `fspec disk init <device>` | Partition and format a disk with a supported layout |
 | `fspec sync [item...] [--peer h] [--from h] [--rollback] [--dry-run] [--watch [s]]` | Sync app data with the item's peers |
+| `fspec try <distro\|url\|path> [--host h] [--keep name]` | Boot a live ISO in a throwaway KVM VM, here or on `h` with its display tunnelled back |
 
 ## Sync between hosts
 

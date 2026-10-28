@@ -25,7 +25,7 @@ pages = ["guides/removal-and-rollback", "guides/recovery", "guides/remote-hosts"
 
 [[section]]
 title = "The operating system"
-pages = ["guides/system-layer", "guides/switching-distros", "guides/installer"]
+pages = ["guides/system-layer", "guides/trying-distros", "guides/switching-distros", "guides/installer"]
 
 [[section]]
 title = "Reference"

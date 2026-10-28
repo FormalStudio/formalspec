@@ -1,6 +1,7 @@
 mod backends;
 mod dev;
 mod secret;
+mod try_vm;
 
 use std::path::{Path, PathBuf};
 
@@ -241,6 +242,41 @@ enum Command {
         host: Option<String>,
         #[arg(long)]
         scope: Option<ScopeArg>,
+    },
+    /// Boot a distro's live ISO in a throwaway KVM VM, on this Linux host or on --host over ssh with
+    /// its display opened here. Nothing is installed on either host.
+    Try {
+        /// A distro (`--list` names them), the http(s) URL of an ISO, or the path of one on the
+        /// VM's host.
+        #[arg(required_unless_present_any = ["keep", "list", "delete"])]
+        target: Option<String>,
+        /// Run the VM on this host, as `ssh HOST` reaches it.
+        #[arg(long)]
+        host: Option<String>,
+        /// Keep the VM's disk under NAME on the VM's host; `fspec try --keep NAME` boots it again.
+        #[arg(long, value_name = "NAME")]
+        keep: Option<String>,
+        /// Virtual CPUs, default half the host's threads between 2 and 8.
+        #[arg(long)]
+        cpus: Option<u32>,
+        /// Memory in GiB, default a quarter of the host's between 4 and 8.
+        #[arg(long, value_name = "GIB")]
+        memory: Option<u32>,
+        /// Size of a new disk in GiB. It is sparse, so it only takes what the guest writes.
+        #[arg(long, value_name = "GIB", default_value_t = 32)]
+        disk: u32,
+        /// Open no window: print the VNC address instead.
+        #[arg(long)]
+        headless: bool,
+        /// Print the script that would run on the VM's host, and run nothing.
+        #[arg(long)]
+        print: bool,
+        /// List the distros, and the kept VMs, running VMs and cached ISOs on the VM's host.
+        #[arg(long, conflicts_with_all = ["target", "keep", "delete"])]
+        list: bool,
+        /// Delete the kept VM NAME.
+        #[arg(long, value_name = "NAME", conflicts_with_all = ["target", "keep"])]
+        delete: Option<String>,
     },
     /// Open a shell in the project environment of the nearest dev.star, or run `-- <command>` in it.
     Dev {
@@ -807,6 +843,20 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Dev { dir, cmd, args } => dev::run(&paths, dir.as_deref(), cmd.as_ref(), args),
+        Command::Try { target, host, keep, cpus, memory, disk, headless, print, list, delete } => {
+            try_vm::run(&try_vm::Args {
+                target: target.as_deref(),
+                host: host.as_deref(),
+                keep: keep.as_deref(),
+                cpus: *cpus,
+                memory: *memory,
+                disk: *disk,
+                headless: *headless,
+                print: *print,
+                list: *list,
+                delete: delete.as_deref(),
+            })
+        }
     }
 }
 

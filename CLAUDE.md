@@ -40,6 +40,7 @@ add each mapping you settle there, and drop nix-isms that only exist to work aro
 | `fspec-remote` | Shipping the spec and applying or planning over ssh |
 | `fspec-sync` | `fspec sync`: app data between the user's hosts over ssh |
 | `fspec-switch` | `fspec switch`, `forget`, `disk`: pure functions returning command plans |
+| `fspec-try` | `fspec try`: distro ISOs, the qemu command and the script that runs a throwaway VM |
 | `fspec-install` | The installer |
 | `fspec-dev` | Project environments from `dev.star` |
 
