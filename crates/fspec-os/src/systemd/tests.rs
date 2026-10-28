@@ -568,3 +568,20 @@ fn one_systemctl_show_finds_the_stale_service_among_many() {
     let shows = w.runner.lines().into_iter().filter(|l| l.contains(" show ")).count();
     assert_eq!(shows, 1, "{:#?}", w.runner.lines());
 }
+
+#[test]
+fn a_pending_distro_service_is_restarted_by_the_next_apply() {
+    let w = World::linux(Init::Systemd);
+    let asusd = resource(json!({"kind": "service", "name": "asusd"}));
+    let mut record = Map::new();
+    fspec_core::apply::pending(&mut record, "`systemctl restart asusd` failed");
+    let current = Entry { resource: asusd.clone(), owner: None, record };
+    let op = Op { key: asusd.key(), desired: Some(desired(asusd.clone())), current: Some(current), drift: vec![] };
+    let cx = w.cx(Scope::System);
+    let staging = tempfile::tempdir().unwrap();
+    let mut journal = fspec_core::journal::Journal::begin(&cx.state_dir(), 1).unwrap();
+    let records = SystemdBackend.commit(&cx, &[op], staging.path(), &mut journal).unwrap();
+    journal.finish().unwrap();
+    assert!(w.runner.lines().iter().any(|l| l.starts_with("systemctl restart asusd")), "{:#?}", w.runner.lines());
+    assert!(!fspec_core::apply::is_pending(&records[&asusd.key()]));
+}

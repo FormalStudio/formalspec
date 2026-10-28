@@ -56,10 +56,6 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     }
     // Inside the cache, so a build run as the sudo user can write it.
     let work = tempfile::tempdir_in(&cache).context("creating a build directory")?;
-    if let Some(u) = &user {
-        runner.check(&Cmd::new("chown").args(["-R", u]).arg(work.path().display().to_string()))?;
-    }
-    let runner = &AsUser { inner: runner, user: user.as_deref() };
     let dirs = Dirs {
         src: cache.join("src"),
         build: cache.join("build"),
@@ -67,6 +63,13 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
         cache: cache.join("cache"),
     };
     fs::create_dir_all(&dirs.cache)?;
+    fs::create_dir_all(&dirs.out)?;
+    if let Some(u) = &user {
+        for dir in [&dirs.cache, &work.path().to_path_buf()] {
+            runner.check(&Cmd::new("chown").args(["-R", u]).arg(dir.display().to_string()))?;
+        }
+    }
+    let runner = &AsUser { inner: runner, user: user.as_deref() };
     let src = dirs.src.display().to_string();
     if !dirs.src.join(".git").is_dir() {
         runner.check(&Cmd::new("git").args(["init", "-q", &src])).map_err(|e| {
@@ -98,7 +101,6 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
             .with_context(|| format!("applying {patch}"))?;
     }
 
-    fs::create_dir_all(&dirs.out)?;
     let recipe = recipe::select(&dirs.src, &job.pkg.build)?;
     let commands = recipe.commands(&dirs, &job.pkg.build_flags, &job.pkg.build);
     let commands = match &job.pkg.source {

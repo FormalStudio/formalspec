@@ -79,9 +79,20 @@ impl Backend for SystemdBackend {
                 let rec = crate::distro_unit::commit(cx, Init::Systemd, journal, op, s)?;
                 if !op.is_removal() {
                     let mut rec = rec;
-                    if op.current.is_some()
-                        && let Some(why) = restart_stale(cx, journal, op.resource())?
-                    {
+                    // A service left pending by a failed restart is stopped, so it is not stale
+                    // either, and only an explicit restart retries it.
+                    // A swap or mount was just started again by the commit itself.
+                    let retry = op.current.as_ref().is_some_and(|c| fspec_core::apply::is_pending(&c.record))
+                        && !crate::distro_unit::starts(s)
+                        && !refuses_manual(op.resource());
+                    let failed = if retry {
+                        restart(cx, journal, op.resource(), "it was pending")?
+                    } else if op.current.is_some() {
+                        restart_stale(cx, journal, op.resource())?
+                    } else {
+                        None
+                    };
+                    if let Some(why) = failed {
                         fspec_core::apply::pending(&mut rec, why);
                     }
                     records.insert(op.key.clone(), rec);

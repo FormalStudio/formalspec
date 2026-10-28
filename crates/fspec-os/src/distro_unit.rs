@@ -30,7 +30,7 @@ pub(crate) fn of(s: &Service) -> Option<&Service> {
 /// enabling them.
 const STARTED: [&str; 6] = [".swap", ".mount", ".automount", ".timer", ".path", ".socket"];
 
-fn starts(s: &Service) -> bool {
+pub(crate) fn starts(s: &Service) -> bool {
     STARTED.iter().any(|t| s.name.ends_with(t))
 }
 

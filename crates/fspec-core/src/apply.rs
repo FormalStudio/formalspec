@@ -183,6 +183,11 @@ pub fn pending(record: &mut Map<String, Value>, why: impl Into<String>) {
     record.insert(PENDING.to_string(), Value::String(why.into()));
 }
 
+/// Whether [`pending`] marked the record, so a backend can finish what the last apply did not.
+pub fn is_pending(record: &Map<String, Value>) -> bool {
+    pending_why(record).is_some()
+}
+
 fn pending_why(record: &Map<String, Value>) -> Option<&str> {
     record.get(PENDING)?.as_str()
 }
