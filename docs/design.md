@@ -2015,7 +2015,8 @@ through the `Runner`:
    [the engine](#the-engine). With a CI build for the remote's platform the
    driving fspec pulls it; without one (CI has not caught up with a lock bump)
    it ships the remote a job file for the locked rev and has the remote's own
-   older fspec run `fspec build --job` in `~/.cache/fspec/engine-build`, then
+   older fspec run `sudo fspec build --job` in `~/.cache/fspec/engine-build`
+   (as root, as its own applies build, so rootless podman needs no subuids), then
    copies the archive back. Either way it unpacks the binary, streams it to
    `~/.cache/fspec/engine.new` and runs `ssh -t h sudo install` to put it at
    `/usr/local/bin/fspec`, probes again and carries on; the remote's apply then

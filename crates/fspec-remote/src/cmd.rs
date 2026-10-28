@@ -119,11 +119,16 @@ pub fn upload_engine_job(alias: &str, file: &Path) -> Cmd {
     batch(alias).arg(format!("mkdir -p {ENGINE_JOB} && cat > {ENGINE_JOB}/job.json")).stdin_file(file)
 }
 
-/// The build prints nothing for minutes; keepalives turn a dropped link into an error.
+/// As root, like the remote's own applies build: a user without `/etc/subuid` ranges cannot pull
+/// the build image with rootless podman. Interactive, since sudo may ask for a password. The
+/// build prints nothing for minutes; keepalives turn a dropped link into an error.
 pub fn build_engine(alias: &str, platform: &str) -> Cmd {
-    batch(alias)
-        .args(["-o", "ServerAliveInterval=15"])
-        .arg(format!("cd {ENGINE_JOB} && {FSPEC} build --job job.json --platform {platform} --out out"))
+    Cmd::new("ssh")
+        .args(["-t", "-o", "ServerAliveInterval=15", alias])
+        .arg(format!(
+            "cd {ENGINE_JOB} && sudo env {FSPEC} build --job job.json --platform {platform} --out out && sudo chown -R \"$(id -u):$(id -g)\" out"
+        ))
+        .interactive()
 }
 
 /// Copies the archive [`build_engine`] wrote to `to` on this machine.

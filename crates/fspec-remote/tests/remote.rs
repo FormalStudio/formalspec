@@ -377,7 +377,9 @@ fn an_older_remote_builds_the_locked_engine_when_ci_has_not() {
     assert!(!calls.iter().any(|c| c.contains("oras")), "{calls:#?}");
     assert!(calls[at("job.json")].contains("cat >"));
     assert!(
-        calls[at("build --job")].ends_with("fspec build --job job.json --platform x86_64-linux --out out'"),
+        calls[at("build --job")].contains(
+            "sudo env PATH=\"/usr/local/bin:$PATH\" fspec build --job job.json --platform x86_64-linux --out out &&"
+        ),
         "{calls:#?}"
     );
     assert!(at("build --job") < at("fspec-x86_64-linux.tar.zst"));
