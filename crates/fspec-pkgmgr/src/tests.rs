@@ -935,7 +935,7 @@ fn tumbleweed_points_the_repos_at_the_locked_snapshot_then_upgrades() {
     assert_eq!(
         lines,
         [
-            "zypper --non-interactive install --dry-run --auto-agree-with-licenses htop",
+            "zypper --non-interactive --no-refresh install --dry-run --auto-agree-with-licenses htop",
             "zypper --non-interactive modifyrepo --disable repo-oss",
             "zypper --non-interactive refresh --force fspec-oss fspec-non-oss",
             "zypper --non-interactive dist-upgrade --auto-agree-with-licenses",
@@ -1353,7 +1353,7 @@ fn a_large_spec_queries_versions_in_batches() {
     assert_eq!(planned.len(), 4, "{planned:#?}");
 }
 
-const DRY_RUN: &str = "zypper --non-interactive install --dry-run --auto-agree-with-licenses";
+const DRY_RUN: &str = "zypper --non-interactive --no-refresh install --dry-run --auto-agree-with-licenses";
 
 #[test]
 fn a_zypper_conflict_fails_in_prepare_before_the_snapshot_moves() {

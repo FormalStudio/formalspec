@@ -1125,13 +1125,14 @@ change to the system layer, if `findmnt -no FSTYPE /` says btrfs, apply takes a
 read-only snapshot `/.snapshots/fspec-<generation>`; it is taken while
 preparing, before the package phases commit, so it holds the old kernel. A
 failed apply leaves the snapshot behind. Other filesystems get no snapshot.
-On zypper, prepare also runs `zypper install --dry-run` on the base packages
-the apply adds, and the package phase's prepare runs it on its new names
-together with those whenever the distro phase changes anything, so a solver
-conflict between the two lists stops the apply before the snapshot move and
-the base install. Only zypper's `Problem:` output fails it; a name no repo has
-yet (its `repo(...)` is added in the commit) or an unreachable repo is left
-for the install to report.
+On zypper, prepare also runs `zypper --no-refresh install --dry-run` on the
+base packages the apply adds, against the metadata zypper already has (a new
+host keeps it from the bootstrap's install), and the package phase's prepare
+runs it on its new names together with those whenever the distro phase
+changes anything. A solver conflict between the two lists stops the apply
+before the snapshot move and the base install. Only zypper's `Problem:` output
+fails it; a name no repo has yet (its `repo(...)` is added in the commit) or
+an unreachable repo is left for the install to report.
 `pkg` sources for the four managers cache the locked `.rpm`, `.pkg.tar.zst`,
 `.deb` or `.xbps` under `/var/cache/fspec/pkgs` and install the file (`dnf
 install`, `pacman -U`, `apt-get install`, and for `.xbps` a local repository

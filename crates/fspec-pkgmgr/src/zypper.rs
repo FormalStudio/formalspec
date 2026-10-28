@@ -133,7 +133,10 @@ pub(crate) fn check_solvable(cx: &Cx, names: &[String]) -> Result<()> {
     if names.is_empty() {
         return Ok(());
     }
-    let out = cx.runner.run(&zypper(["install", "--dry-run", "--auto-agree-with-licenses"]).args(names))?;
+    // `--no-refresh` reads the metadata zypper already has (the bootstrap's install left it on a
+    // new host), rather than downloading the repos the snapshot move replaces anyway.
+    let cmd = Cmd::new("zypper").args(["--non-interactive", "--no-refresh", "install", "--dry-run"]);
+    let out = cx.runner.run(&cmd.arg("--auto-agree-with-licenses").args(names))?;
     if out.status == 0 {
         return Ok(());
     }
