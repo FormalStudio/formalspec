@@ -850,7 +850,10 @@ file("~/.claude-pulse/plugins", mode = "link", target = "~/.claude/plugins")
 ```
 
 A `target` may be a directory and may not exist yet, like a folder on an
-external drive that is not mounted; the link dangles until it is. FormalSpec
+external drive that is not mounted; the link dangles until it is. A link whose
+`target` is missing when the files phase commits is made after every other
+phase, so `/etc/resolv.conf` onto resolved's stub does not cut DNS before the
+packages that need it are installed. FormalSpec
 owns only the link: when an app replaces it with a file, the link comes back
 and nothing is copied into the target, and `fspec adopt` leaves it alone.
 
@@ -2029,7 +2032,8 @@ drift against its new source. The engine commits removals in
 reverse phase order, then adds and updates in phase order (users, files, store,
 packages, services, defaults, system). A backend can then `settle` its adds
 and updates, in the same phase order, for work that needs what later phases
-installed (group membership), and `refresh` the entries no change touched,
+installed (group membership, a link to a target a package or service creates),
+and `refresh` the entries no change touched,
 for what a change moved under them (a service running a replaced store
 package). The engine writes the new state and
 `generations/<n>.json` only after every commit succeeded. Each scope (system,

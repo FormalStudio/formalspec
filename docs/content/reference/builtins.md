@@ -205,7 +205,7 @@ A file. A path under `~/` is in the user scope; an absolute path is in the syste
 | `path` | string | required | Absolute, or `~/...` |
 | `src` | path | none | A file in the spec repository, copied as is. For `link`, a file or directory |
 | `content` | string or value | none | A string is written as is. Any other value is serialized to `format` |
-| `target` | path | none | `link` only: a path outside the repository to point at |
+| `target` | path | none | `link` only: a path outside the repository to point at. One that does not exist yet is linked at the end of the apply, after packages and services |
 | `mode` | string | `"managed"` | `"managed"`, `"link"`, `"seed"` or `"patch"` |
 | `format` | string | from the extension | `"text"`, `"json"`, `"toml"`, `"yaml"`, `"ini"`, `"plist"` or `"lua"` |
 | `owns` | dict | `{}` | `patch` only: dotted key paths and their values |

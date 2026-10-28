@@ -142,6 +142,21 @@ impl Backend for FileBackend {
         }
         Ok(records)
     }
+
+    /// Links `commit` held back for a missing target, now that every phase has run. One whose
+    /// target is still missing is linked dangling, as the spec asked.
+    fn settle(&self, cx: &Cx, ops: &[Op], journal: &mut Journal) -> Result<()> {
+        for op in ops {
+            if let Resource::File(f) = op.resource()
+                && f.mode == FileMode::Link
+                && f.target.is_some()
+            {
+                let path = cx.resolve(&f.path)?;
+                commit_link(cx, op, f, &path, journal).with_context(|| f.path.clone())?;
+            }
+        }
+        Ok(())
+    }
 }
 
 fn is_unit_file(r: &Resource) -> bool {
@@ -351,6 +366,9 @@ fn commit_file(
             install(journal, &path, &bytes, file_mode(cx, f)?)?;
             Ok(Some(hash_record(&bytes)))
         }
+        // The target comes from a package or service later phases install (resolv.conf onto
+        // resolved's stub); linking now would cut what those phases need. `settle` links it.
+        FileMode::Link if awaits_target(cx, f)? => Ok(Some(link_record(&link_target(cx, f)?, f))),
         FileMode::Link => commit_link(cx, op, f, &path, journal).map(Some),
         FileMode::Patch => {
             let (text, record) = patch_result(cx, op, f)?;
@@ -393,12 +411,24 @@ fn commit_link(cx: &Cx, op: &Op, f: &File, path: &Path, journal: &mut Journal) -
         std::os::unix::fs::symlink(&target, &tmp)?;
         fs::rename(&tmp, path).with_context(|| format!("linking {}", path.display()))?;
     }
+    Ok(link_record(&target, f))
+}
+
+fn link_record(target: &Path, f: &File) -> Map<String, Value> {
     let mut rec = Map::new();
     rec.insert("target".into(), target.to_string_lossy().into_owned().into());
     if let Some(src) = &f.src {
         rec.insert("src".into(), src.as_str().into());
     }
-    Ok(rec)
+    rec
+}
+
+/// A link to a `target` outside the repo that does not exist yet.
+fn awaits_target(cx: &Cx, f: &File) -> Result<bool> {
+    match (&f.mode, &f.target) {
+        (FileMode::Link, Some(t)) => Ok(!cx.resolve(t)?.exists()),
+        _ => Ok(false),
+    }
 }
 
 /// Remove what fspec wrote, but only while it still is what fspec wrote.

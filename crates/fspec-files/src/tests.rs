@@ -789,3 +789,55 @@ fn a_unit_file_written_as_a_file_reloads_systemd() {
     w.apply(&want([text("~/.config/notes.txt", "a"), text("~/.config/systemd/user/app.service", "[Unit]\n")])).unwrap();
     assert_eq!(w.runner.lines(), ["systemctl --user daemon-reload"]);
 }
+
+/// Stands in for the package that creates a link's target: it sees whether the link was already
+/// there when its phase committed, then creates the target.
+struct Provides {
+    target: PathBuf,
+    link: PathBuf,
+    saw_link: std::cell::Cell<Option<bool>>,
+}
+
+impl fspec_core::Backend for Provides {
+    fn name(&self) -> &'static str {
+        "provides"
+    }
+
+    fn handles(&self, _cx: &Cx, r: &Resource) -> bool {
+        matches!(r, Resource::Pkg(_))
+    }
+
+    fn phase(&self) -> Phase {
+        Phase::Packages
+    }
+
+    fn commit(&self, _cx: &Cx, _ops: &[Op], _staging: &Path, _journal: &mut Journal) -> Result<Records> {
+        self.saw_link.set(Some(fs::symlink_metadata(&self.link).is_ok()));
+        fs::create_dir_all(self.target.parent().unwrap())?;
+        fs::write(&self.target, "nameserver 127.0.0.53\n")?;
+        Ok(Records::new())
+    }
+}
+
+#[test]
+fn a_link_to_a_target_a_later_phase_creates_waits_for_that_phase() {
+    let w = World::new();
+    let cx = Cx { scope: Scope::System, ..w.cx() };
+    let target = w.paths.resolve("/run/resolve/stub-resolv.conf").unwrap();
+    let live = w.paths.resolve("/etc/resolv.conf").unwrap();
+    let link =
+        File { mode: FileMode::Link, target: Some("/run/resolve/stub-resolv.conf".into()), ..file("/etc/resolv.conf") };
+    let pkg: Resource =
+        serde_json::from_value(json!({"kind": "pkg", "name": "resolved", "source": {"kind": "aqua", "name": "x"}}))
+            .unwrap();
+    let provides = Provides { target, link: live.clone(), saw_link: Default::default() };
+    let mut desired = want([link]);
+    desired.push(Desired { resource: pkg, owner: None });
+    let backends: [&dyn fspec_core::Backend; 2] = [&FileBackend, &provides];
+    apply_scope(&cx, &backends, &desired).unwrap();
+    assert_eq!(provides.saw_link.get(), Some(false));
+    assert_eq!(fs::read_link(&live).unwrap(), PathBuf::from("/run/resolve/stub-resolv.conf"));
+    let cx = Cx { scope: Scope::System, ..w.cx() };
+    let state = State::load(&state_dir(&w.paths, Scope::System).join("state.json")).unwrap();
+    assert!(plan_scope(&cx, &backends, &desired, &state).unwrap().changes.is_empty(), "the deferred link is recorded");
+}
