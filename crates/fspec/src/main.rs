@@ -80,8 +80,9 @@ enum Command {
         /// Pin each image host's pushed image digest instead of resolving packages.
         #[arg(long, conflicts_with_all = ["pkgs", "cache"])]
         images: bool,
-        /// Also record the digest of each CI-built artifact (see `fspec ci packages`).
-        #[arg(long)]
+        /// Only record the digest of each CI-built artifact (see `fspec ci packages`), resolving
+        /// nothing.
+        #[arg(long, conflicts_with = "pkgs")]
         cache: bool,
         /// Registry for --images (default `ghcr.io/<origin owner>`) or --cache (default
         /// `ghcr.io/<origin owner>/fspec-cache`).
@@ -460,8 +461,21 @@ fn main() -> Result<()> {
             let old = Lock::load(&lock_path)?;
             let (fetch, runner) = (LiveFetch::new(), LiveRunner);
             // Updating named packages keeps every gh: load at its locked commit.
-            let keep = !pkgs.is_empty() || *images;
+            let keep = !pkgs.is_empty() || *images || *cache;
             let spec = fspec_eval::evaluate_resolving(&spec_path, &runner, &fetch, &old.loads, keep)?;
+            if *cache {
+                let registry = fspec_build::cache::registry(&runner, &spec_dir, registry.as_deref())?;
+                let mut lock = old.clone();
+                let (lines, failed) = fspec_build::cache::record(&mut lock, &spec.hosts, &registry, &runner)?;
+                lines.iter().for_each(|l| println!("cached {l}"));
+                if lock != old {
+                    lock.save(&lock_path)?;
+                }
+                if !failed.is_empty() {
+                    bail!("{} problem(s):\n{}", failed.len(), failed.join("\n"));
+                }
+                return Ok(());
+            }
             if *images {
                 let registry = registry_for(registry.as_deref(), &runner, &spec_dir)?;
                 let u = fspec_image::update_images(&spec.hosts, &old, &registry, &fetch)?;
@@ -478,7 +492,7 @@ fn main() -> Result<()> {
             }
             let sources = fspec_sources::Cx::new(&fetch, &runner).with_spec_dir(&spec_dir);
             let mut result = fspec_sources::update::update(&spec.hosts, &old, pkgs, &sources)?;
-            let mut errors = std::mem::take(&mut result.errors);
+            let errors = std::mem::take(&mut result.errors);
             for line in &result.changes {
                 println!("{line}");
             }
@@ -490,12 +504,6 @@ fn main() -> Result<()> {
                 }
             }
             result.lock.loads = spec.loads.clone();
-            if *cache {
-                let registry = fspec_build::cache::registry(&runner, &spec_dir, registry.as_deref())?;
-                let (lines, failed) = fspec_build::cache::record(&mut result.lock, &spec.hosts, &registry, &runner)?;
-                lines.iter().for_each(|l| println!("cached {l}"));
-                errors.extend(failed);
-            }
             if result.lock != old {
                 result.lock.save(&lock_path)?;
             }

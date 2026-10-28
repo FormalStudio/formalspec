@@ -41,7 +41,7 @@ locked like any other, at the newest commit of FormalSpec's `main` that changes 
 
 | Flag | Meaning |
 | --- | --- |
-| `--cache` | Also record the OCI digest of each CI-built `git(...)` package ([Building from source](../guides/source-builds.md)) |
+| `--cache` | Only record the OCI digest of each CI-built `git(...)` package ([Building from source](../guides/source-builds.md)), resolving nothing. CI's `record` job runs it |
 | `--images` | Pin each image host's pushed image digest instead of resolving packages ([The system layer](../guides/system-layer.md)) |
 | `--registry <r>` | Registry for `--images` (default `ghcr.io/<owner>`) or `--cache` (default `ghcr.io/<owner>/fspec-cache`) |
 

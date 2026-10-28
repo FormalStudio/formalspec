@@ -123,7 +123,7 @@ pacman = "gcc"
 | --- | --- |
 | `fspec update` | Every package, every `gh:` load, every Tumbleweed snapshot |
 | `fspec update <pkg>...` | Only those packages. Loads stay at their commit |
-| `fspec update --cache` | Also the `oci` digests of CI-built packages |
+| `fspec update --cache` | Only the `oci` digests of CI-built packages |
 | `fspec update --images` | Only the `[system.<host>]` image digests |
 
 Resolvers read GitHub's API with `GITHUB_TOKEN`, or with what `gh auth token` prints. Without a

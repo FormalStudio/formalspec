@@ -275,11 +275,14 @@ change: GitHub's Ubuntu runners have podman.
   spec: a matrix with one job per `git(...)` package and platform that a host
   declares (`ubuntu-24.04` for x86_64-linux, `ubuntu-24.04-arm` for
   aarch64-linux, `macos-26` for aarch64-darwin). Each job installs fspec and
-  oras, runs `fspec build` and pushes with `oras push`. Regenerate it when the
+  oras, runs `fspec build` and pushes with `oras push`. A `record` job then
+  runs `fspec update --cache` on the branch and commits the lock with
+  GITHUB_TOKEN, whose push starts no workflow; pull requests skip it.
+  Regenerate it when the
   set of packages or platforms changes; the lock and `patches/` changes on the
   branch checked out when it was written (main when HEAD is detached) trigger
   it, so a spec kept on its own branch rebuilds from that branch.
-- `fspec update --cache [--registry r]` also resolves
+- `fspec update --cache [--registry r]` resolves no versions, only
   `<registry>/<name>:<rev>-<platform>` with
   `oras manifest fetch --descriptor` and records
   `<platform> = { oci = "<registry>/<name>@sha256:…" }`. The registry defaults
@@ -1797,7 +1800,7 @@ self-signed chain are unverified.
 
 | Command | Does |
 | --- | --- |
-| `fspec update [pkg] [--cache]` | Resolve upstream, rewrite the lock; `--cache` records CI-built OCI digests |
+| `fspec update [pkg] [--cache]` | Resolve upstream, rewrite the lock; `--cache` only records CI-built OCI digests |
 | `fspec update --images` | Pin each image host's pushed digest |
 | `fspec image containerfile --host h` | Print the Containerfile for a bootc host |
 | `fspec build --pkg p --platform t --out d` | Build a `git(...)` package into a `.tar.zst` |

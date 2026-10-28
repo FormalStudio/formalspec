@@ -276,22 +276,18 @@ Prerequisites:
    | `aarch64-linux` | `ubuntu-24.04-arm` |
    | `aarch64-darwin` | `macos-26` |
 
-2. Commit and push the workflow, then wait for the jobs to finish.
-3. Record the artifacts' digests in the lock:
-
-   ```sh
-   fspec update --cache
-   ```
-
-   For each git package and platform it reads `<registry>/<name>:<rev>-<platform>` with
-   `oras manifest fetch --descriptor` and records the digest:
+2. Commit and push the workflow. Once the builds finish, its `record` job runs
+   `fspec update --cache` and commits the lock to the same branch. For each git package and
+   platform that reads `<registry>/<name>:<rev>-<platform>` with `oras manifest fetch --descriptor`
+   and records the digest, resolving nothing else:
 
    ```toml
    [pkg.x86_64-linux]
    oci = "ghcr.io/alex/fspec-cache/hyperfine@sha256:..."
    ```
 
-4. Commit the lock and apply. The host pulls the artifact with `oras pull`, checks it against
+   A build that failed leaves its entry without a digest; the others are still recorded.
+3. Pull the lock commit and apply. The host pulls the artifact with `oras pull`, checks it against
    the digest, and installs it.
 
 The registry defaults to `ghcr.io/<origin owner>/fspec-cache`. `--registry` sets another one:
@@ -301,8 +297,9 @@ fspec update --cache --registry ghcr.io/alex/builds
 ```
 
 A plain `fspec update` keeps the recorded digests while the commit and the patches stay the same.
-When either changes, the entry loses its digest until CI has built the new commit and you run
-`fspec update --cache` again. Until then, hosts build it on their builders or themselves.
+When either changes, the entry loses its digest until the `record` job has run for the new
+commit. Until then, hosts build it on their builders or themselves. Pull requests build but do not
+record; run `fspec update --cache` yourself (it needs `oras`) to record outside CI.
 
 Run `fspec ci packages` again when the set of git packages or platforms changes.
 
