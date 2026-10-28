@@ -448,7 +448,7 @@ impl Runner for Shared {
 }
 
 #[test]
-fn etc_links_config_and_units_and_reloads_systemd_for_a_unit() {
+fn etc_links_config_and_units_and_reloads_dbus_and_systemd_for_them() {
     let mut w = World::new();
     let fedora = serde_json::from_value(json!({"kind": "distro", "distro": "fedora", "init": "systemd"})).unwrap();
     w.facts = Facts::declared("m", "x86_64-linux", Some(&fedora)).unwrap();
@@ -474,6 +474,7 @@ fn etc_links_config_and_units_and_reloads_systemd_for_a_unit() {
     let link = w.paths.system("/etc/dbus-1/system.d/asusd.conf");
     assert!(fs::read_link(&link).unwrap().starts_with("/opt/fspec/store/"));
     assert!(!rec.lines().iter().any(|l| l.contains("daemon-reload")));
+    assert_eq!(rec.lines().iter().filter(|l| *l == "systemctl reload dbus.service").count(), 1);
 
     let unit = json!({"dbus-1/system.d/asusd.conf": "usr/share/dbus-1/system.d/asusd.conf",
         "systemd/system/asusd.service": "usr/lib/systemd/system/asusd.service"});

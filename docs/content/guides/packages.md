@@ -343,7 +343,8 @@ pkg("asusctl", source = github("example/asusctl"), bins = ["asusd", "asusctl"],
 ```
 
 A link under `systemd/` makes the apply run `systemctl daemon-reload` before services start, so
-a `service(...)` can enable a unit the package ships. `etc` is Linux only.
+a `service(...)` can enable a unit the package ships. A link under `dbus-1/` reloads the bus the
+same way, so the service can claim the name its policy grants. `etc` is Linux only.
 
 ### App bundles: apps
 

@@ -511,7 +511,9 @@ under `systemd/` makes the store run `systemctl daemon-reload` before the
 services phase, so `service("asusd")` can enable a unit the package ships. That
 suits a unit whose `ExecStart` already names a path that exists; an upstream
 unit that runs `/usr/bin/asusd` needs a `service(exec = ...)` with the store
-path instead. `etc` is Linux only.
+path instead. A link under `dbus-1/` makes it run `systemctl reload dbus.service`,
+since dbus-broker does not watch its policy directories and a service started
+after it would be refused its bus name. `etc` is Linux only.
 
 An app that ships as several archives takes the rest as `parts`, a map from a
 path inside the package to a `url(...)`, each unpacked there after the main

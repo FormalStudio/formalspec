@@ -372,6 +372,7 @@ impl Backend for StoreBackend {
         let generation = Generation::open(&root, cx.generation, journal)?;
         let mut records = Records::new();
         let mut reload_units = false;
+        let mut reload_bus = false;
         for op in ops {
             let p = pkg_of(op)?;
             let before = op.current.as_ref().and_then(|e| Installed::from_record(&e.record));
@@ -385,6 +386,7 @@ impl Backend for StoreBackend {
                 for dest in before.etc.keys() {
                     unshare(cx, ETC, dest, journal)?;
                     reload_units |= dest.starts_with("systemd/");
+                    reload_bus |= dest.starts_with("dbus-1/");
                 }
                 for app in &before.apps {
                     let at = app_path(cx, app_name(app));
@@ -412,6 +414,7 @@ impl Backend for StoreBackend {
                 share(cx, ETC, dest, &live_path(&inst.store, rel), journal)?;
             }
             reload_units |= inst.etc.keys().any(|d| d.starts_with("systemd/"));
+            reload_bus |= inst.etc.keys().any(|d| d.starts_with("dbus-1/"));
             for app in &inst.apps {
                 place_app(cx, &root, &inst.store, app, journal)?;
             }
@@ -421,6 +424,13 @@ impl Backend for StoreBackend {
         // A unit linked under /etc/systemd is enabled by the services phase, after this one.
         if reload_units && cx.facts.init == Init::Systemd {
             let reload = Cmd::new("systemctl").arg("daemon-reload");
+            journal.record(fspec_core::journal::Undo::Run { cmd: reload.clone() })?;
+            cx.runner.check(&reload)?;
+        }
+        // dbus-broker does not watch its policy directories, so a service the services phase starts
+        // would be refused the bus name its new policy grants.
+        if reload_bus && cx.facts.init == Init::Systemd {
+            let reload = Cmd::new("systemctl").args(["reload", "dbus.service"]);
             journal.record(fspec_core::journal::Undo::Run { cmd: reload.clone() })?;
             cx.runner.check(&reload)?;
         }
