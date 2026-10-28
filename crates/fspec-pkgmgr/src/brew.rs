@@ -1,9 +1,11 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 
 use anyhow::{Result, bail};
 use fspec_core::apply::{Backend, Cx, Op, Phase, Records};
 use fspec_core::facts::Os;
 use fspec_core::journal::{Journal, Undo};
+use fspec_core::par;
 use fspec_core::resource::{Pkg, PkgMode, Resource, Source};
 use fspec_core::runner::Cmd;
 use fspec_core::state::Entry;
@@ -122,17 +124,46 @@ impl Backend for BrewBackend {
     }
 
     fn drift(&self, cx: &Cx, entry: &Entry) -> Result<Vec<String>> {
-        let w = want(cx, pkg(&entry.resource)?)?;
-        let output = cx.runner.run(&list_cmd(&w.formula))?;
-        if output.status != 0 {
-            return Ok(vec![format!("{} is not installed", w.formula.name)]);
-        }
-        let live = output.stdout.split_whitespace().last();
-        Ok(match (w.pinned, live, &w.locked) {
-            (true, Some(l), Some(want)) if !same_version(l, want) => {
-                vec![format!("version {l} is installed, {want} is locked")]
+        Ok(self.drift_all(cx, std::slice::from_ref(entry))?.remove(0))
+    }
+
+    /// brew takes about a second to start, so one `brew list --versions` answers every formula
+    /// and one more every cask.
+    fn drift_all(&self, cx: &Cx, entries: &[Entry]) -> Result<Vec<Vec<String>>> {
+        let wants: Vec<Want> = entries.iter().map(|e| want(cx, pkg(&e.resource)?)).collect::<Result<_>>()?;
+        let mut live = [BTreeMap::new(), BTreeMap::new()];
+        for cask in [false, true] {
+            if !wants.iter().any(|w| w.formula.cask == cask) {
+                continue;
             }
-            _ => vec![],
+            let c = Cmd::new("brew").arg("list");
+            let out = cx.runner.run(&if cask { c.arg("--cask") } else { c }.arg("--versions"))?;
+            for line in out.stdout.lines() {
+                let mut words = line.split_whitespace();
+                if let (Some(name), Some(newest)) = (words.next(), words.last()) {
+                    live[usize::from(cask)].insert(name.to_string(), newest.to_string());
+                }
+            }
+        }
+        // A name the full list misses is asked about on its own, as it always was: a rooted
+        // apply's runner answers every query with nothing, which is not "not installed".
+        par::try_map(&wants, |w| -> Result<Vec<String>> {
+            let l = match live[usize::from(w.formula.cask)].get(&w.formula.name) {
+                Some(l) => Some(l.clone()),
+                None => {
+                    let output = cx.runner.run(&list_cmd(&w.formula))?;
+                    if output.status != 0 {
+                        return Ok(vec![format!("{} is not installed", w.formula.name)]);
+                    }
+                    output.stdout.split_whitespace().last().map(str::to_string)
+                }
+            };
+            Ok(match (w.pinned, l, &w.locked) {
+                (true, Some(l), Some(want)) if !same_version(&l, want) => {
+                    vec![format!("version {l} is installed, {want} is locked")]
+                }
+                _ => vec![],
+            })
         })
     }
 

@@ -752,7 +752,9 @@ Before step 4, FormalSpec takes a btrfs or APFS snapshot of the paths it is
 about to touch when the filesystem supports it.
 
 Only reads and staging run concurrently, up to eight at a time: the drift
-checks `plan` makes on unchanged resources, and the store's downloads and
+checks `plan` makes on unchanged resources (one batched query per package
+manager answers all of its packages: `rpm -q`, `brew list --versions`), and
+the store's downloads and
 registry pulls in step 1, each verified and unpacked into its own staging
 directory. Builds stay one at a time, since each takes the machine and shares
 the build cache. Every commit runs

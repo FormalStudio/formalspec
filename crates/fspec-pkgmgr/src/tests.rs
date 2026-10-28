@@ -1348,8 +1348,9 @@ fn a_large_spec_queries_versions_in_batches() {
     assert_eq!(applied.iter().filter(|l| l.starts_with(f.install)).count(), 2, "{applied:#?}");
 
     assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
+    // Three queries for the base and one for every package together.
     let planned = w.take();
-    assert!(planned.len() <= 33, "{planned:#?}");
+    assert_eq!(planned.len(), 4, "{planned:#?}");
 }
 
 const DRY_RUN: &str = "zypper --non-interactive install --dry-run --auto-agree-with-licenses";
@@ -1384,4 +1385,16 @@ fn the_pkg_dry_run_takes_the_distro_adds_and_ignores_what_it_cannot_find() {
     let want = [distro_res(TW, &["htop"]), FAMS[4].pkg("rustup", &[]), FAMS[4].pkg("jq", &[])];
     w.apply(Scope::System, &want).unwrap();
     assert!(!w.take().iter().any(|l| l.starts_with(DRY_RUN)));
+}
+
+#[test]
+fn brew_drift_lists_every_formula_and_cask_once() {
+    let w = World::darwin();
+    let want = [brew("fd", false, "pinned"), brew("jq", false, "pinned"), brew("ghostty", true, "pinned")];
+    w.apply(Scope::User, &want).unwrap();
+    w.take();
+    w.answer("brew list --versions", 0, "fd 10.2.0\njq 1.7.1 1.8.0\n");
+    w.answer("brew list --cask --versions", 0, "ghostty 1.2.0\n");
+    assert!(w.plan(Scope::User, &want).unwrap().changes.is_empty());
+    assert_eq!(w.take(), ["brew list --versions", "brew list --cask --versions"]);
 }

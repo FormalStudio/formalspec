@@ -188,6 +188,13 @@ pub trait Backend: Sync {
         Ok(vec![])
     }
 
+    /// [`Backend::drift`] for many entries, in their order. The default asks for each at once
+    /// on several threads; a backend whose live state comes from one query (every installed
+    /// package and its version) answers them all with it.
+    fn drift_all(&self, cx: &Cx, entries: &[Entry]) -> Result<Vec<Vec<String>>> {
+        par::try_map(entries, |e| self.drift(cx, e))
+    }
+
     /// Whether `new`, which differs from the applied `entry` only in its `src`, yields what is
     /// already live, as when a file's source moves to another path with the same bytes. Such a
     /// change takes the new config into the state without a commit.
@@ -269,20 +276,28 @@ pub fn plan_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], state
     }
     p.changes.retain(|c| !moved.contains_key(&c.key));
     let changed: Vec<&Key> = p.changes.iter().map(|c| &c.key).collect();
-    let unchanged: Vec<(&Key, &Entry)> = state.entries.iter().filter(|(key, _)| !changed.contains(key)).collect();
-    // Drift only reads the live system, and each check waits on its own query.
-    let drifted = par::try_map(&unchanged, |(key, entry)| -> Result<Vec<String>> {
-        let Ok(b) = backend_for(cx, backends, &entry.resource) else { return Ok(vec![]) };
-        // A moved source is read where it is now; the old path may be gone from the spec.
-        match moved.get(*key) {
-            Some(r) => b.drift(cx, &Entry { resource: r.clone(), ..(*entry).clone() }),
-            None => b.drift(cx, entry),
+    // A moved source is read where it is now; the old path may be gone from the spec.
+    let mut groups: Vec<(&dyn Backend, Vec<Key>, Vec<Entry>)> = Vec::new();
+    for (key, entry) in state.entries.iter().filter(|(key, _)| !changed.contains(key)) {
+        let Ok(b) = backend_for(cx, backends, &entry.resource) else { continue };
+        let entry = match moved.get(key) {
+            Some(r) => Entry { resource: r.clone(), ..entry.clone() },
+            None => entry.clone(),
+        };
+        match groups.iter_mut().find(|(x, _, _)| x.name() == b.name()) {
+            Some((_, keys, entries)) => {
+                keys.push(key.clone());
+                entries.push(entry);
+            }
+            None => groups.push((b, vec![key.clone()], vec![entry])),
         }
-    })?;
-    for ((key, _), notes) in unchanged.into_iter().zip(drifted) {
-        if !notes.is_empty() {
+    }
+    // Drift only reads the live system, so the backends check at once.
+    let drifted = par::try_map(&groups, |(b, _, entries)| b.drift_all(cx, entries))?;
+    for ((_, keys, _), notes) in groups.into_iter().zip(drifted) {
+        for (key, notes) in keys.into_iter().zip(notes).filter(|(_, n)| !n.is_empty()) {
             let detail = String::new();
-            p.changes.push(Change { key: key.clone(), scope: cx.scope, action: Action::Drift { notes }, detail });
+            p.changes.push(Change { key, scope: cx.scope, action: Action::Drift { notes }, detail });
         }
     }
     let claimed = claimed(cx, backends, &desired);

@@ -122,9 +122,15 @@ fn names_record(names: &[String], live: &BTreeMap<String, String>) -> Map<String
 /// Notes for names that are gone or at another version than the record says, and for `!name`
 /// packages that are installed.
 pub(crate) fn drift_names(cx: &Cx, fam: Family, names: &[String], rec: &Map<String, Value>) -> Result<Vec<String>> {
-    let gone: Vec<String> = names.iter().filter_map(|n| n.strip_prefix('!')).map(str::to_string).collect();
-    let queried: Vec<String> = names.iter().filter(|n| !n.starts_with('!')).chain(&gone).cloned().collect();
-    let live = live_versions(cx, fam, &queried)?;
+    Ok(names_drift(names, rec, &live_versions(cx, fam, &queried(names))?))
+}
+
+/// What [`drift_names`] asks about: the wanted names and the `!name` ones.
+fn queried(names: &[String]) -> Vec<String> {
+    names.iter().map(|n| n.strip_prefix('!').unwrap_or(n).to_string()).collect()
+}
+
+fn names_drift(names: &[String], rec: &Map<String, Value>, live: &BTreeMap<String, String>) -> Vec<String> {
     let mut notes = Vec::new();
     let versions = rec.get("versions").and_then(Value::as_object);
     for n in names {
@@ -143,7 +149,7 @@ pub(crate) fn drift_names(cx: &Cx, fam: Family, names: &[String], rec: &Map<Stri
             _ => {}
         }
     }
-    Ok(notes)
+    notes
 }
 
 pub(crate) fn recorded_names(rec: &Map<String, Value>) -> Option<Vec<String>> {
@@ -279,15 +285,24 @@ impl PkgEngine {
         want(self.0, cx, p).map(drop)
     }
 
-    pub fn drift(&self, cx: &Cx, entry: &Entry) -> Result<Vec<String>> {
+    /// Every entry's names go through one batched version query.
+    pub fn drift_all(&self, cx: &Cx, entries: &[Entry]) -> Result<Vec<Vec<String>>> {
         let fam = self.0;
-        let mut notes = drift_names(cx, fam, &entry_names(fam, entry)?, &entry.record)?;
-        if let Some(c) = want(fam, cx, pkg(&entry.resource)?)?.cached
-            && text(&entry.record, "file").as_deref() != Some(&c.file)
-        {
-            notes.push(format!("lock moved to {}", c.file));
-        }
-        Ok(notes)
+        let names: Vec<Vec<String>> = entries.iter().map(|e| entry_names(fam, e)).collect::<Result<_>>()?;
+        let live = live_versions(cx, fam, &queried(&names.concat()))?;
+        entries
+            .iter()
+            .zip(&names)
+            .map(|(entry, names)| {
+                let mut notes = names_drift(names, &entry.record, &live);
+                if let Some(c) = want(fam, cx, pkg(&entry.resource)?)?.cached
+                    && text(&entry.record, "file").as_deref() != Some(&c.file)
+                {
+                    notes.push(format!("lock moved to {}", c.file));
+                }
+                Ok(notes)
+            })
+            .collect()
     }
 
     /// On zypper, when the distro phase also changes the system, the new names go through one
@@ -437,7 +452,11 @@ macro_rules! family_backend {
             }
 
             fn drift(&self, cx: &Cx, entry: &Entry) -> Result<Vec<String>> {
-                PkgEngine($fam).drift(cx, entry)
+                Ok(PkgEngine($fam).drift_all(cx, std::slice::from_ref(entry))?.remove(0))
+            }
+
+            fn drift_all(&self, cx: &Cx, entries: &[Entry]) -> Result<Vec<Vec<String>>> {
+                PkgEngine($fam).drift_all(cx, entries)
             }
 
             fn prepare(&self, cx: &Cx, ops: &[Op], staging: &Path) -> Result<()> {
