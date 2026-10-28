@@ -258,7 +258,9 @@ cache and keeps the files (zypper `mr -k`, dnf `keepcache`, apt with docker's
 sonames the host has. On Linux, `deps` without `image` fails the plan. A
 macOS build has no container of its kind, so there `image` fails the plan and
 `deps` are Homebrew formulae, installed with `brew install` before the recipe
-runs (`git(..., deps = ["go"])`); the CI's macOS runners have brew. Pin the image by
+runs (`git(..., deps = ["go"])`); the CI's macOS runners have brew. Homebrew
+refuses root, so a macOS host build under the system scope's sudo runs as
+`$SUDO_USER`, in a cache chowned to it. Pin the image by
 digest (`…@sha256:…`) for builds that repeat exactly. The CI workflow needs no
 change: GitHub's Ubuntu runners have podman.
 

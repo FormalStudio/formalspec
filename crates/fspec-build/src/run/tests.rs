@@ -277,3 +277,15 @@ fn an_explicit_build_in_docker_gets_the_cache_mounted_and_handed_back() {
     assert!(run.contains(&format!("-e FSPEC_CACHE={}", cache.join("cache").display())), "{run}");
     assert!(run.contains("chown -R ") && run.contains(" EXIT"), "{run}");
 }
+
+#[test]
+fn a_build_as_the_sudo_user_keeps_its_environment_past_sudo() {
+    let cmd = Cmd::new("sh").args(["-c", "brew install x"]).env("FSPEC_SRC", "/c/src").env("PATH", "/opt/homebrew/bin");
+    let wrapped = super::as_user(&cmd, "kyan");
+    assert_eq!(wrapped.program, "sudo");
+    assert_eq!(
+        wrapped.args,
+        ["-u", "kyan", "-H", "env", "FSPEC_SRC=/c/src", "PATH=/opt/homebrew/bin", "sh", "-c", "brew install x"]
+    );
+    assert!(wrapped.env.is_empty());
+}

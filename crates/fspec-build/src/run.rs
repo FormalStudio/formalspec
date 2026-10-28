@@ -50,7 +50,16 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     // Two applies can build the same package at once; the second waits for the first's cache.
     let lock = fs::File::create(cache.with_extension("lock"))?;
     lock.lock().with_context(|| format!("locking {}", cache.display()))?;
-    let work = tempfile::tempdir().context("creating a build directory")?;
+    let user = build_user(job.platform);
+    if let Some(u) = &user {
+        runner.check(&Cmd::new("chown").args(["-R", u]).arg(cache.display().to_string()))?;
+    }
+    // Inside the cache, so a build run as the sudo user can write it.
+    let work = tempfile::tempdir_in(&cache).context("creating a build directory")?;
+    if let Some(u) = &user {
+        runner.check(&Cmd::new("chown").args(["-R", u]).arg(work.path().display().to_string()))?;
+    }
+    let runner = &AsUser { inner: runner, user: user.as_deref() };
     let dirs = Dirs {
         src: cache.join("src"),
         build: cache.join("build"),
@@ -128,6 +137,40 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     fs::write(job.out.join("tag"), &tag)?;
     drop(lock);
     Ok(Built { archive, tag })
+}
+
+/// Homebrew refuses to run as root, and a macOS recipe installs its tools with it. When the
+/// system scope's apply runs through sudo, a macOS build runs as the user who ran sudo.
+fn build_user(platform: &str) -> Option<String> {
+    // SAFETY: geteuid has no preconditions.
+    let root = unsafe { libc::geteuid() == 0 };
+    std::env::var("SUDO_USER").ok().filter(|u| root && platform.ends_with("-darwin") && u != "root")
+}
+
+struct AsUser<'a> {
+    inner: &'a dyn Runner,
+    user: Option<&'a str>,
+}
+
+impl Runner for AsUser<'_> {
+    fn run(&self, cmd: &Cmd) -> Result<fspec_core::runner::Output> {
+        match self.user {
+            Some(u) => self.inner.run(&as_user(cmd, u)),
+            None => self.inner.run(cmd),
+        }
+    }
+}
+
+/// `cmd` through `sudo -u user -H env`, which carries its environment and PATH past sudo's reset.
+fn as_user(cmd: &Cmd, user: &str) -> Cmd {
+    let mut out = Cmd::new("sudo").args(["-u", user, "-H", "env"]);
+    if !cmd.env.iter().any(|(k, _)| k == "PATH")
+        && let Ok(path) = std::env::var("PATH")
+    {
+        out = out.arg(format!("PATH={path}"));
+    }
+    out = out.args(cmd.env.iter().map(|(k, v)| format!("{k}={v}"))).arg(&cmd.program).args(cmd.args.iter().cloned());
+    Cmd { stdin: cmd.stdin.clone(), stdin_file: cmd.stdin_file.clone(), interactive: cmd.interactive, ..out }
 }
 
 /// The recipe as one `podman run` (or `docker run` where podman is missing) of `image`: each of

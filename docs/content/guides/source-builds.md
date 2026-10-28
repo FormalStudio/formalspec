@@ -185,7 +185,7 @@ pkg("uxplay",
 
 On Linux, `deps` without `image` fails the plan. On macOS there is no container of its kind, so
 `image` fails the plan and `deps` are Homebrew formulae, installed with `brew install` before the
-recipe runs:
+recipe runs. Homebrew refuses to run as root, so a build on a Mac runs as the user who ran sudo:
 
 ```starlark
 pkg("tool", source = git("https://github.com/example/tool", deps = ["go"])),
