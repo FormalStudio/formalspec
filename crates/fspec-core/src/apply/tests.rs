@@ -234,6 +234,15 @@ fn removing_a_package_trashes_its_data_unless_keep_data() {
     assert!(kept.join("save").exists());
     let trashed = w.paths.home.join(".local/state/fspec/trash/system-2/steam/0-Steam/save");
     assert_eq!(fs::read_to_string(trashed).unwrap(), "game");
+    // Root made those directories; the user scope trashes into the same root later.
+    let home = fs::metadata(&w.paths.home).unwrap();
+    let chown = format!(
+        "chown -R {}:{} {}",
+        std::os::unix::fs::MetadataExt::uid(&home),
+        std::os::unix::fs::MetadataExt::gid(&home),
+        w.paths.home.join(".local/state/fspec/trash").display()
+    );
+    assert!(w.runner.lines().contains(&chown), "{:?}", w.runner.lines());
 }
 
 #[test]

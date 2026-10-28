@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::io::ErrorKind;
+use std::os::unix::fs::MetadataExt;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
@@ -14,6 +15,7 @@ use crate::apply::{Cx, state_dir};
 use crate::journal::{Journal, Undo, move_any};
 use crate::paths::Paths;
 use crate::resource::{Pkg, Scope, Source};
+use crate::runner::Cmd;
 
 const MANIFEST: &str = "manifest.json";
 
@@ -113,7 +115,21 @@ pub fn trash_paths(cx: &Cx, journal: &mut Journal, pkg: Option<&str>, paths: &[P
         move_any(path, &dir.join(&stored)).with_context(|| format!("moving {} to the trash", path.display()))?;
         manifest.items.push(Item { pkg: pkg.map(Into::into), from: cx.paths.to_spec(path), stored });
         manifest.save(&dir)?;
+        give_home_trash(cx, &dir)?;
     }
+    Ok(())
+}
+
+/// The system scope runs as root, so the home trash directories it makes would be root's, and
+/// the user scope could no longer trash anything into them.
+fn give_home_trash(cx: &Cx, dir: &Path) -> Result<()> {
+    if cx.scope != Scope::System || !dir.starts_with(&cx.paths.home) {
+        return Ok(());
+    }
+    let home = fs::metadata(&cx.paths.home).with_context(|| format!("reading {}", cx.paths.home.display()))?;
+    let owner = format!("{}:{}", home.uid(), home.gid());
+    let root = trash_root(cx.paths, Scope::User);
+    cx.runner.check(&Cmd::new("chown").args(["-R", &owner]).arg(root.display().to_string()))?;
     Ok(())
 }
 

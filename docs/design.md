@@ -818,7 +818,8 @@ Trash lives under `/var/lib/fspec/trash/<generation>/` and
 `manifest.json` per generation that remembers each item's package and original
 path. When the system scope trashes a path in the home (Flatpak data), the
 directory is named `system-<generation>`, so it never collides with the user
-scope's own numbering. The engine does the moving, after every backend has
+scope's own numbering, and the home's trash is handed to the home's owner so the user scope
+can still write to it. The engine does the moving, after every backend has
 removed the package and under the apply's journal, so every package source
 behaves the same and a failing apply puts the data back. Plan lists the paths
 that will move on the package's removal line (`data to trash: ...`).
