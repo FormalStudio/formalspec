@@ -288,6 +288,20 @@ fn a_link_can_point_outside_the_repo_at_a_directory_that_is_not_there_yet() {
 }
 
 #[test]
+fn a_link_over_a_directory_trashes_the_directory_and_rollback_brings_it_back() {
+    let w = World::new();
+    fs::create_dir_all(w.at(".claude-pulse/plugins")).unwrap();
+    fs::write(w.at(".claude-pulse/plugins/installed.json"), "{}").unwrap();
+    let f = File { mode: FileMode::Link, target: Some("~/.claude/plugins".into()), ..file("~/.claude-pulse/plugins") };
+    fs::write(w.at("blocker"), "i am a file").unwrap();
+    assert!(w.apply(&want([f.clone(), text("~/blocker/b", "x")])).is_err());
+    assert_eq!(w.read(".claude-pulse/plugins/installed.json"), "{}");
+
+    w.apply(&want([f])).unwrap();
+    assert_eq!(fs::read_link(w.at(".claude-pulse/plugins")).unwrap(), w.at(".claude/plugins"));
+}
+
+#[test]
 fn a_link_into_the_repo_can_be_a_directory() {
     let w = World::new();
     fs::create_dir_all(w.spec.join("files/nvim")).unwrap();

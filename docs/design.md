@@ -884,6 +884,7 @@ phase, so `/etc/resolv.conf` onto resolved's stub does not cut DNS before the
 packages that need it are installed. FormalSpec
 owns only the link: when an app replaces it with a file, the link comes back
 and nothing is copied into the target, and `fspec adopt` leaves it alone.
+A real directory in the link's place goes to the trash first, journaled.
 
 ### Three-way merge for `patch`
 

@@ -416,6 +416,11 @@ fn file_mode(cx: &Cx, f: &File) -> Result<Option<u32>> {
 
 fn commit_link(cx: &Cx, op: &Op, f: &File, path: &Path, journal: &mut Journal) -> Result<Map<String, Value>> {
     let target = link_target(cx, f)?;
+    // A directory an app made before the link existed holds its own data; the trash keeps it
+    // and a rollback puts it back.
+    if fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()) {
+        fspec_core::trash::trash_paths(cx, journal, None, &[path.to_path_buf()])?;
+    }
     let old = op.record();
     let into_repo = f.src.is_some() && live::recorded(&old, "src").is_some();
     if let (true, Some(prev), Live::File(_)) = (into_repo, live::recorded(&old, "target"), read_live(path)?)

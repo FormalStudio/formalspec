@@ -213,6 +213,9 @@ file("~/.gradle", mode = "link", target = "/Volumes/External/gradle"),
 file("~/.local/share/fonts", mode = "link", target = "~/Sync/fonts"),
 ```
 
+A real directory already at the path, such as one an app made before the spec declared the link,
+goes to fspec's trash before the link is made, and a rollback puts it back.
+
 Some apps save a config by writing a new file and renaming it over the old one, which replaces
 the symlink with a regular file. The next apply handles it:
 
