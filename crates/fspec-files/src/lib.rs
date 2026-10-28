@@ -60,6 +60,15 @@ impl Backend for FileBackend {
 
     fn drift(&self, cx: &Cx, entry: &Entry) -> Result<Vec<String>> {
         let Some(path) = target_path(cx, &entry.resource)? else { return Ok(vec![]) };
+        if let Resource::File(f) = &entry.resource
+            && f.mode == FileMode::Absent
+        {
+            return Ok(fs::symlink_metadata(&path)
+                .is_ok()
+                .then(|| "it exists again".to_string())
+                .into_iter()
+                .collect());
+        }
         let mut notes = drift_notes(&entry.resource, &entry.record, &read_live(&path)?);
         let recorded = live::recorded(&entry.record, "sha256");
         match &entry.resource {
@@ -83,7 +92,7 @@ impl Backend for FileBackend {
         let Resource::File(f) = new else { return Ok(false) };
         Ok(match f.mode {
             // A seeded file is never written again, whatever its source.
-            FileMode::Seed => true,
+            FileMode::Seed | FileMode::Absent => true,
             FileMode::Managed => {
                 render_bytes(cx, f).is_ok_and(|b| live::recorded(&entry.record, "sha256") == Some(sha256(&b).as_str()))
             }
@@ -103,6 +112,7 @@ impl Backend for FileBackend {
                     FileMode::Patch => {
                         patch_result(cx, op, f).with_context(|| f.path.clone())?;
                     }
+                    FileMode::Absent => {}
                 },
                 Resource::Secret(s) => {
                     let ids = secret::identity_paths(cx.paths, cx.scope, &s.identities)?;
@@ -242,6 +252,12 @@ fn check_file(cx: &Cx, f: &File) -> Result<()> {
             }
             Ok(())
         }
+        FileMode::Absent => {
+            if f.src.is_some() || f.content.is_some() || f.target.is_some() || !f.owns.is_empty() || f.perms.is_some() {
+                bail!("an absent file takes only its path");
+            }
+            Ok(())
+        }
     }
 }
 
@@ -377,6 +393,17 @@ fn commit_file(
             }
             Ok(Some(record))
         }
+        FileMode::Absent => {
+            match fs::symlink_metadata(&path) {
+                Err(_) => {}
+                Ok(m) if m.is_dir() => bail!("{} is a directory; absent only removes a file or a link", path.display()),
+                Ok(_) => {
+                    journal.backup(&path)?;
+                    remove_any(&path)?;
+                }
+            }
+            Ok(Some(Map::new()))
+        }
     }
 }
 
@@ -433,6 +460,9 @@ fn awaits_target(cx: &Cx, f: &File) -> Result<bool> {
 
 /// Remove what fspec wrote, but only while it still is what fspec wrote.
 fn remove_file_resource(cx: &Cx, op: &Op, mode: FileMode, path: &Path, journal: &mut Journal) -> Result<()> {
+    if mode == FileMode::Absent {
+        return Ok(());
+    }
     let record = op.record();
     let live = read_live(path)?;
     let remove = match (mode, &live) {

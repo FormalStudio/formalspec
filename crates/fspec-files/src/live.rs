@@ -45,7 +45,7 @@ pub fn drift_notes(resource: &Resource, record: &Map<String, Value>, live: &Live
     match resource {
         Resource::File(f) => match f.mode {
             FileMode::Managed => content_notes(record, live),
-            FileMode::Seed => vec![],
+            FileMode::Seed | FileMode::Absent => vec![],
             FileMode::Link => link_notes(record, live),
             FileMode::Patch => patch_notes(f, record, live),
         },

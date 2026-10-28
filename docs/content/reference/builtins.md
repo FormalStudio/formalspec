@@ -206,7 +206,7 @@ A file. A path under `~/` is in the user scope; an absolute path is in the syste
 | `src` | path | none | A file in the spec repository, copied as is. For `link`, a file or directory |
 | `content` | string or value | none | A string is written as is. Any other value is serialized to `format` |
 | `target` | path | none | `link` only: a path outside the repository to point at. One that does not exist yet is linked at the end of the apply, after packages and services |
-| `mode` | string | `"managed"` | `"managed"`, `"link"`, `"seed"` or `"patch"` |
+| `mode` | string | `"managed"` | `"managed"`, `"link"`, `"seed"`, `"patch"` or `"absent"` |
 | `format` | string | from the extension | `"text"`, `"json"`, `"toml"`, `"yaml"`, `"ini"`, `"plist"` or `"lua"` |
 | `owns` | dict | `{}` | `patch` only: dotted key paths and their values |
 | `on_conflict` | string | `"ours"` | `patch` only: `"ours"`, `"theirs"` or `"fail"` when a key you own changed on disk |
@@ -220,6 +220,7 @@ Each mode takes its content one way:
 | `managed`, `seed` | exactly one of `src` or `content` |
 | `link` | exactly one of `src` or `target` |
 | `patch` | `owns` only, on a JSON, TOML or YAML file |
+| `absent` | nothing but `path` |
 
 The format comes from the path's extension (`.json`, `.toml`, `.yaml`, `.yml`, `.ini`,
 `.plist`, `.lua`) unless `format` sets it. A dict or list `content` needs a format. `lua` writes

@@ -661,6 +661,8 @@ pub enum FileMode {
     Link,
     Seed,
     Patch,
+    /// The path must not exist: a file or link there is removed, and nothing is written.
+    Absent,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

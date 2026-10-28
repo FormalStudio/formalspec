@@ -847,6 +847,7 @@ Configs are generated from Starlark data and serialized to the target format
 | `link` | Symlink into the repo working copy, stow style | The edit lands in the repo. If the app replaces the symlink with a file (an atomic rename), FormalSpec copies the content back and relinks |
 | `seed` | Written once if missing | Never touched again |
 | `patch` | A file the app owns; FormalSpec owns only the declared keys | Three-way merge, below |
+| `absent` | Nothing: a file or link at the path is removed, a directory is an error | Removed again; dropping the line leaves the path alone |
 
 Moving a `managed` file's `src` to another repo path with the same bytes, or
 any `src` change of a `seed` file, is not a change: the plan shows nothing and

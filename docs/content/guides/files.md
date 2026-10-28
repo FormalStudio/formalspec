@@ -16,6 +16,7 @@ written as you; an absolute path belongs to the system scope and is written as r
 | `link` | A symlink into the spec repository or to a path outside it | You want edits to land in the repository at once, or the file is a directory, or it lives on another drive |
 | `seed` | Written once, if nothing is there | The app needs a starting file and owns it from then on |
 | `patch` | The app's own file; fspec owns only the keys you list | The app rewrites the file itself and you only care about a few settings |
+| `absent` | Nothing: a file or link at the path is removed | A file left by hand or by an installer must go, such as a temporary sudoers grant |
 
 Copies are the default because they survive apps that rename, chmod or lock their config, and the
 hash in state finds an edit as well as a symlink would.
@@ -187,6 +188,7 @@ What `adopt` does depends on the mode:
 | `link` with `target` | Nothing to do |
 | `patch` | Lists the owned keys that changed on disk. Change `owns` to match |
 | `seed` | Refused: fspec never manages a seed after the first write |
+| `absent` | Refused: there is no content to adopt |
 
 ## Link a file or directory
 
@@ -229,6 +231,19 @@ file("~/.config/app/state.json", mode = "seed", content = {"first_run": False}),
 
 A seed never shows drift, and changing its `src` or `content` changes nothing on disk. Removing the
 line deletes the file only while it still holds what fspec wrote.
+
+## Remove a file that must not exist
+
+`absent` takes only the path. Apply removes a file or symlink there (a directory is an error, so a
+typo cannot delete a tree), and removes it again whenever it reappears:
+
+```starlark
+# Passwordless sudo for the first apply, until the spec's sudo PAM config is in place.
+file("/etc/sudoers.d/99-first-apply", mode = "absent"),
+```
+
+Removing the line leaves the path alone. Inside a package's `files`, the removal waits for that
+package: if it is deferred, so is the file.
 
 ## Patch keys in a file the app owns
 

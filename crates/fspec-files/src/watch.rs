@@ -29,7 +29,7 @@ pub fn collect(paths: &Paths) -> Result<Vec<Watched>> {
         let state = State::load(&state_dir(paths, scope).join("state.json"))?;
         for (key, entry) in state.entries {
             let spec_path = match &entry.resource {
-                Resource::File(f) if f.mode != FileMode::Seed => &f.path,
+                Resource::File(f) if !matches!(f.mode, FileMode::Seed | FileMode::Absent) => &f.path,
                 Resource::Secret(s) => &s.path,
                 _ => continue,
             };

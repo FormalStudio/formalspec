@@ -30,6 +30,7 @@ pub fn adopt(cx: &Cx, f: &File, record: &Map<String, Value>) -> Result<Outcome> 
     let path = cx.resolve(&f.path)?;
     let live = read_live(&path)?;
     match f.mode {
+        FileMode::Absent => bail!("{} is declared absent, so there is nothing to adopt", f.path),
         FileMode::Seed => bail!("{} is a seed: fspec never manages it after the first write", f.path),
         FileMode::Patch => {
             let notes = live::drift_notes(&fspec_core::Resource::File(f.clone()), record, &live);

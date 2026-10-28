@@ -334,6 +334,33 @@ fn seed_is_written_once_and_never_touched() {
 }
 
 #[test]
+fn absent_removes_the_path_whenever_it_reappears_and_removal_leaves_it_alone() {
+    let w = World::new();
+    fs::write(w.at(".grant"), "temporary").unwrap();
+    let f = File { mode: FileMode::Absent, ..file("~/.grant") };
+    let cx = w.cx();
+    FileBackend.check(&cx, &Resource::File(f.clone())).unwrap();
+    w.apply(&want([f.clone()])).unwrap();
+    assert!(!w.at(".grant").exists());
+    assert!(w.plan(&want([f.clone()])).changes.is_empty());
+
+    std::os::unix::fs::symlink("elsewhere", w.at(".grant")).unwrap();
+    assert_eq!(drift_notes_of(&w.plan(&want([f.clone()]))), ["it exists again"]);
+    w.apply(&want([f.clone()])).unwrap();
+    assert!(fs::symlink_metadata(w.at(".grant")).is_err());
+
+    fs::write(w.at(".grant"), "back").unwrap();
+    w.apply(&[]).unwrap();
+    assert_eq!(w.read(".grant"), "back");
+
+    fs::create_dir(w.at(".dir")).unwrap();
+    let dir = File { mode: FileMode::Absent, ..file("~/.dir") };
+    assert!(format!("{:#}", w.apply(&want([dir])).unwrap_err()).contains("is a directory"));
+    let bad = File { mode: FileMode::Absent, ..text("~/.x", "y") };
+    assert!(FileBackend.check(&w.cx(), &Resource::File(bad)).is_err());
+}
+
+#[test]
 fn seed_over_an_existing_file_leaves_it_and_removal_keeps_it() {
     let w = World::new();
     fs::write(w.at(".seed"), "already here").unwrap();
