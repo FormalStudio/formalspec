@@ -45,6 +45,9 @@ Removing a `user` stops managing it and leaves the account, its home and its gro
   Packages create groups such as `docker` or `nordvpn` while they install, so one apply both
   installs the package and puts you in its group. fspec adds missing groups and never removes
   one.
+- An account with no range in `/etc/subuid` or `/etc/subgid` gets one, the first free 65536-wide
+  block at or above 100000, the same in both files, so rootless podman can pull images. fspec
+  leaves an existing range alone, and does nothing on a host without those files.
 - On a systemd host, a group that is still missing then gets one `systemd-sysusers` run, which
   creates groups that a package or a `file` declared in `/etc/sysusers.d`. A group that still does
   not exist is skipped with a warning and joined on a later apply:

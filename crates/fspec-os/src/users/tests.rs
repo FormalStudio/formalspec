@@ -223,3 +223,57 @@ fn a_group_that_does_not_exist_yet_waits_for_a_later_apply() {
             && at("systemd-sysusers") < at("usermod -aG wheel,docker kyan")
     );
 }
+
+fn subid_files(w: &World, subuid: &str, subgid: &str) {
+    fs::create_dir_all(w.paths.root.join("etc")).unwrap();
+    fs::write(w.paths.root.join("etc/subuid"), subuid).unwrap();
+    fs::write(w.paths.root.join("etc/subgid"), subgid).unwrap();
+}
+
+#[test]
+fn an_account_without_a_subid_range_gets_the_first_free_block() {
+    let w = World::linux(Init::Systemd);
+    subid_files(&w, "dockremap:100000000:100000001\nold:100000:70000\n", "dockremap:100000000:100000001\n");
+    w.runner.respond("getent passwd kyan", out("kyan:x:1000:1000::/home/kyan:/usr/bin/bash\n"));
+    w.runner.respond("id -nG kyan", out("kyan wheel docker\n"));
+    apply_scope(&w.cx(Scope::System), &[&UsersBackend], &[desired(kyan("bash"))]).unwrap();
+    let lines = w.runner.lines();
+    assert!(
+        lines.contains(&"usermod --add-subuids 231072-296607 --add-subgids 231072-296607 kyan".to_string()),
+        "{lines:?}"
+    );
+}
+
+#[test]
+fn an_existing_subid_range_is_left_alone() {
+    let w = World::linux(Init::Systemd);
+    subid_files(&w, "kyan:100000:65536\n", "1000:100000:65536\n");
+    w.runner.respond("getent passwd kyan", out("kyan:x:1000:1000::/home/kyan:/usr/bin/bash\n"));
+    w.runner.respond("id -nG kyan", out("kyan wheel docker\n"));
+    apply_scope(&w.cx(Scope::System), &[&UsersBackend], &[desired(kyan("bash"))]).unwrap();
+    assert!(!w.runner.lines().iter().any(|l| l.contains("subuids") || l.contains("subgids")));
+
+    let w = World::linux(Init::Systemd);
+    subid_files(&w, "kyan:100000:65536\n", "");
+    w.runner.respond("getent passwd kyan", out("kyan:x:1000:1000::/home/kyan:/usr/bin/bash\n"));
+    w.runner.respond("id -nG kyan", out("kyan wheel\n"));
+    w.runner.respond("usermod -aG", Output { status: 6, ..Output::default() });
+    apply_scope(&w.cx(Scope::System), &[&UsersBackend], &[desired(kyan("bash"))]).unwrap_err();
+    let lines = w.runner.lines();
+    assert!(lines.contains(&"usermod --add-subgids 165536-231071 kyan".to_string()), "{lines:?}");
+    assert!(lines.contains(&"usermod --del-subgids 165536-231071 kyan".to_string()), "{lines:?}");
+}
+
+#[test]
+fn drift_shows_a_missing_subid_range() {
+    let w = World::linux(Init::Systemd);
+    let backends: &[&dyn Backend] = &[&UsersBackend];
+    let want = vec![desired(kyan("bash"))];
+    apply_scope(&w.cx(Scope::System), backends, &want).unwrap();
+    subid_files(&w, "kyan:100000:65536\n", "dockremap:100000000:100000001\n");
+    w.runner.respond("getent passwd kyan", out("kyan:x:1000:1000::/home/kyan:/usr/bin/bash\n"));
+    w.runner.respond("id -nG kyan", out("kyan wheel docker\n"));
+    let state = State::load(&w.paths.system_state_dir().join("state.json")).unwrap();
+    let p = plan_scope(&w.cx(Scope::System), backends, &want, &state).unwrap();
+    assert!(matches!(&p.changes[0].action, Action::Drift { notes } if notes == &["no range in /etc/subgid"]), "{p:?}");
+}

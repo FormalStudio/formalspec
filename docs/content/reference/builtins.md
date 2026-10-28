@@ -315,7 +315,7 @@ user(name, uid = None, shell = None, groups = [])
 | `shell` | string | none | A name (`"fish"`), resolved through `/etc/shells`, or a path |
 | `groups` | list of strings | `[]` | Supplementary groups. Linux only. fspec adds missing groups and never removes one |
 
-On Linux a missing account is created with `useradd`, and an existing one gets the declared UID and shell with `usermod`. On macOS the account must exist; fspec
+On Linux a missing account is created with `useradd`, and an existing one gets the declared UID and shell with `usermod`. An account with no subordinate uid or gid range in `/etc/subuid` or `/etc/subgid` gets a free 65536-wide one. On macOS the account must exist; fspec
 sets its login shell and checks the UID.
 
 ## defaults

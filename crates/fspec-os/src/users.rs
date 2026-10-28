@@ -1,6 +1,7 @@
 //! Accounts. Linux accounts are created with `useradd` before files are written, and get their
 //! uid, login shell and supplementary groups with `usermod` once packages are in, since packages
-//! install the shell, `usermod` itself and groups like `docker`. On
+//! install the shell, `usermod` itself and groups like `docker`. A Linux account without a
+//! subordinate uid or gid range gets one for rootless containers. On
 //! macOS the account must already exist and only the login shell is managed. Removing a `user`
 //! never deletes the account.
 
@@ -64,6 +65,13 @@ impl Backend for UsersBackend {
                         notes.push(format!("not in group {g}"));
                     }
                 }
+                for file in SUBID_FILES {
+                    if let Some(ranges) = subids(cx, file)
+                        && !ranges.iter().any(|r| r.owner == u.name || r.owner == live.uid.to_string())
+                    {
+                        notes.push(format!("no range in {file}"));
+                    }
+                }
             }
             Os::Darwin => {
                 if cx.runner.run(&dscl(&u.name, None))?.status != 0 {
@@ -110,12 +118,14 @@ impl Backend for UsersBackend {
         if cx.facts.os != Os::Linux {
             return Ok(());
         }
+        let mut given = Vec::new();
         for op in ops {
             let Resource::User(u) = op.resource() else { unreachable!("users claims users") };
             if op.is_removal() {
                 continue;
             }
             modify(cx, u, u.shell.as_deref().map(|s| resolve_shell(cx, s)).as_deref(), journal)?;
+            add_subids(cx, u, &mut given, journal)?;
             join_groups(cx, u, journal)?;
         }
         Ok(())
@@ -204,6 +214,67 @@ fn modify(cx: &Cx, u: &User, shell: Option<&str>, journal: &mut Journal) -> Resu
         journal.record(Undo::Run { cmd: revert.arg(&u.name) })?;
         cx.runner.check(&change.arg(&u.name))?;
     }
+    Ok(())
+}
+
+const SUBID_FILES: [&str; 2] = ["/etc/subuid", "/etc/subgid"];
+/// shadow's default `SUB_UID_MIN` and `SUB_UID_COUNT`.
+const SUBID_MIN: u64 = 100_000;
+const SUBID_COUNT: u64 = 65_536;
+
+struct SubRange {
+    owner: String,
+    start: u64,
+    count: u64,
+}
+
+/// `owner:start:count` lines. `None` when the file is absent, since `usermod` then refuses
+/// `--add-subuids`.
+fn subids(cx: &Cx, file: &str) -> Option<Vec<SubRange>> {
+    let text = std::fs::read_to_string(cx.paths.system(file)).ok()?;
+    let parse = |l: &str| {
+        let f: Vec<&str> = l.trim().split(':').collect();
+        Some(SubRange { owner: f.first()?.to_string(), start: f.get(1)?.parse().ok()?, count: f.get(2)?.parse().ok()? })
+    };
+    Some(text.lines().filter_map(parse).collect())
+}
+
+/// Gives the account the first free 65536-wide block in whichever of /etc/subuid and
+/// /etc/subgid lacks one, the same block in both. `given` holds blocks handed out earlier in
+/// this apply, which a recording runner never writes to the files.
+fn add_subids(cx: &Cx, u: &User, given: &mut Vec<u64>, journal: &mut Journal) -> Result<()> {
+    let files: Vec<(&str, Vec<SubRange>)> = SUBID_FILES.iter().filter_map(|f| subids(cx, f).map(|r| (*f, r))).collect();
+    let lacks = |uid: &str| -> Vec<&str> {
+        let owns = |r: &SubRange| r.owner == u.name || r.owner == uid;
+        files.iter().filter(|(_, ranges)| !ranges.iter().any(owns)).map(|(f, _)| *f).collect()
+    };
+    if lacks("").is_empty() {
+        return Ok(());
+    }
+    let Some(live) = passwd(cx, &u.name)? else { return Ok(()) };
+    let missing = lacks(&live.uid.to_string());
+    if missing.is_empty() {
+        return Ok(());
+    }
+    let taken: Vec<(u64, u64)> = files
+        .iter()
+        .flat_map(|(_, ranges)| ranges.iter().map(|r| (r.start, r.start + r.count)))
+        .chain(given.iter().map(|s| (*s, s + SUBID_COUNT)))
+        .collect();
+    let mut start = SUBID_MIN;
+    while let Some(&(_, end)) = taken.iter().find(|(a, b)| start < *b && *a < start + SUBID_COUNT) {
+        start = SUBID_MIN + (end - SUBID_MIN).div_ceil(SUBID_COUNT) * SUBID_COUNT;
+    }
+    given.push(start);
+    let range = format!("{start}-{}", start + SUBID_COUNT - 1);
+    let (mut add, mut del) = (Cmd::new("usermod"), Cmd::new("usermod"));
+    for file in missing {
+        let flag = if file == "/etc/subuid" { "subuids" } else { "subgids" };
+        add = add.args([format!("--add-{flag}"), range.clone()]);
+        del = del.args([format!("--del-{flag}"), range.clone()]);
+    }
+    journal.record(Undo::Run { cmd: del.arg(&u.name) })?;
+    cx.runner.check(&add.arg(&u.name))?;
     Ok(())
 }
 

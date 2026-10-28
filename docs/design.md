@@ -1070,7 +1070,12 @@ after every phase has committed: packages create groups such as `docker` (a
 sysusers.d file) and `nordvpn` (a postinstall that also empties the group), so
 one apply converges. A group still missing then gets one `systemd-sysusers`
 run on a systemd host, since a sysusers.d file a package or a `file` dropped
-is otherwise read only at the next boot. On macOS it only sets the login shell
+is otherwise read only at the next boot. An account with no entry in
+`/etc/subuid` or `/etc/subgid` (by name or uid) gets the first 65536-wide block
+at or above 100000 that overlaps no range in either file, the same block in
+both, with `usermod --add-subuids --add-subgids`, so rootless podman works; an
+existing range is left alone, a missing one shows as drift, and a host without
+the files gets none. On macOS it only sets the login shell
 and checks the account and uid; it never creates accounts. Removing a `user`
 stops managing it and leaves the account. `defaults` journals the previous value
 of each key so a failed apply restores it, and removal deletes a key only while
