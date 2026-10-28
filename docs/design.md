@@ -2140,9 +2140,9 @@ Tumbleweed under FormalSpec replaces NixOS on the g815 and the e1504g, and
 FormalSpec over Homebrew replaces nix-darwin on the macbook. The design session
 decides when it is ready, and every item below is required.
 
-The spec is the `formalspec` branch of
-[FormalSnake/dotfiles](https://github.com/FormalSnake/dotfiles/tree/formalspec),
-ported from `~/.config/nix`, which the port reads and never edits. Its
+The spec is the `main` branch of
+[FormalSnake/dotfiles](https://github.com/FormalSnake/dotfiles), ported from the
+nix config now kept on its `nix` branch. Its
 `GAPS.md` lists everything not ported and why.
 
 The e1504g already runs Tumbleweed from that spec and is applied from the

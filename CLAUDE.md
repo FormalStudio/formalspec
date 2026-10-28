@@ -49,8 +49,8 @@ add each mapping you settle there, and drop nix-isms that only exist to work aro
   `cargo clippy --workspace --all-targets -- -D warnings`; run all four before pushing.
 - Every external command goes through a `Runner`; tests use `RecordingRunner` and temp roots.
   Do not test against the real machine from `cargo test`.
-- The real spec for Kyan's hosts lives on the `formalspec` branch of FormalSnake/dotfiles, checked
-  out at `~/.config/nix-wt/formalspec`, not in this repo.
+- The real spec for Kyan's hosts is the `main` branch of FormalSnake/dotfiles, checked out at
+  `~/.config/formalspec`, not in this repo. Its old nix config is that repo's `nix` branch.
 
 ## Conventions
 
