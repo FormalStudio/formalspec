@@ -277,8 +277,9 @@ FormalSpec decides which executables to link in this order:
 
 1. The `bins` the lock entry records (the aqua registry names them, for example
    `ripgrep-15.2.0-aarch64-apple-darwin/rg`).
-2. For a tree laid out as an install prefix, with `bin/` at its root or inside its single
-   top-level directory, the executables in that `bin/`. Helpers under `lib/` or `libexec/` stay
+2. For a tree laid out as an install prefix, with `bin/` at its root, inside its single
+   top-level directory, or under `usr/` (a distro package such as an Arch `.pkg.tar.zst`), the
+   executables in that `bin/`. Helpers under `lib/` or `libexec/` stay
    private.
 3. Otherwise, every executable regular file in the top two levels of the unpacked tree.
 4. For npm, the package's `bin` entries.

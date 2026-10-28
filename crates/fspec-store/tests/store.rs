@@ -308,6 +308,24 @@ fn a_prefix_tree_links_its_bin_and_keeps_lib_private() {
 }
 
 #[test]
+fn a_distro_package_links_its_usr_bin() {
+    let mut w = World::new();
+    lock_tool(
+        &mut w,
+        tgz(&[
+            (".PKGINFO", "pkgname = asusctl\n", 0o644),
+            ("etc/asusd/asusd.ron", "()", 0o644),
+            ("usr/bin/asusd", "#!/bin/sh\necho asusd\n", 0o755),
+            ("usr/bin/asusctl", "#!/bin/sh\necho asusctl\n", 0o755),
+            ("usr/lib/udev/rules.d/99-asusd.rules", "", 0o644),
+        ]),
+    );
+    w.apply(&[with_fields(aqua("tool"), json!({"bins": ["asusd", "asusctl"]}))]).unwrap();
+    assert_eq!(w.run("asusd"), "asusd");
+    assert_eq!(w.run("asusctl"), "asusctl");
+}
+
+#[test]
 fn pkg_bins_pick_among_the_executables() {
     let mut w = World::new();
     lock_tool(

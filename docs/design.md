@@ -452,7 +452,8 @@ symlink over `current` last; the journal restores the old link if anything
 fails. Which executables get linked: the lock artifact's `bins` when set; else,
 for a tree laid out as an install prefix (`bin/` at its root or in its single
 top-level directory, as FormalShell's `formalshell/bin/` and terminal-browser's
-`terminal-browser/bin/`), the executables in that `bin/`; else every executable
+`terminal-browser/bin/`, or `usr/bin/` for a distro package such as asusctl's
+Arch `.pkg.tar.zst`), the executables in that `bin/`; else every executable
 regular file in the top two levels of the unpacked tree; for npm, the package's
 `bin` entries. A prefix keeps its private helpers in `lib/` or `libexec/`
 (FormalShell ships its own `matugen` there), so searching it deeper would link

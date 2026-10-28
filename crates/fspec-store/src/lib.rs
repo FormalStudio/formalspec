@@ -742,7 +742,8 @@ fn bins_of(p: &Pkg, artifact: &Artifact, dir: &Path) -> Result<BTreeMap<String, 
 }
 
 /// The executables of a tree the lock names none for. A tree laid out as an install prefix, with
-/// `bin/` at its root or in its single top-level directory, links what that `bin/` holds, so
+/// `bin/` at its root, in its single top-level directory or under `usr/` (a distro package such as
+/// an Arch `.pkg.tar.zst`, whose root also holds `etc/` and metadata), links what that `bin/` holds, so
 /// helpers under `lib/` or `libexec/` stay private. Any other tree links every executable regular
 /// file in its top two levels, shallower ones winning name clashes.
 fn discover(dir: &Path) -> BTreeMap<String, String> {
@@ -786,6 +787,9 @@ fn prefix_bin(dir: &Path) -> Option<(PathBuf, String)> {
     let is_dir = |p: &Path| fs::symlink_metadata(p).is_ok_and(|m| m.is_dir());
     if is_dir(&dir.join("bin")) {
         return Some((dir.join("bin"), String::new()));
+    }
+    if is_dir(&dir.join("usr/bin")) {
+        return Some((dir.join("usr/bin"), "usr/".into()));
     }
     let mut entries = fs::read_dir(dir).ok()?.flatten();
     let (Some(only), None) = (entries.next(), entries.next()) else { return None };
