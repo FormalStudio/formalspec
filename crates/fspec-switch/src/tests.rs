@@ -281,7 +281,8 @@ fn the_kernel_command_line_keeps_the_machine_options_and_adds_luks() {
     let lines = plan.lines();
     let at = |p: &str| lines.iter().position(|l| l.contains(p)).unwrap_or_else(|| panic!("no `{p}`"));
     assert!(
-        lines[at("apt-get full-upgrade")].contains("systemd-ukify systemd-boot-efi cryptsetup cryptsetup-initramfs git")
+        lines[at("apt-get full-upgrade")]
+            .contains("systemd-ukify systemd-boot-efi cryptsetup cryptsetup-initramfs git")
     );
     // The apply installs from the upgraded lists, so nothing it installs moves past what it records.
     assert!(at("apt-get full-upgrade") < at(" apply --local") && at(" apply --local") < at("update-initramfs -c -k"));
