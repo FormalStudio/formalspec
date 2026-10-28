@@ -2014,8 +2014,9 @@ through the `Runner`:
    reject the spec or ignore lock keys it does not know, unless the lock pins
    [the engine](#the-engine). With a CI build for the remote's platform the
    driving fspec pulls it; without one (CI has not caught up with a lock bump)
-   it ships the remote a job file for the locked rev and has the remote's own
-   older fspec run `sudo fspec build --job` in `~/.cache/fspec/engine-build`
+   it ships a job file for the locked rev to the host's builders in order (the
+   host itself when it names none, as a host with builders should not compile)
+   and has their own fspec run `sudo fspec build --job` in `~/.cache/fspec/engine-build`
    (as root, as its own applies build, so rootless podman needs no subuids), then
    copies the archive back. Either way it unpacks the binary, streams it to
    `~/.cache/fspec/engine.new` and runs `ssh -t h sudo install` to put it at

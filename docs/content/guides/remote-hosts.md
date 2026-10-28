@@ -172,8 +172,9 @@ what a host is, and a wrong `ssh` destination cannot turn into a wrong apply.
 `engine` is a number that goes up whenever fspec learns a new builtin, builtin argument, resource
 field or lock key. An fspec on the host with a lower number may reject the spec or ignore lock
 entries it does not know, so fspec first installs the fspec your lock pins there: the CI build
-when the lock records one for the host's platform, otherwise a build the host's own fspec runs
-from the locked commit (minutes, the first time). fspec never copies itself to the host, since the
+when the lock records one for the host's platform, otherwise a build from the locked commit,
+run by the host's builders or, when it names none, by the host's own fspec (minutes, the first
+time). fspec never copies itself to the host, since the
 binary on your machine may not run there.
 
 ### 2. Check the tree

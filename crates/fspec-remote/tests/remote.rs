@@ -387,3 +387,30 @@ fn an_older_remote_builds_the_locked_engine_when_ci_has_not() {
     assert!(at("rm -rf") < at("engine.new"));
     assert!(at("engine.new") < at("sudo install"));
 }
+
+#[test]
+fn a_host_with_builders_has_them_build_the_locked_engine() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fspec_core::engine::pkg().source.to_string();
+    fs::write(
+        dir.path().join("fspec.lock"),
+        format!("[[pkg]]\nname = \"fspec\"\nsource = \"{source}\"\nrev = \"abc\"\n"),
+    )
+    .unwrap();
+    let runner = Bootstrap { calls: Default::default(), body: engine_tar(), installed: Default::default() };
+    let mut h = host("g815", "x86_64-linux", "bazzite");
+    h.builders = vec![serde_json::from_value(json!({"name": "big", "routes": ["big.ts"]})).unwrap()];
+    let r = Remote {
+        runner: &runner,
+        spec_dir: dir.path().into(),
+        spec_file: "spec.star".into(),
+        dirty: false,
+        loads_cache: None,
+    };
+    r.plan(&h, "g815").unwrap();
+
+    let calls = runner.calls.lock().unwrap();
+    let jobs: Vec<&String> = calls.iter().filter(|c| c.contains("engine-build")).collect();
+    assert!(!jobs.is_empty() && jobs.iter().all(|c| c.contains("big.ts")), "{calls:#?}");
+    assert!(calls.iter().any(|c| c.contains("g815") && c.contains("engine.new")), "{calls:#?}");
+}
