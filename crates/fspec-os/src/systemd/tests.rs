@@ -249,6 +249,7 @@ fn a_unit_that_will_not_start_is_deferred_and_the_rest_lands() {
     apply_scope(&w.cx(Scope::System), backends, &want).unwrap();
     assert!(w.paths.root.join("etc/systemd/system/fspec-web.service").exists());
     assert!(w.runner.lines().contains(&"systemctl start fspec-job.timer".to_string()));
+    assert!(w.runner.lines().contains(&"systemctl reset-failed fspec-web.service".to_string()));
     let state = State::load(&w.paths.system_state_dir().join("state.json")).unwrap();
     assert_eq!(state.entries.keys().map(ToString::to_string).collect::<Vec<_>>(), ["timer:job"]);
 

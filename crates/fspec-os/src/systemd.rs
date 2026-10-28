@@ -160,6 +160,9 @@ impl Backend for SystemdBackend {
                 let journalctl = if user { "journalctl --user -u" } else { "journalctl -u" };
                 let why = format!("`{start}` failed: {}; see `{journalctl} {main}`", why.trim());
                 records.insert(op.key.clone(), fspec_core::apply::deferred(why));
+                // `Restart=` retries can hit the start limit, which refuses the next apply's start
+                // until it is cleared.
+                cx.runner.run(&ctl(&["reset-failed", &main]))?;
             }
         }
         Ok(records)
