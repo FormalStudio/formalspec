@@ -1630,7 +1630,7 @@ priority. The root gets the same
 base pattern with zypper itself (the pattern leaves it to recommends, which
 the bootstrap skips), `kernel-default`, `kernel-firmware-all`, NetworkManager,
 openssh, sudo, the `wheel` group, tailscale, power-profiles-daemon, snapper
-with its zypp plugin, zram-generator, and tar for the spec a remote apply ships. `fspec-power-saver.service` picks
+with its zypp plugin, zram-generator, tar for the spec a remote apply ships, and timezone. `fspec-power-saver.service` picks
 the power-saver profile on the first boot.
 Swap is zram, not the other root's swapfile, which a Tumbleweed boot would
 overwrite while that root is hibernated. `snapper create-config /` puts
