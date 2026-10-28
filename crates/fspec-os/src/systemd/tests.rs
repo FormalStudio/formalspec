@@ -221,7 +221,7 @@ fn failed_enable_rolls_back_files_and_replays_undo() {
     w.runner.calls.lock().unwrap().clear();
 
     let job = resource(json!({"kind": "timer", "name": "job", "exec": "/bin/job", "schedule": "@daily"}));
-    w.runner.respond("systemctl start fspec-job.timer", Output { status: 1, ..Output::default() });
+    w.runner.respond("systemctl enable fspec-job.timer", Output { status: 1, ..Output::default() });
     let err = apply_scope(&w.cx(Scope::System), backends, &[desired(svc("/bin/web")), desired(job)]).unwrap_err();
     assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
     assert!(!w.paths.root.join("etc/systemd/system/fspec-job.timer").exists());
@@ -230,13 +230,35 @@ fn failed_enable_rolls_back_files_and_replays_undo() {
         [
             "systemctl daemon-reload",
             "systemctl enable fspec-job.timer",
-            "systemctl start fspec-job.timer",
             "systemctl stop fspec-job.timer",
             "systemctl disable fspec-job.timer",
             "systemctl daemon-reload",
         ]
     );
     assert_eq!(State::load(&w.paths.system_state_dir().join("state.json")).unwrap().entries.len(), 1);
+}
+
+#[test]
+fn a_unit_that_will_not_start_is_deferred_and_the_rest_lands() {
+    let w = World::linux(Init::Systemd);
+    let backends: &[&dyn Backend] = &[&SystemdBackend];
+    let job = resource(json!({"kind": "timer", "name": "job", "exec": "/bin/job", "schedule": "@daily"}));
+    let failed = Output { status: 1, stderr: "Job for fspec-web.service failed.\n".into(), ..Output::default() };
+    w.runner.respond("systemctl start fspec-web.service", failed);
+    let want = [desired(svc("/bin/web")), desired(job)];
+    apply_scope(&w.cx(Scope::System), backends, &want).unwrap();
+    assert!(w.paths.root.join("etc/systemd/system/fspec-web.service").exists());
+    assert!(w.runner.lines().contains(&"systemctl start fspec-job.timer".to_string()));
+    let state = State::load(&w.paths.system_state_dir().join("state.json")).unwrap();
+    assert_eq!(state.entries.keys().map(ToString::to_string).collect::<Vec<_>>(), ["timer:job"]);
+
+    // The next apply starts it again.
+    w.runner.responses.lock().unwrap().clear();
+    w.runner.calls.lock().unwrap().clear();
+    apply_scope(&w.cx(Scope::System), backends, &want).unwrap();
+    assert!(w.runner.lines().contains(&"systemctl start fspec-web.service".to_string()));
+    let state = State::load(&w.paths.system_state_dir().join("state.json")).unwrap();
+    assert_eq!(state.entries.len(), 2);
 }
 
 #[test]

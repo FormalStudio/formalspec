@@ -143,19 +143,26 @@ impl Backend for SystemdBackend {
         }
         for (op, user, main, manual) in written {
             let ctl = |args: &[&str]| ctl(user, args);
-            if op.current.is_some() {
-                if manual {
-                    cx.runner.check(&ctl(&["restart", &main]))?;
-                }
+            let start = if op.current.is_some() {
+                manual.then(|| ctl(&["restart", &main]))
             } else {
                 journal.record(Undo::Run { cmd: ctl(&["disable", &main]) })?;
                 if manual {
                     journal.record(Undo::Run { cmd: ctl(&["stop", &main]) })?;
                 }
                 cx.runner.check(&ctl(&["enable", &main]))?;
-                if manual {
-                    cx.runner.check(&ctl(&["start", &main]))?;
-                }
+                manual.then(|| ctl(&["start", &main]))
+            };
+            // A unit that is written and enabled but will not start is the unit's own problem (a
+            // missing config, a port in use), so it is deferred rather than rolling back every
+            // other change. The state does not record it, so the next apply starts it again.
+            let Some(start) = start else { continue };
+            let out = cx.runner.run(&start)?;
+            if out.status != 0 {
+                let why = out.stderr.lines().chain(out.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("");
+                let journalctl = if user { "journalctl --user -u" } else { "journalctl -u" };
+                let why = format!("`{start}` failed: {}; see `{journalctl} {main}`", why.trim());
+                records.insert(op.key.clone(), fspec_core::apply::deferred(why));
             }
         }
         Ok(records)

@@ -956,7 +956,11 @@ init (an `env K=V` prefix in a cron entry).
 systemd units are `fspec-<name>.service` (and `.timer`) under
 `/etc/systemd/system` or `~/.config/systemd/user`. An apply writes every new or
 changed unit and reloads once before it enables and starts any, so a unit can
-`Requires=` another from the same apply. A bare command name in `exec`
+`Requires=` another from the same apply. A unit that is written and enabled but fails
+to start or restart is deferred, like an unreachable repo: the apply warns
+with `systemctl`'s message and the `journalctl -u` to read, keeps every other
+change, and leaves the unit out of the state, so the next apply starts it
+again. A unit file systemd refuses to enable still fails the apply. A bare command name in `exec`
 runs through `/usr/bin/env`, since systemd does not search `PATH`. `after =
 ["network"]` becomes `network-online.target`, another name `fspec-<name>.service`,
 and a literal `*.target` stays as written. Under `systemd = {...}`, the keys
