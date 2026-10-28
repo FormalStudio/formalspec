@@ -185,42 +185,12 @@ fn install_cmds(cx: &Cx, fam: Family, names: &[String], cached: Option<&Cached>)
 }
 
 /// Install `names` (from `cached` when set). A `!name`, zypper's syntax, removes that package in
-/// the same transaction, for one that conflicts with a wanted one. Rollback removes only the
-/// names that were not installed yet: removing one that was already there would also take every
-/// package that requires it, which for `tailscale` or `tar` is half the system. The package
-/// managers install in one transaction, so the undo is journaled once the install went through.
-pub(crate) fn install(
-    cx: &Cx,
-    journal: &mut Journal,
-    fam: Family,
-    names: &[String],
-    cached: Option<&Cached>,
-) -> Result<()> {
-    let (mut new, mut back) = (Vec::new(), Vec::new());
-    for n in names {
-        match n.strip_prefix('!') {
-            Some(gone) if installed(cx, fam, gone)? => back.push(gone.to_string()),
-            Some(_) => {}
-            None if !installed(cx, fam, n)? => new.push(n.clone()),
-            None => {}
-        }
-    }
-    let undo = || {
-        let mut cmds = Vec::new();
-        if !new.is_empty() {
-            cmds.push(fam.remove(&new));
-        }
-        if !back.is_empty() {
-            cmds.extend(fam.install_names(&back));
-        }
-        cmds
-    };
-    if let Some(cmd) = fam.restore_point(&cx.paths.system("/")) {
-        journal.record(Undo::Run { cmd })?;
-        return run_all(cx, &install_cmds(cx, fam, names, cached));
-    }
-    run_all(cx, &install_cmds(cx, fam, names, cached))?;
-    journal_all(journal, undo())
+/// the same transaction, for one that conflicts with a wanted one. No undo is journaled: a failed
+/// apply keeps what it installed, writes no state, and the next apply finds those packages already
+/// there. Undoing would mean removing every new package, which for a first apply is thousands, and
+/// reinstalling a `!name` the wanted set conflicts with fails anyway.
+pub(crate) fn install(cx: &Cx, fam: Family, names: &[String], cached: Option<&Cached>) -> Result<()> {
+    run_all(cx, &install_cmds(cx, fam, names, cached))
 }
 
 fn installed(cx: &Cx, fam: Family, name: &str) -> Result<bool> {
@@ -323,11 +293,11 @@ impl PkgEngine {
             }
             let w = want(fam, cx, p)?;
             match had {
-                None => install(cx, journal, fam, &w.names, w.cached.as_ref())?,
+                None => install(cx, fam, &w.names, w.cached.as_ref())?,
                 Some((n, rec)) if n == w.names => upgrade(cx, journal, fam, &w, &rec)?,
                 Some((n, rec)) => {
                     remove(cx, journal, fam, &n, &rec)?;
-                    install(cx, journal, fam, &w.names, w.cached.as_ref())?;
+                    install(cx, fam, &w.names, w.cached.as_ref())?;
                 }
             }
             let mut rec = record_names(cx, fam, &w.names)?;

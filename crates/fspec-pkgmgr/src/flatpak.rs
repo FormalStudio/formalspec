@@ -58,8 +58,8 @@ fn live_commit(cx: &Cx, id: &str) -> Result<Option<String>> {
     query(cx, &Cmd::new("flatpak").args(["info", "--system", "--show-commit"]).arg(id))
 }
 
-fn install(cx: &Cx, journal: &mut Journal, w: &Want) -> Result<Option<String>> {
-    journal.record(Undo::Run { cmd: uninstall_cmd(&w.app.id) })?;
+/// No undo: a failed apply keeps what it installed (see `pkgs::install`).
+fn install(cx: &Cx, w: &Want) -> Result<Option<String>> {
     cx.runner.check(&install_cmd(&w.app))?;
     match &w.pin {
         Some(c) => {
@@ -147,11 +147,11 @@ impl Backend for FlatpakBackend {
             };
             let w = want(cx, pkg(&d.resource)?)?;
             let commit = match had {
-                None => install(cx, journal, &w)?,
+                None => install(cx, &w)?,
                 Some((a, commit)) if a.id == w.app.id && a.remote == w.app.remote => adjust(cx, journal, &w, commit)?,
                 Some((a, commit)) => {
                     uninstall(cx, journal, &a, commit)?;
-                    install(cx, journal, &w)?
+                    install(cx, &w)?
                 }
             };
             let mut rec = Map::new();

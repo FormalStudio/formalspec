@@ -232,7 +232,7 @@ fn flatpak_removal_uninstalls() {
 }
 
 #[test]
-fn flatpak_failure_rolls_back_the_earlier_install() {
+fn flatpak_failure_keeps_the_earlier_install() {
     let mut w = World::linux();
     w.lock.upsert(locked("a", "flatpak:org.a", None, &[("any", commit("aaa"))]));
     w.lock.upsert(locked("b", "flatpak:org.b", None, &[("any", commit("bbb"))]));
@@ -241,13 +241,7 @@ fn flatpak_failure_rolls_back_the_earlier_install() {
     assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
     assert_eq!(
         w.take(),
-        [
-            format!("{INSTALL} org.a"),
-            format!("{PIN} --commit=aaa org.a"),
-            format!("{INSTALL} org.b"),
-            format!("{UNINSTALL} org.b"),
-            format!("{UNINSTALL} org.a"),
-        ]
+        [format!("{INSTALL} org.a"), format!("{PIN} --commit=aaa org.a"), format!("{INSTALL} org.b"),]
     );
     assert!(w.state(Scope::System).entries.is_empty());
 }
@@ -364,19 +358,16 @@ fn brew_removal_and_rollback() {
     assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
     w.forget_answers();
     let lines: Vec<_> = w.take().into_iter().filter(|l| !l.starts_with("brew list")).collect();
-    assert_eq!(lines, ["brew install --cask c", "brew uninstall --cask c"]);
+    assert_eq!(lines, ["brew install --cask c"]);
 }
 
 #[test]
-fn brew_failure_rolls_back_the_earlier_install() {
+fn brew_failure_keeps_the_earlier_install() {
     let w = World::darwin();
     w.answer("brew install b", 1, "");
     let err = w.apply(Scope::User, &[brew("a", false, "pinned"), brew("b", false, "pinned")]).unwrap_err();
     assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
-    assert_eq!(
-        w.take(),
-        ["brew install a", "brew list --versions a", "brew install b", "brew uninstall b", "brew uninstall a"]
-    );
+    assert_eq!(w.take(), ["brew install a", "brew list --versions a", "brew install b"]);
 }
 
 fn dnf(name: &str, names: &[&str], mode: &str) -> Desired {
@@ -394,11 +385,8 @@ fn dnf_installs_by_name_and_detects_drift() {
     assert_eq!(
         w.take(),
         [
-            "rpm -q --qf %{VERSION}-%{RELEASE} htop",
             "dnf install -y --setopt=max_parallel_downloads=10 htop",
             "rpm -q --qf %{VERSION}-%{RELEASE} htop",
-            "rpm -q --qf %{VERSION}-%{RELEASE} jq",
-            "rpm -q --qf %{VERSION}-%{RELEASE} ripgrep",
             "dnf install -y --setopt=max_parallel_downloads=10 jq ripgrep",
             "rpm -q --qf %{VERSION}-%{RELEASE} jq",
             "rpm -q --qf %{VERSION}-%{RELEASE} ripgrep",
@@ -440,7 +428,7 @@ fn dnf_caches_the_locked_rpm_and_installs_the_file() {
     w.apply(Scope::System, &want).unwrap();
     let cached = w.paths.root.join("var/cache/fspec/pkgs/htop-3.3-1.fc42.x86_64.rpm");
     assert_eq!(fs::read(&cached).unwrap(), b"rpm one");
-    assert_eq!(w.take()[1], format!("dnf install -y --setopt=max_parallel_downloads=10 {}", cached.display()));
+    assert_eq!(w.take()[0], format!("dnf install -y --setopt=max_parallel_downloads=10 {}", cached.display()));
     assert_eq!(w.state(Scope::System).entries[&want[0].resource.key()].record["file"], "htop-3.3-1.fc42.x86_64.rpm");
     assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
 }
@@ -493,12 +481,13 @@ fn dnf_rejects_a_bad_hash_before_touching_the_system() {
 }
 
 #[test]
-fn dnf_failure_rolls_back_the_earlier_install() {
+fn dnf_failure_keeps_the_earlier_install() {
     let w = World::linux();
     w.answer("dnf install -y --setopt=max_parallel_downloads=10 b", 1, "");
     assert!(w.apply(Scope::System, &[dnf("a", &[], "pinned"), dnf("b", &[], "pinned")]).is_err());
     let lines = w.take();
-    assert_eq!(&lines[lines.len() - 2..], ["dnf install -y --setopt=max_parallel_downloads=10 b", "dnf remove -y a"]);
+    assert_eq!(lines.last().unwrap(), "dnf install -y --setopt=max_parallel_downloads=10 b");
+    assert!(!lines.iter().any(|l| l.starts_with("dnf remove")), "{lines:#?}");
 }
 
 #[test]
@@ -671,8 +660,8 @@ fn every_family_installs_by_name_reports_drift_and_removes() {
             f.without_queries(lines.clone()),
             [format!("{} htop", f.install), format!("{} jq ripgrep", f.install)]
         );
-        // Each name is queried before the install and again to record its version.
-        assert_eq!(lines.iter().filter(|l| f.is_query(l)).count(), 6, "{}", f.kind);
+        // Each name is queried once, after the install, to record its version.
+        assert_eq!(lines.iter().filter(|l| f.is_query(l)).count(), 3, "{}", f.kind);
         assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty(), "{}", f.kind);
 
         w.forget_answers();
@@ -752,14 +741,14 @@ fn every_family_journals_the_old_file_on_a_lock_bump() {
 }
 
 #[test]
-fn every_family_rolls_back_the_earlier_install() {
+fn every_family_keeps_the_earlier_install_when_a_later_one_fails() {
     for f in &FAMS {
         let w = f.world();
         w.answer(&format!("{} b", f.install), 1, "");
         assert!(w.apply(Scope::System, &[f.pkg("a", &[]), f.pkg("b", &[])]).is_err());
         let lines = w.take();
-        // b never installed, so only a is removed.
-        assert_eq!(&lines[lines.len() - 2..], [format!("{} b", f.install), format!("{} a", f.remove)], "{}", f.kind);
+        assert_eq!(lines.last(), Some(&format!("{} b", f.install)), "{}", f.kind);
+        assert!(!lines.iter().any(|l| l.starts_with(f.remove)), "{}: {lines:#?}", f.kind);
     }
 }
 
@@ -871,7 +860,7 @@ fn moss_line(args: &[&str]) -> String {
 }
 
 #[test]
-fn moss_installs_by_name_and_rolls_back_to_the_earlier_state() {
+fn moss_installs_by_name_and_keeps_the_earlier_install() {
     let w = World::on("aerynos", &[]);
     fs::create_dir_all(w.paths.root.join("usr")).unwrap();
     fs::write(w.paths.root.join("usr/.stateID"), "7\n").unwrap();
@@ -880,7 +869,7 @@ fn moss_installs_by_name_and_rolls_back_to_the_earlier_state() {
     assert!(w.apply(Scope::System, &[pkg("a"), pkg("b")]).is_err());
     let lines = w.take();
     assert!(lines.contains(&moss_line(&["-y", "install", "a"])), "{lines:#?}");
-    assert_eq!(lines.last(), Some(&moss_line(&["-y", "state", "activate", "7"])));
+    assert_eq!(lines.last(), Some(&moss_line(&["-y", "install", "b"])));
     assert!(!lines.iter().any(|l| l.contains("remove")), "{lines:#?}");
 }
 
@@ -1147,19 +1136,19 @@ fn repo_on_a_package_needs_a_zypper_distro() {
 }
 
 #[test]
-fn a_failed_install_leaves_the_packages_that_were_already_there() {
+fn a_failed_apply_keeps_the_distro_packages_it_installed() {
     let f = &FAMS[1];
     let w = World::on(f.distro, &[]);
     w.answer(f.version, 0, "a 1.0-1");
-    w.answer(&format!("{} new", f.version), 1, "");
     w.answer(&format!("{} zzz", f.install), 1, "");
     assert!(w.apply(Scope::System, &[distro_res(f.distro, &["a", "new"]), f.pkg("zzz", &[])]).is_err());
     let lines = f.without_queries(w.take());
-    assert_eq!(lines.last(), Some(&format!("{} new", f.remove)), "{lines:#?}");
+    assert_eq!(lines.last(), Some(&format!("{} zzz", f.install)), "{lines:#?}");
+    assert!(!lines.iter().any(|l| l.starts_with(f.remove)), "{lines:#?}");
 }
 
 #[test]
-fn a_bang_name_swaps_out_a_conflicting_package_and_puts_it_back_on_rollback() {
+fn a_bang_name_swaps_out_a_conflicting_package_and_a_failed_apply_keeps_the_swap() {
     let w = tumbleweed();
     disable_rolling(&w);
     w.answer("rpm -q --qf %{VERSION}-%{RELEASE} power-profiles-daemon", 0, "0.30-1.6");
@@ -1172,11 +1161,10 @@ fn a_bang_name_swaps_out_a_conflicting_package_and_puts_it_back_on_rollback() {
     assert!(w.apply(Scope::System, &want).is_err());
     let lines = w.take();
     let install = "zypper --non-interactive install --auto-agree-with-licenses tuned-ppd !power-profiles-daemon";
-    let at = |l: &str| lines.iter().position(|x| x == l).unwrap_or_else(|| panic!("{l}: {lines:#?}"));
-    assert!(at(install) < at("zypper --non-interactive remove tuned-ppd"));
+    assert!(lines.iter().any(|l| l == install), "{lines:#?}");
     assert!(
-        at("zypper --non-interactive remove tuned-ppd")
-            < at("zypper --non-interactive install --auto-agree-with-licenses power-profiles-daemon")
+        !lines.iter().any(|l| l.contains("remove tuned-ppd") || l.ends_with("licenses power-profiles-daemon")),
+        "{lines:#?}"
     );
 
     let err = World::on("arch", &[]).apply(Scope::System, &[distro_res("arch", &["!x"])]).unwrap_err();

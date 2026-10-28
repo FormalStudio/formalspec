@@ -1100,8 +1100,12 @@ whole `fedora(...)` declaration leaves its packages installed. On zypper
 distros a `!name` entry, zypper's own syntax, removes that package in the same
 transaction, for one that conflicts with a wanted one
 (`"tuned-ppd", "!power-profiles-daemon"`); drift reports it when it comes
-back. A rollback removes only the names that apply installed, never one that
-was there before, since zypper also removes everything that requires it. Before any
+back. A failed apply keeps the packages it installed and writes no state, so
+the next apply plans the same installs and finds them done; it reverses
+removals, upgrades and repo changes, not installs. Removing what a first apply
+installed would take thousands of packages and as long again as installing
+them, and putting back a `!name` the wanted set conflicts with fails anyway.
+Flatpak and Homebrew installs work the same way. Before any
 change to the system layer, if `findmnt -no FSTYPE /` says btrfs, apply takes a
 read-only snapshot `/.snapshots/fspec-<generation>`; it is taken while
 preparing, before the package phases commit, so it holds the old kernel. A
@@ -1123,9 +1127,10 @@ AerynOS's `aerynos(packages = [...])` and `pkg(..., source = moss())` run
 `moss install` and `moss remove`. moss builds every transaction as a new
 `/usr` from its deduplicated store and swaps it in atomically, recording a
 numbered state (`/usr/.stateID`). fspec maps its rollback onto those states:
-before each moss change it journals `moss state activate <the current state>`,
-so a failed apply returns the system to the exact state it started from,
-upgrades included, rather than reversing package by package. The installed
+before a moss removal or upgrade it journals `moss state activate <the current
+state>`, so a failed apply returns the system to the state it started from
+rather than reversing package by package. An install is kept, as on every
+other manager. The installed
 version comes from `moss list installed`. Every fspec command run on AerynOS
 sticks to plain sh, since its base system has no grep, sed or awk.
 

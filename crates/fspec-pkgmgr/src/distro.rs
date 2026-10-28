@@ -302,7 +302,7 @@ impl Backend for DistroBackend {
                 remove(cx, journal, fam, &dropped, &rec)?;
             }
             if !added.is_empty() {
-                install(cx, journal, fam, &added, None)?;
+                install(cx, fam, &added, None)?;
             }
             refresh_esp_sync(cx, journal)?;
             let args = &distro(&d.resource)?.kernel_args;

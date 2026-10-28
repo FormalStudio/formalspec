@@ -32,8 +32,9 @@ Pick the shape your machine already runs, or the one you want to move to
 | `tumbleweed()` | zypper | systemd | The whole distro at one dated snapshot | Back to the snapshot the apply started from, plus a btrfs snapshot | Vendor-signed (openSUSE). On the EAC list |
 | `aerynos()` | moss | systemd | Nothing; moss installs by name from its stream | The moss state from before the apply | Kernel not vendor-signed |
 
-"fspec's undo" is the journal every apply keeps: a failed apply reverses the package changes it
-made. `fspec rollback` re-applies an earlier generation
+"fspec's undo" is the journal every apply keeps: a failed apply reverses the package removals and
+upgrades it made. Packages it installed stay, and the next apply finds them already there instead
+of installing them again. `fspec rollback` re-applies an earlier generation
 ([Removal and rollback](removal-and-rollback.md)). The btrfs snapshot is taken only when `/` is
 btrfs ([btrfs snapshots before system changes](#btrfs-snapshots-before-system-changes)).
 

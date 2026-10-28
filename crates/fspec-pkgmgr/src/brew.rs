@@ -67,8 +67,8 @@ fn same_version(installed: &str, locked: &str) -> bool {
     installed == locked || base == locked
 }
 
-fn install(cx: &Cx, journal: &mut Journal, w: &Want) -> Result<Option<String>> {
-    journal.record(Undo::Run { cmd: cmd("uninstall", &w.formula) })?;
+/// No undo: a failed apply keeps what it installed (see `pkgs::install`).
+fn install(cx: &Cx, w: &Want) -> Result<Option<String>> {
     let f = &w.formula;
     match &f.tap {
         // The tap stays when the package goes: other packages may come from it.
@@ -151,11 +151,11 @@ impl Backend for BrewBackend {
             };
             let w = want(cx, pkg(&d.resource)?)?;
             let installed = match had {
-                None => install(cx, journal, &w)?,
+                None => install(cx, &w)?,
                 Some(f) if f == w.formula => adjust(cx, &w)?,
                 Some(f) => {
                     uninstall(cx, journal, &f)?;
-                    install(cx, journal, &w)?
+                    install(cx, &w)?
                 }
             };
             let mut rec = Map::new();
