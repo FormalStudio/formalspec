@@ -975,3 +975,38 @@ fn parts_unpack_into_the_package_root_at_their_locked_hash() {
     let err = format!("{:#}", w.apply(&[moved]).unwrap_err());
     assert!(err.contains("no hash for https://example/other.tgz"), "{err}");
 }
+
+/// Counts the downloads in flight, to show prepare runs them at once.
+struct Overlapping {
+    inner: MapFetch,
+    now: std::sync::atomic::AtomicUsize,
+    most: std::sync::atomic::AtomicUsize,
+}
+
+impl fspec_core::fetch::Fetch for Overlapping {
+    fn get(&self, url: &str) -> anyhow::Result<Vec<u8>> {
+        use std::sync::atomic::Ordering::SeqCst;
+        self.most.fetch_max(self.now.fetch_add(1, SeqCst) + 1, SeqCst);
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        self.now.fetch_sub(1, SeqCst);
+        self.inner.get(url)
+    }
+}
+
+#[test]
+fn prepare_downloads_packages_at_once() {
+    let mut w = World::new();
+    let names = ["a", "b", "c", "d"];
+    for n in names {
+        let url = format!("https://example/{n}.tar.gz");
+        let body = tgz(&[(&format!("{n}-1/{n}"), "#!/bin/sh\n", 0o755)]);
+        w.lock.upsert(locked(n, &format!("aqua:{n}"), "1", &url, &body));
+        w.fetch = std::mem::take(&mut w.fetch).with(&url, body);
+    }
+    let fetch = Overlapping { inner: std::mem::take(&mut w.fetch), now: Default::default(), most: Default::default() };
+    let cx = Cx { fetch: &fetch, ..w.cx() };
+    let want: Vec<Desired> = names.iter().map(|n| aqua(n)).collect();
+    apply_scope(&cx, &[&StoreBackend as &dyn Backend], &want).unwrap();
+    assert!(names.iter().all(|n| w.root().join("current/bin").join(n).exists()));
+    assert!(fetch.most.load(std::sync::atomic::Ordering::SeqCst) > 1);
+}

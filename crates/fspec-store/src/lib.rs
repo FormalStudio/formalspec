@@ -19,6 +19,7 @@ use fspec_core::apply::Records;
 use fspec_core::facts::{Init, Os};
 use fspec_core::journal::{Journal, copy_any, remove_any};
 use fspec_core::lock::{Artifact, LockedPkg};
+use fspec_core::par;
 use fspec_core::resource::{Pkg, PkgMode, Source};
 use fspec_core::runner::{Cmd, Runner};
 use fspec_core::state::Entry;
@@ -323,17 +324,21 @@ impl Backend for StoreBackend {
         Ok(notes)
     }
 
+    /// Downloads and registry pulls wait on the network, so they run at once, each into its own
+    /// staging directory. Builds run after them, one at a time: each takes the whole machine
+    /// and shares the build cache.
     fn prepare(&self, cx: &Cx, ops: &[Op], staging: &Path) -> Result<()> {
         let root = cx.paths.fspec_root();
+        let mut archives = Vec::new();
         for op in ops.iter().filter(|o| !o.is_removal()) {
             let p = pkg_of(op)?;
             if keeps_installed(cx, op, p).is_some() {
                 continue;
             }
-            let t = target(cx, p)?;
-            match t.kind {
+            let Target { locked, kind, .. } = target(cx, p)?;
+            match kind {
                 Kind::Nix { attr } => {
-                    let out = nix_build(cx, t.locked, attr).with_context(|| format!("building {}", p.name))?;
+                    let out = nix_build(cx, locked, attr).with_context(|| format!("building {}", p.name))?;
                     let marker = staging.join("nix").join(&p.name);
                     fs::create_dir_all(marker.parent().context("marker has a parent")?)?;
                     fs::write(&marker, out)?;
@@ -342,17 +347,23 @@ impl Backend for StoreBackend {
                     if root.join("store").join(&dirname).exists() || !build_tool_present(p, &origin) {
                         continue;
                     }
-                    let staged = staging.join("store").join(&dirname);
-                    unpack_into(cx, p, &origin, &dirname, &staged, staging)?;
-                    // A wrong `bins`, `links` or `share` fails here, before an earlier phase has
-                    // installed the distro's packages that a rollback would then remove again.
-                    bins_of(p, artifact, &staged)
-                        .and_then(|bins| check_tree(p, &bins, &staged))
-                        .with_context(|| format!("checking {}", p.name))?;
+                    archives.push((p, origin, dirname, artifact));
                 }
             }
         }
-        Ok(())
+        let (builds, fetches): (Vec<_>, Vec<_>) =
+            archives.into_iter().partition(|(_, origin, _, _)| matches!(origin, Origin::Build { .. }));
+        let stage = |(p, origin, dirname, artifact): &(&Pkg, Origin, String, &Artifact)| -> Result<()> {
+            let staged = staging.join("store").join(dirname);
+            unpack_into(cx, p, origin, dirname, &staged, staging)?;
+            // A wrong `bins`, `links` or `share` fails here, before an earlier phase has
+            // installed the distro's packages that a rollback would then remove again.
+            bins_of(p, artifact, &staged)
+                .and_then(|bins| check_tree(p, &bins, &staged))
+                .with_context(|| format!("checking {}", p.name))
+        };
+        par::try_map(&fetches, stage)?;
+        builds.iter().try_for_each(stage)
     }
 
     fn commit(&self, cx: &Cx, ops: &[Op], staging: &Path, journal: &mut Journal) -> Result<Records> {
