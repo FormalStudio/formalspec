@@ -334,6 +334,32 @@ fn update_collects_platforms_across_hosts_and_survives_a_failure() {
     assert!(got.errors[0].contains("bad"), "{:?}", got.errors);
 }
 
+#[test]
+fn hosts_with_their_own_asset_glob_each_lock_their_own_asset() {
+    let rel = release("v0.1.3", "2025-09-01T00:00:00Z", &["t3-0.1.3-linux-x64.tar.gz", "t3-0.1.3-darwin-arm64.tar.gz"]);
+    let fetch = MapFetch::default().with("https://api.github.com/repos/o/t3/releases/tags/v0.1.3", rel.to_string());
+    let runner = RecordingRunner::default();
+    let t3 = |glob: &str, version: &str| json!({"name": "t3", "version": version, "source": {"kind": "github", "repo": "o/t3", "asset": glob}});
+    let hosts = vec![
+        host("linux", "x86_64-linux", None, vec![t3("t3-*-linux-x64.tar.gz", "0.1.3")]),
+        host("mac", "aarch64-darwin", None, vec![t3("t3-*-darwin-arm64.tar.gz", "0.1.3")]),
+    ];
+    let got = update(&hosts, &Lock::default(), &[], &cx(&fetch, &runner)).unwrap();
+    assert!(got.errors.is_empty(), "{:?}", got.errors);
+    let t = got.lock.named("t3").next().unwrap();
+    assert!(t.artifacts["x86_64-linux"].url.as_deref().unwrap().ends_with("linux-x64.tar.gz"));
+    assert!(t.artifacts["aarch64-darwin"].url.as_deref().unwrap().ends_with("darwin-arm64.tar.gz"));
+
+    let rel2 = release("v0.1.2", "2025-08-01T00:00:00Z", &["t3-0.1.2-darwin-arm64.tar.gz"]);
+    let fetch = fetch.with("https://api.github.com/repos/o/t3/releases/tags/v0.1.2", rel2.to_string());
+    let hosts = vec![
+        host("linux", "x86_64-linux", None, vec![t3("t3-*-linux-x64.tar.gz", "0.1.3")]),
+        host("mac", "aarch64-darwin", None, vec![t3("t3-*-darwin-arm64.tar.gz", "0.1.2")]),
+    ];
+    let got = update(&hosts, &Lock::default(), &[], &cx(&fetch, &runner)).unwrap();
+    assert!(got.errors.iter().any(|e| e.contains("declare one version")), "{:?}", got.errors);
+}
+
 fn toml_lock(text: &str) -> Lock {
     toml::from_str(text).unwrap()
 }

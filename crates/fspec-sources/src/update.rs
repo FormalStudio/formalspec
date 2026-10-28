@@ -16,9 +16,10 @@ pub struct Update {
     pub errors: Vec<String>,
 }
 
+/// One lock entry. Hosts may declare it differently (a github `asset` glob per OS), so each
+/// distinct declaration resolves for its own platforms and the results merge.
 struct Decl {
-    pkg: Pkg,
-    platforms: BTreeSet<String>,
+    variants: Vec<(Pkg, BTreeSet<String>)>,
     age: Option<i64>,
 }
 
@@ -37,15 +38,20 @@ pub fn update(hosts: &[Host], old: &Lock, only: &[String], cx: &Cx) -> Result<Up
             .map_err(|e| anyhow::anyhow!("host {}: {e}", host.name))?;
         for r in &host.resources {
             let Resource::Pkg(p) = r else { continue };
-            let d = decls.entry((p.name.clone(), p.source.to_string())).or_insert_with(|| Decl {
-                pkg: p.clone(),
-                platforms: BTreeSet::new(),
-                age: None,
-            });
+            let d = decls
+                .entry((p.name.clone(), p.source.to_string()))
+                .or_insert_with(|| Decl { variants: vec![], age: None });
+            let i = match d.variants.iter().position(|(v, _)| v.source == p.source && v.version == p.version) {
+                Some(i) => i,
+                None => {
+                    d.variants.push((p.clone(), BTreeSet::new()));
+                    d.variants.len() - 1
+                }
+            };
             if p.channel == Channel::Bleeding {
-                d.pkg.channel = Channel::Bleeding;
+                d.variants[i].0.channel = Channel::Bleeding;
             }
-            d.platforms.insert(host.platform.clone());
+            d.variants[i].1.insert(host.platform.clone());
             d.age = d.age.max(age);
         }
     }
@@ -71,8 +77,7 @@ pub fn update(hosts: &[Host], old: &Lock, only: &[String], cx: &Cx) -> Result<Up
             }
             continue;
         }
-        let platforms: Vec<String> = d.platforms.iter().cloned().collect();
-        match resolve(&d.pkg, &platforms, d.age, cx) {
+        match resolve_decl(d, cx) {
             Ok(mut new) => {
                 keep_cache(before, &mut new);
                 if let Some(line) = describe(before, &new) {
@@ -89,6 +94,31 @@ pub fn update(hosts: &[Host], old: &Lock, only: &[String], cx: &Cx) -> Result<Up
         }
     }
     Ok(Update { lock, changes, errors })
+}
+
+fn resolve_decl(d: &Decl, cx: &Cx) -> Result<LockedPkg> {
+    let bleeding = d.variants.iter().any(|(p, _)| p.channel == Channel::Bleeding);
+    let mut merged: Option<LockedPkg> = None;
+    for (pkg, platforms) in &d.variants {
+        let mut pkg = pkg.clone();
+        if bleeding {
+            pkg.channel = Channel::Bleeding;
+        }
+        let platforms: Vec<String> = platforms.iter().cloned().collect();
+        let new = resolve(&pkg, &platforms, d.age, cx)?;
+        match &mut merged {
+            None => merged = Some(new),
+            Some(m) if m.version != new.version || m.rev != new.rev => bail!(
+                "{} ({}): hosts lock it at {} and {}; declare one version",
+                new.name,
+                new.source,
+                label(m),
+                label(&new)
+            ),
+            Some(m) => m.artifacts.extend(new.artifacts),
+        }
+    }
+    Ok(merged.expect("a declaration has at least one variant"))
 }
 
 /// CI-built artifacts stay valid while the commit and the patches are the same, so a plain
