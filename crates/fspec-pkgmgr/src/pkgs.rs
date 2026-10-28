@@ -103,14 +103,20 @@ pub(crate) fn live_versions(cx: &Cx, fam: Family, names: &[String]) -> Result<BT
 
 /// `{"names": [...], "versions": {name: version}}` from the live system.
 pub(crate) fn record_names(cx: &Cx, fam: Family, names: &[String]) -> Result<Map<String, Value>> {
-    let versions: Map<String, Value> =
-        live_versions(cx, fam, names)?.into_iter().filter(|(_, v)| !v.is_empty()).map(|(n, v)| (n, v.into())).collect();
+    Ok(names_record(names, &live_versions(cx, fam, names)?))
+}
+
+fn names_record(names: &[String], live: &BTreeMap<String, String>) -> Map<String, Value> {
+    let versions: Map<String, Value> = names
+        .iter()
+        .filter_map(|n| live.get(n).filter(|v| !v.is_empty()).map(|v| (n.clone(), v.clone().into())))
+        .collect();
     let mut rec = Map::new();
     rec.insert("names".into(), names.to_vec().into());
     if !versions.is_empty() {
         rec.insert("versions".into(), versions.into());
     }
-    Ok(rec)
+    rec
 }
 
 /// Notes for names that are gone or at another version than the record says, and for `!name`
@@ -293,9 +299,14 @@ impl PkgEngine {
         Ok(())
     }
 
+    /// New packages installed by name go in one transaction, which on zypper or dnf saves a
+    /// solver run and a repo load per package. When that transaction fails they are installed
+    /// one at a time, so the ones that can land do and the error names the one that cannot.
     pub fn commit(&self, cx: &Cx, ops: &[Op], journal: &mut Journal) -> Result<Records> {
         let fam = self.0;
         let mut records = Records::new();
+        let mut done: Vec<(&Op, Want)> = Vec::new();
+        let mut fresh: Vec<(&Op, Want)> = Vec::new();
         for op in ops {
             let had = match &op.current {
                 Some(e) => Some((entry_names(fam, e)?, e.record.clone())),
@@ -316,6 +327,10 @@ impl PkgEngine {
             }
             let w = want(fam, cx, p)?;
             match had {
+                None if w.cached.is_none() => {
+                    fresh.push((op, w));
+                    continue;
+                }
                 None => install(cx, fam, &w.names, w.cached.as_ref())?,
                 Some((n, rec)) if n == w.names => upgrade(cx, journal, fam, &w, &rec)?,
                 Some((n, rec)) => {
@@ -323,7 +338,21 @@ impl PkgEngine {
                     install(cx, fam, &w.names, w.cached.as_ref())?;
                 }
             }
-            let mut rec = record_names(cx, fam, &w.names)?;
+            done.push((op, w));
+        }
+        if !fresh.is_empty() {
+            let all: Vec<String> = fresh.iter().flat_map(|(_, w)| w.names.clone()).collect();
+            if fresh.len() == 1 || install(cx, fam, &all, None).is_err() {
+                for (_, w) in &fresh {
+                    install(cx, fam, &w.names, None)?;
+                }
+            }
+            done.extend(fresh);
+        }
+        let all: Vec<String> = done.iter().flat_map(|(_, w)| w.names.clone()).collect();
+        let live = live_versions(cx, fam, &all)?;
+        for (op, w) in done {
+            let mut rec = names_record(&w.names, &live);
             if let Some(c) = &w.cached {
                 rec.insert("file".into(), c.file.clone().into());
             }

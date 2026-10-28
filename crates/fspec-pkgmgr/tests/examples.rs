@@ -63,10 +63,9 @@ fn fedora_example() {
     let (lines, entries) = run("fedora", "workstation", Scope::System);
     assert_eq!(entries, 4);
     let flatpak = "flatpak install -y --noninteractive --system flathub";
-    assert_eq!(lines[0], "dnf install -y --setopt=max_parallel_downloads=10 jq ripgrep");
-    assert_eq!(lines[1], "dnf install -y --setopt=max_parallel_downloads=10 htop");
-    assert_eq!(lines[2], format!("{flatpak} org.mozilla.firefox"));
-    assert!(lines[3].starts_with("flatpak update -y --noninteractive --system --commit=6f1c3a9b"), "{}", lines[3]);
-    assert_eq!(lines[4], format!("{flatpak} com.valvesoftware.Steam"));
-    assert_eq!(lines.len(), 5);
+    assert_eq!(lines[0], "dnf install -y --setopt=max_parallel_downloads=10 jq ripgrep htop");
+    assert_eq!(lines[1], format!("{flatpak} org.mozilla.firefox"));
+    assert!(lines[2].starts_with("flatpak update -y --noninteractive --system --commit=6f1c3a9b"), "{}", lines[2]);
+    assert_eq!(lines[3], format!("{flatpak} com.valvesoftware.Steam"));
+    assert_eq!(lines.len(), 4);
 }

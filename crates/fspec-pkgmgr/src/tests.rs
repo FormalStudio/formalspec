@@ -387,10 +387,8 @@ fn dnf_installs_by_name_and_detects_drift() {
     assert_eq!(
         w.take(),
         [
-            "dnf install -y --setopt=max_parallel_downloads=10 htop",
-            r"rpm -q --qf %{NAME}\t%{VERSION}-%{RELEASE}\n htop",
-            "dnf install -y --setopt=max_parallel_downloads=10 jq ripgrep",
-            r"rpm -q --qf %{NAME}\t%{VERSION}-%{RELEASE}\n jq ripgrep",
+            "dnf install -y --setopt=max_parallel_downloads=10 htop jq ripgrep",
+            r"rpm -q --qf %{NAME}\t%{VERSION}-%{RELEASE}\n htop jq ripgrep",
         ]
     );
     assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
@@ -484,6 +482,7 @@ fn dnf_rejects_a_bad_hash_before_touching_the_system() {
 fn dnf_failure_keeps_the_earlier_install() {
     let w = World::linux();
     w.answer("dnf install -y --setopt=max_parallel_downloads=10 b", 1, "");
+    w.answer("dnf install -y --setopt=max_parallel_downloads=10 a b", 1, "");
     assert!(w.apply(Scope::System, &[dnf("a", &[], "pinned"), dnf("b", &[], "pinned")]).is_err());
     let lines = w.take();
     assert_eq!(lines.last().unwrap(), "dnf install -y --setopt=max_parallel_downloads=10 b");
@@ -673,12 +672,9 @@ fn every_family_installs_by_name_reports_drift_and_removes() {
         let want = [f.pkg("htop", &[]), f.pkg("tools", &["jq", "ripgrep"])];
         w.apply(Scope::System, &want).unwrap();
         let lines = w.take();
-        assert_eq!(
-            f.without_queries(lines.clone()),
-            [format!("{} htop", f.install), format!("{} jq ripgrep", f.install)]
-        );
-        // One query per package records its versions, or one per name without a batched query.
-        let queries = if f.batch.is_empty() { 3 } else { 2 };
+        assert_eq!(f.without_queries(lines.clone()), [format!("{} htop jq ripgrep", f.install)]);
+        // One query records every version, or one per name without a batched query.
+        let queries = if f.batch.is_empty() { 3 } else { 1 };
         assert_eq!(lines.iter().filter(|l| f.is_query(l)).count(), queries, "{}", f.kind);
         assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty(), "{}", f.kind);
 
@@ -763,8 +759,11 @@ fn every_family_keeps_the_earlier_install_when_a_later_one_fails() {
     for f in &FAMS {
         let w = f.world();
         w.answer(&format!("{} b", f.install), 1, "");
+        w.answer(&format!("{} a b", f.install), 1, "");
         assert!(w.apply(Scope::System, &[f.pkg("a", &[]), f.pkg("b", &[])]).is_err());
         let lines = w.take();
+        // The failed transaction of both falls back to one per package, so `a` lands.
+        assert!(lines.contains(&format!("{} a", f.install)), "{}: {lines:#?}", f.kind);
         assert_eq!(lines.last(), Some(&format!("{} b", f.install)), "{}", f.kind);
         assert!(!lines.iter().any(|l| l.starts_with(f.remove)), "{}: {lines:#?}", f.kind);
     }
@@ -884,6 +883,7 @@ fn moss_installs_by_name_and_keeps_the_earlier_install() {
     fs::write(w.paths.root.join("usr/.stateID"), "7\n").unwrap();
     let pkg = |n: &str| pkg(n, json!({"kind": "moss", "names": []}), "pinned");
     w.answer(&moss_line(&["-y", "install", "b"]), 1, "");
+    w.answer(&moss_line(&["-y", "install", "a", "b"]), 1, "");
     assert!(w.apply(Scope::System, &[pkg("a"), pkg("b")]).is_err());
     let lines = w.take();
     assert!(lines.contains(&moss_line(&["-y", "install", "a"])), "{lines:#?}");
@@ -1342,8 +1342,11 @@ fn a_large_spec_queries_versions_in_batches() {
 
     w.apply(Scope::System, &want).unwrap();
     let applied = w.take();
-    assert!(applied.iter().filter(|l| f.is_query(l)).count() <= 33, "{}", applied.len());
+    // Three queries for the base, one for the packages, and the 30 packages in one transaction.
+    assert_eq!(applied.iter().filter(|l| f.is_query(l)).count(), 4, "{applied:#?}");
+    assert_eq!(applied.iter().filter(|l| l.starts_with(f.install)).count(), 2, "{applied:#?}");
 
     assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
-    assert!(w.take().len() <= 33);
+    let planned = w.take();
+    assert!(planned.len() <= 33, "{planned:#?}");
 }

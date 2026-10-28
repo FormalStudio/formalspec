@@ -1129,6 +1129,11 @@ come from one query per thousand names (`rpm -q --qf`, `pacman -Q`,
 A name the batch does not report, such as a capability or `name:arch`, is
 queried on its own. xbps and moss have no such query and ask per name.
 
+New `pkg` packages installed by name commit in one transaction per manager,
+so thirty zypper packages cost one solver run instead of thirty. When that
+transaction fails, they are installed one at a time: the ones that can land
+do, and the error names the package that cannot.
+
 AerynOS's `aerynos(packages = [...])` and `pkg(..., source = moss())` run
 `moss install` and `moss remove`. moss builds every transaction as a new
 `/usr` from its deduplicated store and swaps it in atomically, recording a
