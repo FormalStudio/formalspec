@@ -227,10 +227,12 @@ A run with `--root` never goes remote: every host is treated as a local dry run.
 ssh exited 255: it could not connect or log in. Check `ssh -o BatchMode=yes server true` by hand.
 A host that asks for a password fails here; set up key authentication.
 
-**`fspec is not installed on server (not on PATH for a non-interactive ssh shell); install it there first, ...`**
+**`fspec on server is not installed and fspec.lock pins no fspec; ...`**
 
-The login worked and the shell found no `fspec`. Install it on the host, or link it into a
-directory on the default path such as `/usr/local/bin`.
+The login worked and the shell found no `fspec`. An apply installs the fspec the lock pins on a
+host that has none, for the platform the host declares, but this lock pins none. Run
+`fspec update fspec`, or install it on the host by hand into a directory on the default path such
+as `/usr/local/bin`.
 
 **`fspec on server is older than this one (engine 2 < 3) and fspec.lock pins no fspec; ...`**
 

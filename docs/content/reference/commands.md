@@ -194,6 +194,17 @@ None of these change the host. See [Trying distros](../guides/trying-distros.md)
 | `fspec try --list [--host <h>]` | Lists the distros, and the kept VMs, running VMs and cached ISOs on the host |
 | `fspec try --delete <name> [--host <h>]` | Deletes a kept VM |
 
+## VM hosts
+
+For hosts declared with `vm(...)`. See [VM hosts](../guides/vm-hosts.md).
+
+| Command | Does |
+| --- | --- |
+| `fspec vm start <host>` | Boots the host's VM on the machine its `vm(on = ...)` names and waits until its sshd answers on the forwarded port. The first start creates the disk from the cloud image. Does nothing for a running VM |
+| `fspec vm stop <host>` | Powers the VM off through ACPI, and stops qemu if the guest has not after 120 seconds. The disk stays |
+| `fspec vm status [<host>...]` | Prints `running`, `stopped` or `absent` for each VM host, or the ones named |
+| `fspec vm ssh <host> [-- <command>]` | `ssh` to the host's alias, or runs the command there |
+
 ## Diagnostics
 
 | Command | Does |

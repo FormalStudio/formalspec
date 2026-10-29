@@ -1876,6 +1876,57 @@ Sharing on macOS or `remote-viewer` on Linux.
 `--keep <name>` puts the disk and UEFI variables in
 `~/.local/share/fspec/try/<name>/` and leaves them on exit.
 
+## VM hosts
+
+A host can be a virtual machine another host runs, for a test rig that has to
+be a real system (its own init, services, PAM and kernel modules) without being
+a real machine. It is declared like any host, plus where it runs:
+
+```python
+host(
+    name = "fstestvm0",
+    platform = "x86_64-linux",
+    system = tumbleweed(packages = [...]),
+    users = [user("kyan", uid = 1000)],
+    builders = [builder("g815")],
+    vm = vm("g815", port = 2222, cpus = 6, memory_gib = 8, disk_gib = 40,
+            authorized_keys = ["ssh-ed25519 AAAA... macbook"]),
+)
+```
+
+`vm(on, port, cpus = 4, memory_gib = 8, disk_gib = 40, image = None,
+authorized_keys = [])` is metadata for one command, like `builders`: plan and
+apply never read it. `fspec vm start <host>` boots the VM on `on` (over ssh as
+that host's `ssh` field says, or here), `stop` powers it off through ACPI, and
+`status` and `ssh` report on it and log in. From there it is an ordinary remote
+host: `fspec apply --host fstestvm0` over its own ssh alias, which the user's ssh
+config points at `127.0.0.1:<port>` on `on` (a `ProxyJump`).
+
+The disk is not installed by fspec. It starts as the distro's cloud image
+(Tumbleweed's `Minimal-VM` Cloud qcow2, or `image`), verified against the
+`.sha256` its project publishes, converted to a disk of its own and grown to
+`disk_gib`; the image stays cached in `~/.cache/fspec/vm/images/` for the next
+VM. A cloud image ships cloud-init, so a NoCloud seed (a FAT volume labelled
+`CIDATA`, made with mtools, no root) gives the first boot the host's name, its
+first user with `authorized_keys` and passwordless sudo, and nothing else.
+Everything after that is the spec's, applied over ssh. The guest has no fspec
+yet, so the first remote apply installs the locked one before shipping the
+spec ([Remote hosts](#remote-hosts)). Bootstrapping a distro root the way `disk
+init` does would need a live system around the disk; a cloud image is already
+that root, made by the distro for exactly this.
+
+`fspec_try::vm` holds the scripts, one per command, built on the same qemu
+pieces as `fspec try`: q35 with `-cpu host`, OVMF from the same list, the
+virtio disk on its own iothread with the kept-disk cache and aio probes. It is
+headless: no display device, the serial console in `serial.log`, a QMP socket,
+user-mode networking with only `hostfwd=tcp:127.0.0.1:<port>-:22`, and qemu
+daemonized with a pid file, so the VM outlives the ssh session that started it.
+`start` returns once the forwarded port answers with an ssh banner, and is a
+no-op for a running VM. Each VM lives in `~/.local/share/fspec/vm/<host>/` on
+`on` (disk, UEFI variables, seed, pid, QMP socket, console log); `rm -rf` of it
+while stopped is how one starts over. Two VM hosts with their own ports run at
+once.
+
 ## Installer
 
 The installer puts a FormalSpec-managed system on a blank machine. It is a
@@ -1998,6 +2049,7 @@ self-signed chain are unverified.
 | `fspec disk init <device>` | Partition and format a disk with a supported layout |
 | `fspec sync [item...] [--peer h] [--from h] [--rollback] [--dry-run] [--watch [s]]` | Sync app data with the item's peers |
 | `fspec try <distro\|url\|path> [--host h] [--keep name]` | Boot a live ISO in a throwaway KVM VM, here or on `h` with its display tunnelled back |
+| `fspec vm start\|stop\|status\|ssh <host>` | Run a host declared with `vm(...)` as a headless VM on the machine it names |
 
 ## Sync between hosts
 
@@ -2122,7 +2174,10 @@ through the `Runner`:
    or lock key a spec can use; one lower than this fspec's fails the same way
    (`fspec on g815 is older than this one (engine 0 < 1)`), since it may
    reject the spec or ignore lock keys it does not know, unless the lock pins
-   [the engine](#the-engine). With a CI build for the remote's platform the
+   [the engine](#the-engine). A remote with no fspec at all, such as a new
+   [VM host](#vm-hosts), is handled the same way for the platform its host
+   declares, and checked against its declaration once the installed fspec
+   answers. With a CI build for the remote's platform the
    driving fspec pulls it; without one (CI has not caught up with a lock bump)
    it ships a job file for the locked rev to the host's builders in order (the
    host itself when it names none, as a host with builders should not compile)

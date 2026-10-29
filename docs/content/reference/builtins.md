@@ -31,7 +31,7 @@ covers `gh:` loads.
 ```starlark
 host(name, platform, system = None, users = [], modules = [], ssh = name,
      protect = [], persist = [], release_age = None, builders = [], sync = [],
-     locale = None, keymap = None, timezone = None)
+     locale = None, keymap = None, timezone = None, vm = None)
 ```
 
 | Argument | Type | Default | Meaning |
@@ -50,6 +50,7 @@ host(name, platform, system = None, users = [], modules = [], ssh = name,
 | `locale` | string | none | `LANG` for the system, with a character set: `en_US.UTF-8`. fspec generates it where the distro needs that. Linux only |
 | `keymap` | string | none | Keyboard layout for the console and the desktop: `us`, `de`. Linux with systemd, or Void |
 | `timezone` | string | none | A zoneinfo name: `Europe/Madrid`. `/etc/localtime` links to it. Linux only |
+| `vm` | `vm(...)` | none | This host is a VM another machine runs; see [vm](#vm) |
 
 A function in `modules` receives a struct with:
 
@@ -359,6 +360,25 @@ builder(name, routes = [name])
 
 A machine that builds `git(...)` packages for a host, reached over ssh. `routes` are ssh
 destinations for the same machine, tried in order.
+
+## vm
+
+```starlark
+vm(on, port, cpus = 4, memory_gib = 8, disk_gib = 40, image = None, authorized_keys = [])
+```
+
+Where `fspec vm` runs a host that is a virtual machine. Plan and apply ignore it.
+
+| Argument | Type | Default | Meaning |
+| --- | --- | --- | --- |
+| `on` | string | required | The Linux machine with KVM that runs the VM: a host of the spec (reached by its `ssh`), or an ssh destination |
+| `port` | int | required | The port on `on`'s loopback that forwards to the guest's ssh. Each VM needs its own |
+| `cpus`, `memory_gib` | int | `4`, `8` | The guest's CPUs and memory |
+| `disk_gib` | int | `40` | What the disk grows to on the first start. It is sparse |
+| `image` | string | the distro's | A qcow2 cloud image with cloud-init. Tumbleweed has a default; other distros need one |
+| `authorized_keys` | list of strings | `[]` | ssh public keys the host's first user accepts from the first boot on |
+
+See [VM hosts](../guides/vm-hosts.md).
 
 ## sync, json_keys, keyring
 
