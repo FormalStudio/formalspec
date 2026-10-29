@@ -11,11 +11,13 @@ name = "fspec-install"
 path = "src/main.rs"
 
 [dependencies]
+age.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 clap.workspace = true
 fspec-core.workspace = true
 fspec-eval.workspace = true
+fspec-files.workspace = true
 fspec-switch.workspace = true
 ratatui = "0.30"
 serde.workspace = true

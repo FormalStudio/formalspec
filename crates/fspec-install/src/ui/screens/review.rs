@@ -15,7 +15,7 @@ const W_BUTTON: u8 = 2;
 
 #[derive(Default, Clone)]
 pub struct Summary {
-    /// `(label, value)` for Language, Disk, System and Account, in that order.
+    /// `(label, value)` for Language, Disk, System and Account, in that order, then Keys in a restore.
     pub groups: Vec<(&'static str, String)>,
     pub device: String,
     pub model: String,
@@ -64,7 +64,8 @@ impl Review {
             1 => Step::Disk,
             2 if sh.restore => Step::Host,
             2 => Step::System,
-            _ => Step::Account,
+            3 => Step::Account,
+            _ => Step::Keys,
         }
     }
 
@@ -83,7 +84,9 @@ impl Review {
 
     pub fn key(&mut self, k: &KeyEvent, sh: &mut Shared) -> Flow {
         match k.code {
-            KeyCode::Char(c @ '1'..='4') => return Flow::Jump(self.target(c as usize - '1' as usize, sh)),
+            KeyCode::Char(c @ '1'..='9') if (c as usize - '1' as usize) < self.summary.groups.len() => {
+                return Flow::Jump(self.target(c as usize - '1' as usize, sh));
+            }
             KeyCode::Char(' ') if self.can_toggle(sh) => self.secure_boot = !self.secure_boot,
             KeyCode::Tab | KeyCode::Down | KeyCode::Up | KeyCode::BackTab => self.focus = 1 - self.focus,
             KeyCode::Enter => return self.erase(),
@@ -109,7 +112,8 @@ impl Review {
     }
 
     pub fn hints(&self) -> Hints {
-        hints(&[("1-4", "Change"), ("Space", "Toggle"), ("Tab", "Next"), ("Enter", "Install"), ("Esc", "Back")])
+        let change = if self.summary.groups.len() == 5 { "1-5" } else { "1-4" };
+        hints(&[(change, "Change"), ("Space", "Toggle"), ("Tab", "Next"), ("Enter", "Install"), ("Esc", "Back")])
     }
 
     pub fn render(&mut self, c: &mut Canvas, a: Rect, sh: &Shared) {

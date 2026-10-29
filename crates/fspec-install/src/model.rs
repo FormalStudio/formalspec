@@ -159,6 +159,8 @@ pub struct Choices {
     pub account: Account,
     /// Enrol our own keys with sbctl and sign the boot manager and the kernels with them.
     pub secure_boot: bool,
+    /// Keys for the spec's secrets, installed into the new system. Empty skips them.
+    pub keys: Vec<crate::keys::Key>,
 }
 
 /// The choices made so far. The front end fills it screen by screen and renders the spec it would
@@ -170,6 +172,7 @@ pub struct Draft {
     pub system: Option<SystemChoice>,
     pub account: Option<Account>,
     pub secure_boot: bool,
+    pub keys: Vec<crate::keys::Key>,
 }
 
 impl Draft {
@@ -180,6 +183,7 @@ impl Draft {
             system: self.system.clone()?,
             account: self.account.clone()?,
             secure_boot: self.secure_boot,
+            keys: self.keys.clone(),
         })
     }
 }

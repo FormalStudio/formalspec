@@ -15,8 +15,8 @@ use super::screens::modal::{Modal, Out};
 use super::screens::review::Summary;
 use super::screens::{
     Exit, Flow, Hints, Shared, Step, account::AccountScreen, disk::DiskScreen, flow, host::HostScreen,
-    install::InstallScreen, language::Language, preset::PresetScreen, review::Review, source::Source, system::System,
-    welcome::Welcome,
+    install::InstallScreen, keys::KeysScreen, language::Language, preset::PresetScreen, review::Review, source::Source,
+    system::System, welcome::Welcome,
 };
 use super::theme::{Theme, fg};
 use super::widgets::spec::SpecPane;
@@ -36,6 +36,7 @@ pub enum Input {
 }
 
 type Cloned = Result<Vec<HostSummary>, String>;
+type Fetched = Result<crate::keys::Key, String>;
 
 pub struct App {
     pub sh: Shared,
@@ -49,6 +50,7 @@ pub struct App {
     lang: Language,
     source: Source,
     host: HostScreen,
+    keys: KeysScreen,
     disk: DiskScreen,
     system: System,
     preset: PresetScreen,
@@ -64,6 +66,8 @@ pub struct App {
     size: (u16, u16),
     clone_tx: Sender<Cloned>,
     clone_rx: Receiver<Cloned>,
+    key_tx: Sender<Fetched>,
+    key_rx: Receiver<Fetched>,
 }
 
 impl App {
@@ -88,6 +92,7 @@ impl App {
             checkout,
         };
         let (clone_tx, clone_rx) = mpsc::channel();
+        let (key_tx, key_rx) = mpsc::channel();
         let mut app = App {
             lang: Language::new(&sh),
             sh,
@@ -100,6 +105,7 @@ impl App {
             welcome: Welcome::default(),
             source: Source::new(),
             host: HostScreen::new(),
+            keys: KeysScreen::new(),
             disk: DiskScreen::new(),
             system: System::new(),
             preset: PresetScreen::new(),
@@ -115,6 +121,8 @@ impl App {
             size,
             clone_tx,
             clone_rx,
+            key_tx,
+            key_rx,
         };
         app.sync(now);
         app
@@ -133,7 +141,7 @@ impl App {
     }
 
     pub fn busy(&self) -> bool {
-        self.source.cloning.is_some() || self.install.running()
+        self.source.cloning.is_some() || self.keys.fetching.is_some() || self.install.running()
     }
 
     pub fn next_wake(&self, now: Instant) -> Option<Duration> {
@@ -183,6 +191,7 @@ impl App {
             system,
             account: self.reached(Step::Account).then(|| self.account.value(sh)),
             secure_boot: self.review.secure_boot && sh.firmware.efi && sh.firmware.setup_mode,
+            keys: if sh.restore && self.reached(Step::Keys) { self.keys.value() } else { Vec::new() },
         }
     }
 
@@ -222,13 +231,25 @@ impl App {
             format!("{} · {p}{desk}", sh.distro.map_or("", |d| d.name))
         };
         let acct = self.account.value(sh);
+        let mut groups = vec![
+            ("Language", self.lang.describe()),
+            ("Disk", disk_line),
+            ("System", system),
+            ("Account", format!("{} ({}) on {}", acct.full_name, acct.name, acct.hostname)),
+        ];
+        if sh.restore {
+            let keys = self.keys.value();
+            let line = if keys.is_empty() {
+                "None; secrets no key opens are left out".to_string()
+            } else {
+                let names: Vec<String> =
+                    keys.iter().map(|k| if k.generated { "a new age key".into() } else { k.label() }).collect();
+                names.join(", ")
+            };
+            groups.push(("Keys", line));
+        }
         Summary {
-            groups: vec![
-                ("Language", self.lang.describe()),
-                ("Disk", disk_line),
-                ("System", system),
-                ("Account", format!("{} ({}) on {}", acct.full_name, acct.name, acct.hostname)),
-            ],
+            groups,
             device: disk.map(|i| i.path.clone()).unwrap_or_default(),
             model: disk.map(|i| i.model.clone()).unwrap_or_default(),
             distro: sh.distro,
@@ -239,6 +260,7 @@ impl App {
     fn captures_text(&self) -> bool {
         match self.step {
             Step::Welcome | Step::Install | Step::Host | Step::System | Step::Preset | Step::Review => false,
+            Step::Keys => self.keys.captures_text(),
             Step::Language => self.lang.captures_text(),
             Step::Source => self.source.captures_text(),
             Step::Disk => self.disk.captures_text(),
@@ -273,6 +295,9 @@ impl App {
                 }
                 Err(e) => self.source.fail(&e),
             }
+        }
+        while let Ok(r) = self.key_rx.try_recv() {
+            self.keys.fetched(r, &self.sh);
         }
         self.install.poll(now);
     }
@@ -323,6 +348,7 @@ impl App {
             Step::Language => self.lang.key(&k, &mut self.sh),
             Step::Source => self.source.key(&k, &mut self.sh),
             Step::Host => self.host.key(&k, &mut self.sh),
+            Step::Keys => self.keys.key(&k, &mut self.sh),
             Step::Disk => self.disk.key(&k, &mut self.sh),
             Step::System => self.system.key(&k, &mut self.sh),
             Step::Preset => self.preset.key(&k, &mut self.sh),
@@ -361,6 +387,7 @@ impl App {
                     (_, Step::Language) => self.lang.click(hit, &self.sh),
                     (_, Step::Source) => self.source.click(hit),
                     (_, Step::Host) => self.host.click(hit, &mut self.sh),
+                    (_, Step::Keys) => self.keys.click(hit),
                     (_, Step::Disk) => self.disk.click(hit),
                     (_, Step::System) => self.system.click(hit),
                     (_, Step::Preset) => self.preset.click(hit),
@@ -417,6 +444,7 @@ impl App {
             Flow::Jump(s) => self.go(s, now),
             Flow::Modal(m) => self.modal = Some(m),
             Flow::Clone => self.start_clone(),
+            Flow::FetchKey => self.start_fetch(),
             Flow::Install => self.start_install(now),
             Flow::Exit(e) => return Some(e),
         }
@@ -457,6 +485,7 @@ impl App {
         match step {
             Step::Language => self.lang.apply_keymap(&self.sh),
             Step::Disk => self.disk.reload(&self.sh),
+            Step::Keys => self.keys.enter(&self.sh),
             Step::Account => self.account.enter(&self.sh),
             Step::Review => {
                 // A failed install beside Windows can leave C: shrunk, so the retry plans from
@@ -488,11 +517,23 @@ impl App {
         });
     }
 
+    fn start_fetch(&mut self) {
+        let Some(source) = self.keys.request() else { return };
+        let be = self.sh.be.clone();
+        let tx = self.key_tx.clone();
+        std::thread::spawn(move || {
+            let r = be.fetch_key(&source).map_err(|e| format!("{e:#}"));
+            let _ = tx.send(r);
+        });
+    }
+
     fn start_install(&mut self, now: Instant) {
         let Some(choices) = self.draft().complete() else { return };
         let (tx, rx) = mpsc::channel();
         let name = self.sh.distro.map_or("Your system", |d| d.name);
-        self.install.start(rx, now, name);
+        let generated = choices.keys.iter().filter(|k| k.generated);
+        let notes = generated.flat_map(|k| crate::keys::rekey_steps(&choices.account.hostname, k)).collect();
+        self.install.start(rx, now, name, notes);
         let be = self.sh.be.clone();
         std::thread::spawn(move || be.install(&choices, tx));
         self.go(Step::Install, now);
@@ -506,6 +547,7 @@ impl App {
             Step::Language => self.lang.hints(),
             Step::Source => self.source.hints(),
             Step::Host => self.host.hints(),
+            Step::Keys => self.keys.hints(),
             Step::Disk => self.disk.hints(),
             Step::System => self.system.hints(),
             Step::Preset => self.preset.hints(),
@@ -584,6 +626,7 @@ impl App {
             Step::Language => self.lang.render(c, a, &self.sh),
             Step::Source => self.source.render(c, a, &self.sh),
             Step::Host => self.host.render(c, a, &self.sh),
+            Step::Keys => self.keys.render(c, a, &self.sh),
             Step::Disk => self.disk.render(c, a, &self.sh),
             Step::System => self.system.render(c, a, &self.sh),
             Step::Preset => self.preset.render(c, a, &self.sh),
@@ -618,7 +661,10 @@ impl App {
             }
         }
         let brand = x_of_trail(w, trail_w as u16);
-        c.text(area, 2, 0, "FormalSpec", Style::new().fg(th.ink).add_modifier(Modifier::BOLD));
+        // The restore trail fills an 80 column screen.
+        if brand >= 2 + 10 + 2 {
+            c.text(area, 2, 0, "FormalSpec", Style::new().fg(th.ink).add_modifier(Modifier::BOLD));
+        }
         if brand >= 2 + 10 + 10 + 2 {
             c.text(area, 12, 0, " installer", fg(th.muted));
         }

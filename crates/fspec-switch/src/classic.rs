@@ -21,6 +21,11 @@ pub struct Target<'a> {
     pub spec_file: &'a str,
     /// The running `fspec`, copied into the new root to run the apply there.
     pub exe: &'a Path,
+    /// Run with the new root mounted, right before its first apply: the installer puts keys
+    /// for the spec's secrets in place with them.
+    pub before_apply: &'a [Cmd],
+    /// The first apply leaves out secrets no key in the new root decrypts instead of failing.
+    pub skip_undecryptable_secrets: bool,
 }
 
 pub(crate) fn s(p: &Path) -> String {
@@ -328,10 +333,12 @@ pub(crate) fn install_root(
     let apply = Cmd::new("/usr/local/bin/fspec")
         .arg("--spec")
         .arg(format!("/var/lib/fspec/spec/{}", t.spec_file))
-        .args(["apply", "--local", "--scope", "system", "--host", t.host]);
+        .args(["apply", "--local", "--scope", "system", "--host", t.host])
+        .args(t.skip_undecryptable_secrets.then_some("--skip-undecryptable-secrets"));
     if let Some(sh) = upgrade(d, t.arch, boot, luks) {
         plan.run(in_root(root, Cmd::new("sh").args(["-c", &sh])));
     }
+    t.before_apply.iter().for_each(|c| plan.run(c.clone()));
     plan.run(in_root(root, apply));
     plan.run(in_root(root, Cmd::new("sh").args(["-c", &populate(d, boot, luks)])));
     Ok(())

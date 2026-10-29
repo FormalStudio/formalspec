@@ -1557,11 +1557,13 @@ dependencies = [
 name = "fspec-install"
 version = "0.1.0"
 dependencies = [
+ "age",
  "anyhow",
  "base64 0.23.1",
  "clap",
  "fspec-core",
  "fspec-eval",
+ "fspec-files",
  "fspec-switch",
  "ratatui",
  "serde",

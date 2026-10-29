@@ -92,6 +92,7 @@ pub fn files(c: &Choices) -> Vec<(PathBuf, String)> {
         system: Some(c.system.clone()),
         account: Some(c.account.clone()),
         secure_boot: c.secure_boot,
+        keys: Vec::new(),
     };
     let mut out = vec![(PathBuf::from("spec.star"), preview(&draft))];
     for (name, source) in modules(*preset) {

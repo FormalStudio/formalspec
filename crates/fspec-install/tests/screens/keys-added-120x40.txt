@@ -1,0 +1,40 @@
+  FormalSpec installer                             Language · Source · Host · Keys · Disk · Account · Review · Install
+  ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+
+  Bring a key for your secrets                                        ╭─ spec.star ──────────────────────────────────╮
+  Optional. Without one, secrets are left out; the rest installs.     │  load("//modules/cli.star", "cli")           │
+  Your spec has 3 secrets in secrets.star.                            │  load("//modules/desktop.star", "desktop")   │
+                                                                      │                                              │
+  Get a key from                                                      │  def machine(name, platform, system, extra = │
+   Paste   File   Another machine                                     │      []):                                    │
+                                                                      │      return host(                            │
+  Key file                                                            │          name = name,                        │
+    /media/usb/keys.txt                                               │          platform = platform,                │
+    An age identity file or an SSH private key.                       │          system = system,                    │
+    Add key                                                           │          users = [user("kyan", uid = 1000,   │
+                                                                      │              shell = "fish")],               │
+  ✓ SSH key (ed25519) opens 2 of 3 secrets                            │          modules = [cli] + extra,            │
+                                                                      │      )                                       │
+    ●━━  Also make a new age key for this machine                     │                                              │
+                                                                      │  hosts = [                                   │
+    Continue                                                          │      machine("framework", "x86_64-linux",    │
+                                                                      │          fedora(packages =                   │
+                                                                      │          ["NetworkManager"]), [desktop]),    │
+                                                                      │      machine("macbook", "aarch64-darwin",    │
+                                                                      │          None),                              │
+                                                                      │  ]                                           │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      │                                              │
+                                                                      ╰──────────────────────────────────────────────╯
+  Tab Next field  ←→ Where from  Enter Add or continue  Esc Back

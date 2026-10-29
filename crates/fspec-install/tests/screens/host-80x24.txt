@@ -1,4 +1,4 @@
-  FormalSpec      Language · Source · Host · Disk · Account · Review · Install
+           Language · Source · Host · Keys · Disk · Account · Review · Install
   ────────────────────────────────────────────────────────────────────────────
 
   Choose a host

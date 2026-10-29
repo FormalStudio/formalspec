@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::backend::Backend;
 use crate::model::{Choices, DiskInfo, Draft, Firmware, GitAuth, HostSummary, Progress, SystemChoice};
-use crate::{install, spec};
+use crate::{install, keys, spec};
 
 pub const LSBLK: [&str; 6] =
     ["-J", "-b", "-p", "-o", "NAME,TYPE,SIZE,MODEL,TRAN,RM,FSTYPE,LABEL,PARTLABEL,MOUNTPOINTS", "-e7"];
@@ -303,6 +303,10 @@ impl Backend for Live {
             std::fs::remove_dir_all(into)?;
         }
         clone_spec(&LiveRunner, url, auth, into)
+    }
+
+    fn fetch_key(&self, source: &keys::Source) -> Result<keys::Key> {
+        keys::fetch(&LiveRunner, source, &std::env::current_exe()?)
     }
 
     fn preview(&self, draft: &Draft) -> String {

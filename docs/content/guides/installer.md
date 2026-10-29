@@ -247,7 +247,18 @@ no questions, erasing the disk it names:
 ```
 
 `passphrase` encrypts the disk, `swap_gib` sets the swap (4 by default), and `desktop` defaults to
-the distro's first one. It takes only what the screens offer: a distro, preset or desktop they
+the distro's first one. `keys` and `generate_key` are optional and bring keys for secrets, as the
+[Keys](#keys-for-your-secrets) screen does:
+
+```json
+"keys": [{"file": "/media/usb/keys.txt"},
+         {"ssh": "kyan@laptop:~/.config/age/keys.txt", "password": "hunter22"}],
+"generate_key": true
+```
+
+Each entry of `keys` names one of `paste` (the key itself), `file` or `ssh`; `password` goes with
+`ssh` only. A key that cannot be read stops the install before the disk is touched. With
+`generate_key`, the last lines printed are the new key and how to give it access. It takes only what the screens offer: a distro, preset or desktop they
 would not show is refused before the disk is touched. It prints each stage as it starts and how
 long every stage took, and exits non-zero when a stage fails.
 
@@ -270,13 +281,50 @@ Restore installs a machine exactly as an existing spec declares it, instead of w
 
 4. Choose the host to install. The list shows every host in the spec. Hosts this ISO cannot
    install, such as a macOS host or one with no `system`, are shown with the reason.
-5. Choose the disk, as for a new system.
-6. Set the password for the host's first declared user.
-7. Review and install.
+5. Optionally, bring a key for the spec's secrets. See [Keys for your secrets](#keys-for-your-secrets).
+6. Choose the disk, as for a new system.
+7. Set the password for the host's first declared user.
+8. Review and install.
 
 The host is installed with the distro, packages, users and files its declaration names. The host
 must declare at least one user, and a system of `fedora()`, `arch()`, `debian()`, `ubuntu()`,
 `void()` or `aerynos()`.
+
+## Keys for your secrets
+
+A spec with [secrets](secrets.md) needs a key that decrypts them, and a new machine has none. The
+**Keys** screen of a restore brings one in. It is optional: **Continue without a key**, or Enter
+in an empty field, goes on.
+
+| Get a key from | Enter |
+| --- | --- |
+| Paste | The age identity, `AGE-SECRET-KEY-1...`. It is masked as you type |
+| File | A key file on a mounted disk, such as `/media/usb/keys.txt` |
+| Another machine | `user@host:path`, such as `kyan@laptop:~/.config/age/keys.txt`, and its password. Without a password, ssh signs in with a key only |
+
+A key is an age identity file or an unencrypted ed25519 or RSA ssh private key. **Add key** reads
+it and shows how many of the files in `secrets.star` it opens. A key that opens none is added
+anyway, with a warning: the secrets encrypted to it may not be committed yet. Add several keys by
+repeating it, such as an age key and an ssh key.
+
+The install puts each key where `secret(...)` looks by default:
+
+| Key | Where |
+| --- | --- |
+| age | `~/.config/fspec/age.key` of the user, mode `0600`, and `/root/.config/fspec/age.key` for the system scope, before the first apply |
+| ed25519 ssh | `~/.ssh/id_ed25519` (`0600`) and `~/.ssh/id_ed25519.pub` |
+| RSA ssh | `~/.ssh/id_rsa` (`0600`) and `~/.ssh/id_rsa.pub` |
+
+The ssh keys stay the user's: system secrets decrypt with the host's own ssh keys or an age key.
+
+**Also make a new age key for this machine** generates one and installs it the same way. Nothing
+is encrypted to it yet, so the done screen prints its public key, the line to add to
+`secrets.star`, and the `fspec secret rekey` to run on a machine that already decrypts the
+secrets. Pull the rekeyed spec on the new machine and run `fspec apply`.
+
+The first apply runs with `--skip-undecryptable-secrets`: a secret no key in the new system opens
+is left out with a warning instead of stopping the install, and the done screen lists those
+secrets. Put a key in place and run `fspec apply` to install them.
 
 ## Secure Boot
 
@@ -303,6 +351,7 @@ chain are not verified.
 | `@snapshots` | Space for read-only snapshots |
 | `@fspec` | FormalSpec's store, mounted at `/opt/fspec` |
 | `~/spec` | Your spec repository |
+| `~/.config/fspec/age.key`, `/root/.config/fspec/age.key`, `~/.ssh/id_*` | The keys from the [Keys](#keys-for-your-secrets) screen, when you brought any |
 
 On a machine that booted without UEFI, the installer uses the
 [BIOS layout](switching-distros.md#bios) instead.

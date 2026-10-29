@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use fspec_install::backend::Backend;
 use fspec_install::demo::DemoBackend;
+use fspec_install::keys::Key;
 use fspec_install::model::*;
 use fspec_install::ui::app::{App, Input};
 use fspec_install::ui::screens::install::Outcome;
@@ -321,6 +322,8 @@ fn restore_flow_reaches_install_done() {
     assert_eq!(r.app.step(), Step::Host);
     r.press(KeyCode::Down);
     r.press(KeyCode::Enter);
+    assert_eq!(r.app.step(), Step::Keys);
+    r.press(KeyCode::Enter);
     assert_eq!(r.app.step(), Step::Disk);
     r.press(KeyCode::Enter);
     assert_eq!(r.app.step(), Step::Account);
@@ -332,9 +335,91 @@ fn restore_flow_reaches_install_done() {
     let c = r.app.draft().complete().expect("complete draft");
     assert!(matches!(&c.system, SystemChoice::Restore { host, .. } if host == "framework"));
     assert_eq!(c.account.name, "kyan");
+    assert!(c.keys.is_empty());
+    assert!(r.text((120, 40)).contains("None; secrets no key opens are left out"));
     r.erase_and_install("/dev/nvme0n1");
     r.settle();
     assert!(matches!(r.app.install_outcome(), Outcome::Done));
+}
+
+/// Welcome through a restore of `framework` onto the Keys screen.
+fn to_keys(r: &mut Rig) {
+    r.press(KeyCode::Right);
+    r.press(KeyCode::Enter);
+    r.press(KeyCode::Enter);
+    r.typ("git@github.com:me/spec.git");
+    r.press(KeyCode::Enter);
+    r.settle();
+    r.press(KeyCode::Enter);
+    assert_eq!(r.app.step(), Step::Keys);
+}
+
+#[test]
+fn a_brought_key_shows_what_it_opens_and_a_new_one_how_to_add_it() {
+    let mut r = Rig::demo();
+    to_keys(&mut r);
+    let made = Key::generate();
+    let secret = made.private.0.lines().last().unwrap().to_string();
+    r.typ(&secret);
+    assert!(!r.text((120, 40)).contains(&secret), "the pasted key shows masked");
+    r.press(KeyCode::Enter);
+    r.settle();
+    assert!(r.text((120, 40)).contains("opens 2 of 3 secrets"), "{}", r.text((120, 40)));
+    r.press(KeyCode::BackTab);
+    r.press(KeyCode::Char(' '));
+    r.press(KeyCode::Tab);
+    r.press(KeyCode::Enter);
+    assert_eq!(r.app.step(), Step::Disk);
+    r.press(KeyCode::Enter);
+    r.typ("correct horse");
+    r.press(KeyCode::Tab);
+    r.typ("correct horse");
+    r.press(KeyCode::Enter);
+    assert_eq!(r.app.step(), Step::Review);
+    let keys = r.app.draft().complete().unwrap().keys;
+    assert_eq!(keys.len(), 2);
+    assert_eq!(keys[0].public, made.public);
+    assert!(keys[1].generated);
+    assert!(r.text((120, 40)).contains("a new age key"));
+    r.press(KeyCode::Char('5'));
+    assert_eq!(r.app.step(), Step::Keys);
+    for _ in 0..3 {
+        r.press(KeyCode::Enter);
+    }
+    assert_eq!(r.app.step(), Step::Review);
+    r.erase_and_install("/dev/nvme0n1");
+    r.settle();
+    let done = r.text((120, 40));
+    assert!(done.contains(&format!("framework = \"{}\"", keys[1].public[0])), "{done}");
+    assert!(done.contains("fspec secret rekey"));
+}
+
+#[test]
+fn a_key_that_cannot_be_read_says_why_and_a_second_ed25519_is_refused() {
+    let mut r = Rig::demo();
+    to_keys(&mut r);
+    r.typ("hunter22");
+    r.press(KeyCode::Enter);
+    r.settle();
+    assert!(r.text((120, 40)).contains("Unable to read the key"));
+    assert_eq!(r.app.step(), Step::Keys);
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("id_ed25519");
+    std::fs::write(&file, SSH_KEY).unwrap();
+    r.press(KeyCode::BackTab);
+    r.press(KeyCode::Right);
+    r.press(KeyCode::Tab);
+    r.typ(&file.display().to_string());
+    r.press(KeyCode::Enter);
+    r.settle();
+    assert!(r.text((120, 40)).contains("SSH key (ed25519) opens 2 of 3 secrets"));
+    r.press(KeyCode::BackTab);
+    r.press(KeyCode::BackTab);
+    r.press(KeyCode::BackTab);
+    r.typ(&file.display().to_string());
+    r.press(KeyCode::Enter);
+    r.settle();
+    assert!(r.text((120, 40)).contains("That key is already added."));
 }
 
 #[test]
@@ -923,7 +1008,40 @@ fn golden_account_restore() {
     r.settle();
     r.press(KeyCode::Enter);
     r.press(KeyCode::Enter);
+    r.press(KeyCode::Enter);
     shots(&mut r, "account-restore");
+}
+
+const SSH_KEY: &str = "-----BEGIN OPENSSH PRIVATE KEY-----
+b3BlbnNzaC1rZXktdjEAAAAABG5vbmUAAAAEbm9uZQAAAAAAAAABAAAAMwAAAAtzc2gtZW
+QyNTUxOQAAACDoh10A29aO/vlbh1q5CkfgtibH0F0YO1w8VMWX3bNXdwAAAJDlQWwQ5UFs
+EAAAAAtzc2gtZWQyNTUxOQAAACDoh10A29aO/vlbh1q5CkfgtibH0F0YO1w8VMWX3bNXdw
+AAAEAYymhLTGAcxGs16xzJ7kCRcERnBnaXJs9H4fWdI+69oeiHXQDb1o7++VuHWrkKR+C2
+JsfQXRg7XDxUxZfds1d3AAAACmZzcGVjLXRlc3QBAgM=
+-----END OPENSSH PRIVATE KEY-----
+";
+
+#[test]
+fn golden_keys() {
+    let mut r = Rig::demo();
+    to_keys(&mut r);
+    shots(&mut r, "keys");
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("id_ed25519");
+    std::fs::write(&file, SSH_KEY).unwrap();
+    r.press(KeyCode::BackTab);
+    r.press(KeyCode::Right);
+    r.press(KeyCode::Right);
+    r.press(KeyCode::Tab);
+    r.typ("kyan@laptop:~/.config/age/keys.txt");
+    shots(&mut r, "keys-ssh");
+    r.press(KeyCode::BackTab);
+    r.press(KeyCode::Left);
+    r.press(KeyCode::Tab);
+    r.typ(&file.display().to_string());
+    r.press(KeyCode::Enter);
+    r.settle();
+    shots(&mut r, "keys-added");
 }
 
 #[test]

@@ -1,13 +1,14 @@
 //! An unattended install: the choices read from a JSON file instead of the screens.
 
+use std::path::PathBuf;
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
-use crate::catalog;
 use crate::model::{Account, Choices, Desktop, DiskChoice, Locale, Preset, Progress, Secret, SystemChoice};
+use crate::{catalog, keys};
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -31,6 +32,42 @@ pub struct Answers {
     pub full_name: String,
     pub hostname: String,
     pub password: String,
+    /// Keys for the spec's secrets, installed into the new system. Optional.
+    #[serde(default)]
+    pub keys: Vec<KeyAnswer>,
+    /// Make a new age key for the machine and print what to add to `secrets.star`.
+    #[serde(default)]
+    pub generate_key: bool,
+}
+
+/// One key: exactly one of `paste`, `file` and `ssh`.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct KeyAnswer {
+    /// The key itself, `AGE-SECRET-KEY-1...` or an SSH private key.
+    #[serde(default)]
+    pub paste: Option<String>,
+    /// A key file on a mounted disk.
+    #[serde(default)]
+    pub file: Option<PathBuf>,
+    /// `user@host:path` on another machine.
+    #[serde(default)]
+    pub ssh: Option<String>,
+    /// The password for `ssh`; without one, ssh uses the live session's keys.
+    #[serde(default)]
+    pub password: Option<String>,
+}
+
+impl KeyAnswer {
+    fn source(&self) -> Result<keys::Source> {
+        Ok(match (&self.paste, &self.file, &self.ssh, &self.password) {
+            (Some(p), None, None, None) => keys::Source::Paste(Secret(p.clone())),
+            (None, Some(f), None, None) => keys::Source::File(f.clone()),
+            (None, None, Some(from), pw) => keys::Source::Ssh { from: from.clone(), password: pw.clone().map(Secret) },
+            (_, _, None, Some(_)) => bail!("a key's `password` goes with `ssh` only"),
+            _ => bail!("each of `keys` names exactly one of `paste`, `file` and `ssh`"),
+        })
+    }
 }
 
 /// The disk screen's default.
@@ -46,8 +83,16 @@ impl Answers {
         serde_json::from_str(json).context("reading the answers file")
     }
 
-    /// The choices the screens would have made, checked against what the catalog offers.
+    /// Where each of `keys` comes from.
+    pub fn key_sources(&self) -> Result<Vec<keys::Source>> {
+        self.keys.iter().map(KeyAnswer::source).collect()
+    }
+
+    /// The choices the screens would have made, checked against what the catalog offers. Keys
+    /// to bring are left to [`Answers::key_sources`], since reading them can reach another
+    /// machine; a key to generate is in.
     pub fn choices(&self) -> Result<Choices> {
+        self.key_sources()?;
         let distro =
             catalog::distro(&self.distro).with_context(|| format!("the installer offers no {}", self.distro))?;
         let preset = PRESETS.into_iter().find(|p| p.id() == self.preset);
@@ -82,6 +127,7 @@ impl Answers {
                 password: Secret(self.password.clone()),
             },
             secure_boot: false,
+            keys: self.generate_key.then(keys::Key::generate).into_iter().collect(),
         })
     }
 }
@@ -97,6 +143,7 @@ pub fn report(rx: Receiver<Progress>, out: &mut dyn std::io::Write) -> Result<()
         }
     };
     let mut failed = None;
+    let mut skipped = Vec::new();
     for p in rx {
         match p {
             Progress::Stage { index, total, title } => {
@@ -104,7 +151,7 @@ pub fn report(rx: Receiver<Progress>, out: &mut dyn std::io::Write) -> Result<()
                 writeln!(out, "fspec-install: [{:>4}s] {}/{total} {title}", start.elapsed().as_secs(), index + 1)?;
                 stage = Some((title, Instant::now()));
             }
-            Progress::Output(_) => {}
+            Progress::Output(line) => skipped.extend(keys::skipped_secret(&line).map(str::to_string)),
             Progress::Done => break,
             Progress::Failed { stage: s, error, log } => {
                 failed = Some(format!("{s} failed: {error} (log: {})", log.display()));
@@ -120,6 +167,13 @@ pub fn report(rx: Receiver<Progress>, out: &mut dyn std::io::Write) -> Result<()
         Some(f) => bail!(f),
         None => {
             writeln!(out, "fspec-install: done in {}s", start.elapsed().as_secs())?;
+            if !skipped.is_empty() {
+                writeln!(
+                    out,
+                    "fspec-install: left out {}, since no key here decrypts it; add a key and run `fspec apply`",
+                    skipped.join(", ")
+                )?;
+            }
             Ok(())
         }
     }
@@ -160,6 +214,39 @@ mod tests {
         ] {
             assert!(answers(extra).is_err(), "{extra}");
         }
+    }
+
+    #[test]
+    fn keys_are_optional_and_each_names_one_source() {
+        let c = answers(r#","distro":"arch","preset":"minimal""#).unwrap();
+        assert!(c.keys.is_empty());
+        let c = answers(r#","distro":"arch","preset":"minimal","generate_key":true"#).unwrap();
+        assert!(c.keys.len() == 1 && c.keys[0].generated);
+        let json = r#"{"locale":"C.UTF-8","keymap":"us","timezone":"UTC","disk":"/dev/vda","distro":"arch",
+            "preset":"minimal","user":"kyan","hostname":"nova","password":"hunter22","keys":[
+            {"file":"/media/usb/keys.txt"},{"ssh":"kyan@laptop:~/.config/age/keys.txt","password":"pw"}]}"#;
+        let sources = Answers::parse(json).unwrap().key_sources().unwrap();
+        assert_eq!(sources[0], keys::Source::File("/media/usb/keys.txt".into()));
+        assert!(matches!(&sources[1], keys::Source::Ssh { password: Some(p), .. } if p.0 == "pw"));
+        for bad in [
+            r#","keys":[{"file":"/k","ssh":"a@b:c"}]"#,
+            r#","keys":[{}]"#,
+            r#","keys":[{"file":"/k","password":"pw"}]"#,
+            r#","keys":[{"url":"/k"}]"#,
+        ] {
+            assert!(answers(&format!(r#","distro":"arch","preset":"minimal"{bad}"#)).is_err(), "{bad}");
+        }
+    }
+
+    #[test]
+    fn names_the_secrets_the_first_apply_left_out() {
+        let (tx, rx) = std::sync::mpsc::channel();
+        tx.send(Progress::Output("warning: skipped secret /run/wifi: no age identity found".into())).unwrap();
+        tx.send(Progress::Done).unwrap();
+        let mut out = Vec::new();
+        report(rx, &mut out).unwrap();
+        let out = String::from_utf8(out).unwrap();
+        assert!(out.contains("left out /run/wifi, since no key here decrypts it"), "{out}");
     }
 
     #[test]

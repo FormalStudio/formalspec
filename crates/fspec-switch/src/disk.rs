@@ -96,7 +96,17 @@ pub fn target<'a>(
         ),
     }
     let arch = host.platform.split('-').next().unwrap_or_default();
-    Ok(Target { distro, host: &host.name, arch, release, spec_dir, spec_file, exe })
+    Ok(Target {
+        distro,
+        host: &host.name,
+        arch,
+        release,
+        spec_dir,
+        spec_file,
+        exe,
+        before_apply: &[],
+        skip_undecryptable_secrets: false,
+    })
 }
 
 /// A random UUID from the kernel.

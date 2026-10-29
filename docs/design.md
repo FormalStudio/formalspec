@@ -2003,14 +2003,31 @@ The repo ends up in `~/spec` of the new user, so `fspec plan` and
 
 Restore from git clones an existing spec instead (an SSH key file or an HTTPS
 token, which is sent as a header for that one clone and never stored), lists
-its hosts, and installs the one picked exactly as declared.
+its hosts, and installs the one picked exactly as declared. Its optional Keys
+step brings keys for the spec's secrets: an age identity pasted, a file on a
+mounted disk, or `user@host:path` read with `cat` over ssh (a password goes
+to ssh through `SSH_ASKPASS`, pointing at `fspec-install` itself, which prints
+it from its environment). Each key is checked against `secrets.star` by
+decrypting every listed file, and one that opens none is kept with a warning.
+It can also generate an age key, whose public key and the `secrets.star` line
+and `fspec secret rekey` to run elsewhere the done screen prints. Age keys go
+to `~/.config/fspec/age.key` of the user and, before the first apply, to
+`/root/.config/fspec/age.key`, both default identities of their scope, so
+system secrets decrypt at the first apply and at boot; SSH keys go to the
+user's `~/.ssh` only, since the system scope's SSH identities are the host
+keys. The answers file takes the same as `keys` and `generate_key`.
 
 The install itself is `disk init` with the host's distro as the first root
 (`fspec_switch::init`), so partitioning, the bootstrap and the first apply
 are the same code `fspec disk init --distro` runs. The installer adds only
 steps inside the new root before it is unmounted: the user's password through
 `chpasswd`, read once from the account screen and never written to the spec,
-and the copy of the spec repo into the user's home. Without EFI it picks the
+the copy of the spec repo into the user's home, and the keys. The first apply
+runs with `--skip-undecryptable-secrets`, which leaves out a secret no
+identity opens (one already in state stays, so it is never removed for a
+missing key) with a warning per secret, so a machine without a key still
+installs; the done screen and the answers report name what was left out.
+Every other apply keeps failing on a secret it cannot decrypt. Without EFI it picks the
 BIOS layout. Each command's output streams to the install screen and to
 `/var/log/fspec-install.log`, which stamps each command with the seconds since
 the install started.

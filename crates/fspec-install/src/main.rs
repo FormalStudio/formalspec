@@ -7,6 +7,7 @@ use clap::Parser;
 use fspec_install::answers::{self, Answers};
 use fspec_install::backend::Backend;
 use fspec_install::demo::DemoBackend;
+use fspec_install::keys;
 use fspec_install::live::Live;
 use fspec_install::ui::{self, Exit};
 
@@ -22,15 +23,29 @@ struct Args {
 }
 
 fn main() -> Result<()> {
+    if let Some(password) = std::env::var_os(keys::ASKPASS_ENV) {
+        println!("{}", password.to_string_lossy());
+        return Ok(());
+    }
     let args = Args::parse();
     if let Some(file) = &args.answers {
         if !is_root() {
             bail!("the installer partitions disks, so it runs as root");
         }
-        let choices = Answers::parse(&std::fs::read_to_string(file)?)?.choices()?;
+        let answers = Answers::parse(&std::fs::read_to_string(file)?)?;
+        let mut choices = answers.choices()?;
+        for source in answers.key_sources()? {
+            choices.keys.push(Live::new().fetch_key(&source)?);
+        }
+        let generated: Vec<_> = choices.keys.iter().filter(|k| k.generated).cloned().collect();
+        let host = choices.account.hostname.clone();
         let (tx, rx) = std::sync::mpsc::channel();
         std::thread::spawn(move || Live::new().install(&choices, tx));
-        return answers::report(rx, &mut std::io::stdout());
+        answers::report(rx, &mut std::io::stdout())?;
+        for line in generated.iter().flat_map(|k| keys::rekey_steps(&host, k)) {
+            println!("fspec-install: {line}");
+        }
+        return Ok(());
     }
     let (backend, checkout): (Arc<dyn Backend>, PathBuf) = if args.demo {
         (Arc::new(DemoBackend::new()), std::env::temp_dir().join("fspec-install-demo"))

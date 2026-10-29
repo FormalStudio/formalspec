@@ -6,6 +6,7 @@ use std::sync::mpsc::Sender;
 
 use anyhow::Result;
 
+use crate::keys::{self, Key};
 use crate::model::{Choices, DiskInfo, Draft, Firmware, GitAuth, HostSummary, Progress};
 
 pub trait Backend: Send + Sync {
@@ -20,6 +21,14 @@ pub trait Backend: Send + Sync {
     fn set_keymap(&self, keymap: &str) -> Result<()>;
     /// Clone `url` into `into` and list its hosts.
     fn clone_spec(&self, url: &str, auth: &GitAuth, into: &Path) -> Result<Vec<HostSummary>>;
+    /// Read a key for the spec's secrets. Blocks while it reaches another machine.
+    fn fetch_key(&self, source: &keys::Source) -> Result<Key> {
+        keys::read_local(source)
+    }
+    /// The secrets in the spec at `spec_dir` and whether `key` opens each; see [`keys::coverage`].
+    fn secrets(&self, spec_dir: &Path, key: Option<&Key>) -> Result<Option<Vec<(String, bool)>>> {
+        keys::coverage(spec_dir, key)
+    }
     /// The `spec.star` the installer would write for `draft`, as far as it is filled in.
     fn preview(&self, draft: &Draft) -> String;
     /// Run the install, reporting on `tx` until `Progress::Done` or `Progress::Failed`. Blocks.

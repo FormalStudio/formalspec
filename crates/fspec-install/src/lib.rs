@@ -7,6 +7,7 @@ pub mod backend;
 pub mod catalog;
 pub mod demo;
 pub mod install;
+pub mod keys;
 pub mod live;
 pub mod model;
 pub mod secure_boot;

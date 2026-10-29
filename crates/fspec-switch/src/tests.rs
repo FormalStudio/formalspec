@@ -87,6 +87,8 @@ fn target(distro: &str) -> Target<'_> {
         spec_dir: Path::new("/work/spec"),
         spec_file: "spec.star",
         exe: Path::new("/usr/bin/fspec"),
+        before_apply: &[],
+        skip_undecryptable_secrets: false,
     }
 }
 

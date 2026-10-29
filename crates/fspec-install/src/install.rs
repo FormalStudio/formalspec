@@ -15,9 +15,9 @@ use fspec_core::resource::System;
 use fspec_core::runner::{Cmd, Output, Runner};
 use fspec_switch::{Init, Kind, Plan, Step};
 
-use crate::catalog;
 use crate::model::{Choices, Progress};
 use crate::secure_boot;
+use crate::{catalog, keys};
 
 /// Everything `plan` needs besides the choices, read from the live session.
 pub struct Setup<'a> {
@@ -46,12 +46,17 @@ pub fn plan(paths: &Paths, c: &Choices, s: &Setup) -> Result<Plan> {
     };
     let user = host.users.first().with_context(|| format!("host {} declares no user", host.name))?;
     let release = if distro == "fedora" { s.fedora_release } else { None };
-    let target = fspec_switch::target(host, distro, release, s.spec_dir, "spec.star", s.fspec)?;
-
+    let mut target = fspec_switch::target(host, distro, release, s.spec_dir, "spec.star", s.fspec)?;
     let root = fspec_switch::root_dir(paths, distro);
+    let before_apply = keys::system_steps(&root, &c.keys);
+    target.before_apply = &before_apply;
+    // A new machine rarely holds a key the spec's secrets are encrypted to yet; the rest of the
+    // system installs, and the done screen says which secrets wait for one.
+    target.skip_undecryptable_secrets = true;
+
     let home = format!("/home/{}/spec", user.name);
     // debootstrap copies the live system's /etc/hostname into the new root.
-    let in_root = [
+    let mut in_root = vec![
         Cmd::new("tee").arg(format!("{root}/etc/hostname")).stdin(format!("{}\n", host.name)),
         Cmd::new("tee").arg("-a").arg(format!("{root}/etc/hosts")).stdin(format!("127.0.1.1 {}\n", host.name)),
         Cmd::new("chroot").arg(&root).arg("chpasswd").stdin(format!("{}:{}\n", user.name, c.account.password.0)),
@@ -59,6 +64,7 @@ pub fn plan(paths: &Paths, c: &Choices, s: &Setup) -> Result<Plan> {
         Cmd::new("cp").arg("-a").arg(s.spec_dir.display().to_string()).arg(format!("{root}{home}")),
         Cmd::new("chroot").arg(&root).args(["chown", "-R"]).arg(format!("{0}:{0}", user.name)).arg(&home),
     ];
+    in_root.extend(keys::user_steps(&root, &user.name, &c.keys));
     let console: Vec<&str> = s.cmdline.split_whitespace().filter(|a| a.starts_with("console=")).collect();
     let console = console.join(" ");
     let init = Init {
@@ -99,6 +105,7 @@ fn stage_of(cmd: &Cmd, device: &str, distro: &str, luks: bool) -> Option<String>
         "bootctl" | "grub-install" | "efibootmgr" => "Installing the bootloader".into(),
         "dnf" | "pacstrap" | "debootstrap" | "xbps-install" => format!("Installing {name}"),
         "sbctl" => "Setting up Secure Boot".into(),
+        _ if keys::is_user_step(cmd) => "Installing your keys".into(),
         "chroot" if cmd.args.iter().any(|a| a.contains("sbctl")) => "Setting up Secure Boot".into(),
         "chroot" if arg("apply") => "Applying your spec".into(),
         "chroot" if arg("chpasswd") => "Setting your password".into(),
@@ -274,6 +281,7 @@ mod tests {
                 password: Secret("hunter22".into()),
             },
             secure_boot: false,
+            keys: Vec::new(),
         }
     }
 
@@ -401,6 +409,39 @@ mod tests {
         assert!(at("Installing Debian") < at("Updating Debian"));
         assert!(at("Updating Debian") < at("Applying your spec"));
         assert!(at("Applying your spec") < at("Building the kernel image"));
+    }
+
+    #[test]
+    fn keys_go_in_for_root_before_the_first_apply_and_for_the_user_after() {
+        let dir = spec_dir();
+        let ids = ids();
+        let paths = Paths::new("/r".into(), "/r/root".into());
+        let mut c = choices(false);
+        let key = crate::keys::Key::generate();
+        c.keys = vec![key.clone()];
+        let plan = plan(&paths, &c, &setup(dir.path(), &ids, true)).unwrap();
+        let lines = plan.lines();
+        let at = |p: &str| lines.iter().position(|l| l.contains(p)).unwrap_or_else(|| panic!("no `{p}`"));
+        let apply = at(" apply --local");
+        assert!(lines[apply].ends_with("--skip-undecryptable-secrets"), "{}", lines[apply]);
+        assert!(at("/r/run/fspec/disk/arch/root/.config/fspec/age.key") < apply);
+        assert!(at("chown -R kyan:kyan /home/kyan/spec") < at("sh kyan .config/fspec/age.key 600"));
+        assert!(!lines.iter().any(|l| l.contains("AGE-SECRET-KEY")));
+        let stdin: Vec<_> = plan
+            .steps
+            .iter()
+            .filter_map(|s| match s {
+                Step::Run(c) if c.stdin.as_deref() == Some(key.private.0.as_str()) => Some(c),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(stdin.len(), 2);
+        let (titles, _) = stages(&plan, "/dev/vdb", "arch");
+        assert_eq!(titles[titles.len() - 2], "Installing your keys");
+
+        let without = super::plan(&paths, &choices(false), &setup(dir.path(), &ids, true)).unwrap();
+        assert!(!without.lines().iter().any(|l| l.contains("age.key")));
+        assert!(without.lines().iter().any(|l| l.ends_with("--skip-undecryptable-secrets")));
     }
 
     #[test]

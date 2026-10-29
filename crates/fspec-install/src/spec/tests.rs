@@ -25,6 +25,7 @@ fn choices(distro: &'static str, preset: Preset, desktop: Option<Desktop>) -> Ch
         system: SystemChoice::Fresh { distro, preset, desktop },
         account: account(),
         secure_boot: false,
+        keys: Vec::new(),
     }
 }
 
@@ -133,6 +134,7 @@ fn preview_of_a_complete_draft_is_the_written_spec() {
         system: Some(c.system.clone()),
         account: Some(c.account.clone()),
         secure_boot: false,
+        keys: Vec::new(),
     };
     let written = files(&c).into_iter().find(|(p, _)| p == &PathBuf::from("spec.star")).unwrap().1;
     assert_eq!(preview(&draft), written);

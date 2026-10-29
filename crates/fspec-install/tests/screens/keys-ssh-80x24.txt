@@ -1,0 +1,24 @@
+           Language · Source · Host · Keys · Disk · Account · Review · Install
+  ────────────────────────────────────────────────────────────────────────────
+
+  Bring a key for your secrets
+  Optional. Without one, secrets are left out; the rest installs.
+  Your spec has 3 secrets in secrets.star.
+
+  Get a key from
+   Paste   File   Another machine
+
+  From
+  ▌ kyan@laptop:~/.config/age/keys.txt
+
+  Password
+
+    Leave it empty to sign in with an SSH key.
+    Add key
+
+    ●━━  Also make a new age key for this machine
+
+    Continue without a key
+
+
+  Tab Next field  ←→ Where from  Enter Add or continue  Esc Back

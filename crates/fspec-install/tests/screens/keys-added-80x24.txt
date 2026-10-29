@@ -1,0 +1,24 @@
+           Language · Source · Host · Keys · Disk · Account · Review · Install
+  ────────────────────────────────────────────────────────────────────────────
+
+  Bring a key for your secrets
+  Optional. Without one, secrets are left out; the rest installs.
+  Your spec has 3 secrets in secrets.star.
+
+  Get a key from
+   Paste   File   Another machine
+
+  Key file
+    /media/usb/keys.txt
+    An age identity file or an SSH private key.
+    Add key
+
+  ✓ SSH key (ed25519) opens 2 of 3 secrets
+
+    ●━━  Also make a new age key for this machine
+
+    Continue
+
+
+
+  Tab Next field  ←→ Where from  Enter Add or continue  Esc Back  s Spec

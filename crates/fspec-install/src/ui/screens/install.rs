@@ -32,6 +32,10 @@ pub struct InstallScreen {
     pub outcome: Outcome,
     focus: usize,
     name: String,
+    /// What to do so the new key opens the spec's secrets, when the installer made one.
+    notes: Vec<String>,
+    /// Secrets the first apply left out, since no key in the new system opens them.
+    skipped: Vec<String>,
 }
 
 impl Default for InstallScreen {
@@ -52,14 +56,17 @@ impl InstallScreen {
             outcome: Outcome::Running,
             focus: 0,
             name: String::new(),
+            notes: Vec::new(),
+            skipped: Vec::new(),
         }
     }
 
-    pub fn start(&mut self, rx: Receiver<Progress>, now: Instant, name: &str) {
+    pub fn start(&mut self, rx: Receiver<Progress>, now: Instant, name: &str, notes: Vec<String>) {
         *self = InstallScreen::new();
         self.rx = Some(rx);
         self.started = now;
         self.name = name.to_string();
+        self.notes = notes;
     }
 
     pub fn running(&self) -> bool {
@@ -79,6 +86,7 @@ impl InstallScreen {
                     self.stages.push(title);
                 }
                 Progress::Output(l) => {
+                    self.skipped.extend(crate::keys::skipped_secret(&l).map(str::to_string));
                     if self.log.len() == LOG_CAP {
                         self.log.pop_front();
                     }
@@ -170,6 +178,27 @@ impl InstallScreen {
                 let w = button(c, r, 0, "Restart now", Kind::Primary, self.focus == 0, Hit { w: 0, i: 0 });
                 button(c, r, w + 2, "Open a shell", Kind::Secondary, self.focus == 1, Hit { w: 0, i: 1 });
                 y += 5;
+                if !self.skipped.is_empty() {
+                    let n = self.skipped.len();
+                    let what = if n == 1 { "1 secret was".into() } else { format!("{n} secrets were") };
+                    let text = format!(
+                        "{what} left out, since no key in the new system opens it: {}. Put a key at \
+                         ~/.config/fspec/age.key, then run fspec apply.",
+                        self.skipped.join(", ")
+                    );
+                    for l in wrap(&text, a.width as usize) {
+                        c.text(a, 0, y, &l, fg(th.amber));
+                        y += 1;
+                    }
+                    y += 1;
+                }
+                for l in &self.notes {
+                    c.text_ell(a, 0, y, l, fg(th.ink));
+                    y += 1;
+                }
+                if !self.notes.is_empty() {
+                    y += 1;
+                }
             }
             Outcome::Failed { stage, error, log } => {
                 c.text(
@@ -240,7 +269,9 @@ impl InstallScreen {
         } else {
             (rect_in(a, 0, bottom + 1, a.width, a.height.saturating_sub(bottom + 1)), 0)
         };
-        if log.height < 2 {
+        // The notes on a finished install run the full width, over where the log would be.
+        let noted = matches!(self.outcome, Outcome::Done) && !(self.notes.is_empty() && self.skipped.is_empty());
+        if log.height < 2 || noted {
             return;
         }
         c.text(log, 0, ly0, "Log", Style::new().fg(th.muted).add_modifier(Modifier::BOLD));

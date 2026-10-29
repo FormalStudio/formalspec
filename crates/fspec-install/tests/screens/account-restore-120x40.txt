@@ -1,4 +1,4 @@
-  FormalSpec installer                                    Language · Source · Host · Disk · Account · Review · Install
+  FormalSpec installer                             Language · Source · Host · Keys · Disk · Account · Review · Install
   ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
   Set a password for kyan                                             ╭─ spec.star ──────────────────────────────────╮

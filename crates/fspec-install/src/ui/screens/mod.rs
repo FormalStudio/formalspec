@@ -2,6 +2,7 @@ pub mod account;
 pub mod disk;
 pub mod host;
 pub mod install;
+pub mod keys;
 pub mod language;
 pub mod modal;
 pub mod preset;
@@ -25,6 +26,7 @@ pub enum Step {
     Language,
     Source,
     Host,
+    Keys,
     Disk,
     System,
     Preset,
@@ -40,6 +42,7 @@ impl Step {
             Step::Language => "Language",
             Step::Source => "Source",
             Step::Host => "Host",
+            Step::Keys => "Keys",
             Step::Disk => "Disk",
             Step::System => "System",
             Step::Preset => "Preset",
@@ -53,7 +56,7 @@ impl Step {
 pub fn flow(restore: bool) -> &'static [Step] {
     use Step::*;
     if restore {
-        &[Language, Source, Host, Disk, Account, Review, Install]
+        &[Language, Source, Host, Keys, Disk, Account, Review, Install]
     } else {
         &[Language, Disk, System, Preset, Account, Review, Install]
     }
@@ -73,6 +76,7 @@ pub enum Flow {
     Jump(Step),
     Modal(modal::Modal),
     Clone,
+    FetchKey,
     Install,
     Exit(Exit),
 }

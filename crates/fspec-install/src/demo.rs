@@ -8,6 +8,7 @@ use std::time::Duration;
 use anyhow::{Result, bail};
 
 use crate::backend::Backend;
+use crate::keys::Key;
 use crate::model::{Choices, DiskInfo, Draft, Firmware, GitAuth, HostSummary, Progress, SystemChoice};
 
 const STAGES: [&str; 12] = [
@@ -275,6 +276,13 @@ impl Backend for DemoBackend {
                 unsupported: Some("macOS hosts are not installed from this ISO".into()),
             },
         ])
+    }
+
+    /// Three made-up secrets, of which a brought key opens two and a new one none.
+    fn secrets(&self, _spec_dir: &Path, key: Option<&Key>) -> Result<Option<Vec<(String, bool)>>> {
+        let brought = key.is_some_and(|k| !k.generated);
+        let names = ["secrets/wifi.age", "secrets/api-token.age", "secrets/backup.age"];
+        Ok(Some(names.iter().enumerate().map(|(i, n)| (n.to_string(), brought && i < 2)).collect()))
     }
 
     fn preview(&self, draft: &Draft) -> String {
