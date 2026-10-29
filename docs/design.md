@@ -1925,7 +1925,9 @@ units copying the kernels to the ESP with entries that count tries. The image's
 grub goes, since `bootctl install` takes the removable-media path. cloud-init
 runs it from `runcmd` and writes `fspec vm: first boot done` (or `failed`, with
 the log's tail) to the serial port, which `start` waits for on a new disk: a
-first apply racing cloud-init's zypper would fail on the lock.
+first apply racing cloud-init's zypper would fail on the lock. A first boot
+that worked disables cloud-init, so later boots run without it, as a real
+host's do.
 
 `fspec_try::vm` holds the scripts, one per command, built on the same qemu
 pieces as `fspec try`: q35 with `-cpu host`, OVMF from the same list, the

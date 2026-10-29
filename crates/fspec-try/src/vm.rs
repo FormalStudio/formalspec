@@ -81,10 +81,11 @@ pub fn seed(g: &Guest, vm: &Vm) -> (String, String) {
         })
         .collect();
     files.push(json!({"path": FIRST_BOOT, "content": g.first_boot.as_deref().unwrap_or(""), "permissions": "0700"}));
-    // The serial port is the one console qemu keeps, so the start reads the outcome there.
+    // The serial port is the one console qemu keeps, so the start reads the outcome there. Once it
+    // has worked cloud-init is done for good: later boots, like a real host's, run without it.
     let report = format!(
-        "if sh {FIRST_BOOT} >/var/log/fspec-vm-first-boot.log 2>&1; then echo '{FIRST_BOOT_DONE}' >/dev/ttyS0; \
-         else tail -n 20 /var/log/fspec-vm-first-boot.log >/dev/ttyS0; echo '{FIRST_BOOT_FAILED}' >/dev/ttyS0; fi"
+        "if sh {FIRST_BOOT} >/var/log/fspec-vm-first-boot.log 2>&1; then touch /etc/cloud/cloud-init.disabled; \
+         echo '{FIRST_BOOT_DONE}' >/dev/ttyS0; else tail -n 20 /var/log/fspec-vm-first-boot.log >/dev/ttyS0; echo '{FIRST_BOOT_FAILED}' >/dev/ttyS0; fi"
     );
     let data = json!({
         "hostname": g.name, "users": [user], "ssh_pwauth": false,
