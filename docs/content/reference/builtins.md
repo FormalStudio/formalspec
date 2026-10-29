@@ -260,8 +260,9 @@ An age-encrypted file from the repository, decrypted at apply. See [Secrets](../
 | `identities` | list of paths | the defaults | Private keys to decrypt with, tried in order |
 
 Default identities: in the system scope `/etc/ssh/ssh_host_ed25519_key`,
-`/etc/ssh/ssh_host_rsa_key`, then `~/.config/fspec/age.key`; in the user scope
-`~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, then `~/.config/fspec/age.key`.
+`/etc/ssh/ssh_host_rsa_key`, `~/.config/fspec/age.key`, then age's own `~/.config/age/keys.txt`;
+in the user scope `~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, `~/.config/fspec/age.key`, then
+`~/.config/age/keys.txt`.
 
 ## service
 
@@ -472,4 +473,5 @@ secrets = {
 
 Maps each `.age` file, relative to the spec directory, to the public keys it is encrypted to:
 age recipients (`age1...`) or ssh public keys (`ssh-ed25519 ...`, `ssh-rsa ...`). `fspec secret
-edit` and `fspec secret rekey` read it.
+edit`, `show`, `list` and `rekey` read it. Other globals in the file are ignored, so it can
+hold data the spec loads with `load("//secrets.star", ...)`.

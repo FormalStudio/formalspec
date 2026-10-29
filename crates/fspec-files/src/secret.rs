@@ -14,7 +14,7 @@ pub fn default_identities(scope: Scope) -> Vec<String> {
         Scope::System => &["/etc/ssh/ssh_host_ed25519_key", "/etc/ssh/ssh_host_rsa_key"],
         Scope::User => &["~/.ssh/id_ed25519", "~/.ssh/id_rsa"],
     };
-    ssh.iter().copied().chain(["~/.config/fspec/age.key"]).map(str::to_string).collect()
+    ssh.iter().copied().chain(["~/.config/fspec/age.key", "~/.config/age/keys.txt"]).map(str::to_string).collect()
 }
 
 /// Resolve identity paths as written in the spec; an empty list means the scope's defaults.

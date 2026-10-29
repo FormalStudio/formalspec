@@ -111,6 +111,9 @@ host laptop
   0 to add, 1 to change, 0 to remove
 ```
 
+`fspec secret show api-token` prints the plaintext, and `fspec secret list` shows every entry
+with its recipients and whether its file exists yet.
+
 Closing the editor without a change prints `secrets/api-token.age unchanged` and leaves the
 file alone.
 
@@ -143,8 +146,8 @@ fspec uses the defaults for the secret's scope:
 
 | Scope | Default identities |
 | --- | --- |
-| System (absolute `path`) | `/etc/ssh/ssh_host_ed25519_key`, `/etc/ssh/ssh_host_rsa_key`, `~/.config/fspec/age.key` |
-| User (`~/` path) | `~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, `~/.config/fspec/age.key` |
+| System (absolute `path`) | `/etc/ssh/ssh_host_ed25519_key`, `/etc/ssh/ssh_host_rsa_key`, `~/.config/fspec/age.key`, `~/.config/age/keys.txt` |
+| User (`~/` path) | `~/.ssh/id_ed25519`, `~/.ssh/id_rsa`, `~/.config/fspec/age.key`, `~/.config/age/keys.txt` |
 
 `~` is the home of the user running fspec. State records the identity paths as absolute paths, so
 `fspec secret install` at boot uses the same files. An identity is an unencrypted ed25519 or RSA ssh key,
@@ -161,7 +164,7 @@ secret(
 )
 ```
 
-`fspec secret edit` and `fspec secret rekey` use the user-scope defaults. Pass `-i <path>` (or
+`fspec secret edit`, `show` and `rekey` use the user-scope defaults. Pass `-i <path>` (or
 `--identity`, repeatable) to use other keys.
 
 ## Owner and permissions

@@ -36,6 +36,15 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Print a host as the spec declares it, every module expanded, as JSON.
+    Eval {
+        /// Host to print, default this machine's host name.
+        #[arg(long)]
+        host: Option<String>,
+        /// Print every host in the spec.
+        #[arg(long, conflicts_with = "host")]
+        all: bool,
+    },
     /// Show what apply would change on this host.
     Plan {
         /// Host to plan, default this machine's host name.
@@ -332,6 +341,14 @@ enum SecretCommand {
         #[arg(short, long)]
         identity: Vec<PathBuf>,
     },
+    /// Decrypt FILE to stdout, agenix's `-d`.
+    Show {
+        file: String,
+        #[arg(short, long)]
+        identity: Vec<PathBuf>,
+    },
+    /// List the files in secrets.star with their recipients, marking the ones not created yet.
+    List,
     /// Re-encrypt every file in secrets.star to its current recipients.
     Rekey {
         #[arg(short, long)]
@@ -779,6 +796,10 @@ fn main() -> Result<()> {
         Command::Secret { cmd: SecretCommand::Edit { file, identity } } => {
             secret::edit(&paths, &spec_dir, file, identity)
         }
+        Command::Secret { cmd: SecretCommand::Show { file, identity } } => {
+            secret::show(&paths, &spec_dir, file, identity)
+        }
+        Command::Secret { cmd: SecretCommand::List } => secret::list(&spec_dir),
         Command::Secret { cmd: SecretCommand::Rekey { identity } } => secret::rekey(&paths, &spec_dir, identity),
         Command::Secret { cmd: SecretCommand::Install { scope } } => {
             let scope = Scope::from(*scope);
@@ -816,6 +837,16 @@ fn main() -> Result<()> {
             let local = fspec_sync::Local::new(&LiveRunner, local_hostname(), &paths);
             let mut out = std::io::stdout().lock();
             fspec_sync::agent(&local, op, item.as_deref(), &mut std::io::stdin().lock(), &mut out)
+        }
+        Command::Eval { host, all } => {
+            let spec = fspec_eval::evaluate(&spec_path)?;
+            let out = match (all, host) {
+                (true, _) => serde_json::to_string_pretty(&spec.hosts)?,
+                (false, Some(name)) => serde_json::to_string_pretty(spec.host(name)?)?,
+                (false, None) => serde_json::to_string_pretty(select(&spec, None, &paths)?)?,
+            };
+            println!("{out}");
+            Ok(())
         }
         Command::Facts { json } => {
             let probe = Probe::local(local_hostname());

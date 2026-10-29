@@ -1,4 +1,4 @@
-//! `fspec secret edit` and `fspec secret rekey`, agenix's `-e` and `-r` against `secrets.star`.
+//! `fspec secret edit`, `show`, `list` and `rekey`: agenix's `-e`, `-d` and `-r` against `secrets.star`.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -59,6 +59,27 @@ pub fn edit(paths: &Paths, spec_dir: &Path, file: &str, given: &[PathBuf]) -> Re
     }
     fs::write(&path, secret::encrypt(&edited, keys)?).with_context(|| format!("writing {}", path.display()))?;
     println!("wrote {name}");
+    Ok(())
+}
+
+pub fn show(paths: &Paths, spec_dir: &Path, file: &str, given: &[PathBuf]) -> Result<()> {
+    let all = recipients(spec_dir)?;
+    let (name, _) = entry(&all, file)?;
+    let plain = secret::decrypt_file(&spec_dir.join(name), &identities(paths, given)?)?;
+    std::io::Write::write_all(&mut std::io::stdout().lock(), &plain)?;
+    Ok(())
+}
+
+pub fn list(spec_dir: &Path) -> Result<()> {
+    for (name, keys) in &recipients(spec_dir)? {
+        let missing = if spec_dir.join(name).exists() { "" } else { " (missing)" };
+        let short: Vec<_> = keys
+            .iter()
+            .map(|k| k.split_whitespace().take(2).last().unwrap_or(k))
+            .map(|k| &k[..k.len().min(16)])
+            .collect();
+        println!("{name}{missing}: {}", short.join(", "));
+    }
     Ok(())
 }
 

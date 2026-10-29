@@ -114,6 +114,8 @@ kept. `--older-than 0s` keeps only what the current generation needs.
 | Command | Does |
 | --- | --- |
 | `fspec secret edit <file> [-i <identity>]...` | Decrypts a secret into `$EDITOR` and encrypts the result to the recipients in `secrets.star`. A file that does not exist yet starts empty |
+| `fspec secret show <file> [-i <identity>]...` | Prints a secret's plaintext, agenix's `-d` |
+| `fspec secret list` | Lists every file in `secrets.star` with its recipients, marking the ones not created yet |
 | `fspec secret rekey [-i <identity>]...` | Re-encrypts every secret to its current recipients |
 | `fspec secret install [--scope system\|user]` | Decrypts the last apply's secrets again from their kept ciphertext, for a boot that starts with an empty `/run` |
 
@@ -209,5 +211,6 @@ For hosts declared with `vm(...)`. See [VM hosts](../guides/vm-hosts.md).
 
 | Command | Does |
 | --- | --- |
+| `fspec eval [--host <h> \| --all]` | Prints a host as the spec declares it, modules expanded, as JSON. Any host evaluates on any machine |
 | `fspec facts [--json]` | Prints this machine's host name, platform and distro, as `apply` compares them with the declaration |
 | `fspec --version` | Prints the version |
