@@ -223,7 +223,13 @@ mod vm {
     }
 
     fn guest() -> Guest {
-        Guest { name: "fstestvm0".into(), user: "kyan".into(), uid: Some(1000) }
+        Guest {
+            name: "fstestvm0".into(),
+            user: "kyan".into(),
+            uid: Some(1000),
+            files: vec![("/etc/a.sh".into(), "echo a\n".into(), true)],
+            first_boot: Some("bootctl install\n".into()),
+        }
     }
 
     fn image(sha256: Option<&str>) -> Iso {
@@ -258,7 +264,7 @@ mod vm {
 
     #[test]
     fn qemu_is_headless_and_forwards_ssh_on_the_loopback() {
-        let line = qemu("fstestvm0", &decl()).to_string();
+        let line = qemu("fstestvm0", &decl(), false).to_string();
         for want in [
             "-smp 6",
             "-m 8G",
@@ -267,15 +273,68 @@ mod vm {
             "-serial file:serial.log",
             "-daemonize",
             "file=seed.img",
+            "-device virtio-vga",
+            "unix:rec.sock",
         ] {
             assert!(line.contains(want), "{want} in {line}");
         }
         assert!(!line.contains("-vnc"), "{line}");
+        assert!(!line.contains(" -S"), "{line}");
+        assert!(qemu("fstestvm0", &decl(), true).to_string().ends_with(" -S"));
+    }
+
+    #[test]
+    fn the_seed_runs_the_first_boot_and_reports_on_the_serial_port() {
+        let (data, _) = seed(&guest(), &decl());
+        let v: serde_json::Value = serde_json::from_str(data.lines().nth(1).unwrap()).unwrap();
+        assert_eq!(v["write_files"][0]["path"], "/etc/a.sh");
+        assert_eq!(v["write_files"][0]["permissions"], "0755");
+        assert_eq!(v["write_files"][1]["content"], "bootctl install\n");
+        let run = v["runcmd"][0][2].as_str().unwrap();
+        assert!(run.contains(&format!("then echo '{FIRST_BOOT_DONE}' >/dev/ttyS0; else")), "{run}");
+        assert!(run.contains(FIRST_BOOT_FAILED), "{run}");
+        let s = start(&guest(), &decl(), &image(Some(H)), None).unwrap();
+        // Only a new disk waits for it: a later start's serial.log is truncated and never says it.
+        assert!(s.contains("if [ -n \"$new\" ]; then"), "{s}");
+        assert!(s.contains(&format!("grep -qF '{FIRST_BOOT_DONE}' serial.log")), "{s}");
+    }
+
+    #[test]
+    fn a_boot_recording_takes_its_first_frame_before_the_firmware_runs() {
+        let r = Record { every_ms: 100, seconds: 90 };
+        let s = start(&guest(), &decl(), &image(Some(H)), Some(&r)).unwrap();
+        assert!(s.contains("running && die"), "{s}");
+        assert!(s.contains("-daemonize -S"), "{s}");
+        let first = s.find("frames/000000.png").unwrap();
+        assert!(first < s.find("\"execute\":\"cont\"").unwrap(), "{s}");
+        assert!(s.contains("\"$abs\" 100 90"), "{s}");
+        let live = record("fstestvm0", &r).unwrap();
+        assert!(live.contains("running || die"), "{live}");
+        assert!(!live.contains("cont"), "{live}");
+        assert!(record("fstestvm0", &Record { every_ms: 0, seconds: 1 }).is_err());
+        assert!(frames("fstestvm0").unwrap().contains("tar -C \"$dir\" -cf - frames"));
+    }
+
+    #[test]
+    fn text_is_typed_as_us_keys() {
+        let k = text_keys("aZ -_\n").unwrap();
+        let want: Vec<Vec<&str>> =
+            vec![vec!["a"], vec!["shift", "z"], vec!["spc"], vec!["minus"], vec!["shift", "minus"], vec!["ret"]];
+        assert_eq!(k, want);
+        assert_eq!(
+            text_keys("\\|~").unwrap(),
+            vec![vec!["backslash"], vec!["shift", "backslash"], vec!["shift", "grave_accent"]]
+        );
+        assert!(text_keys("ñ").unwrap_err().to_string().contains("fspec vm key"));
+        assert_eq!(combo_keys("ctrl-alt-f2").unwrap(), vec!["ctrl", "alt", "f2"]);
+        assert!(combo_keys("ctrl--x").is_err());
+        let s = send_keys("fstestvm0", &[vec!["shift".into(), "a".into()]]).unwrap();
+        assert!(s.contains(r#"{"type":"qcode","data":"shift"},{"type":"qcode","data":"a"}"#), "{s}");
     }
 
     #[test]
     fn start_creates_the_disk_once_and_waits_for_sshd() {
-        let s = start(&guest(), &decl(), &image(Some(H))).unwrap();
+        let s = start(&guest(), &decl(), &image(Some(H)), None).unwrap();
         assert!(s.contains("if running; then"), "{s}");
         assert!(s.contains("if [ ! -f \"$dir/disk.qcow2\" ]; then"));
         assert!(s.contains(&format!("echo \"{H}  $image.part\" | sha256sum -c")));
@@ -290,7 +349,7 @@ mod vm {
 
     #[test]
     fn start_refuses_to_download_an_image_it_cannot_check() {
-        let s = start(&guest(), &decl(), &image(None)).unwrap();
+        let s = start(&guest(), &decl(), &image(None), None).unwrap();
         assert!(s.contains("no published checksum for"), "{s}");
     }
 
@@ -312,9 +371,13 @@ mod vm {
     #[test]
     fn scripts_parse() {
         let scripts = [
-            start(&guest(), &decl(), &image(Some(H))).unwrap(),
+            start(&guest(), &decl(), &image(Some(H)), None).unwrap(),
             stop("fstestvm0").unwrap(),
             status(&[("a", 1)]).unwrap(),
+            start(&guest(), &decl(), &image(Some(H)), Some(&Record { every_ms: 100, seconds: 5 })).unwrap(),
+            record("fstestvm0", &Record { every_ms: 100, seconds: 5 }).unwrap(),
+            frames("fstestvm0").unwrap(),
+            send_keys("fstestvm0", &text_keys("Hi!\n").unwrap()).unwrap(),
         ];
         for s in scripts {
             let out = std::process::Command::new("bash").args(["-n", "-c", &s]).output().unwrap();

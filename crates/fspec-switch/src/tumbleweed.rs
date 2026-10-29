@@ -313,6 +313,41 @@ pub struct Tumbleweed<'a> {
     pub kernel_args: &'a [String],
 }
 
+/// What a `tumbleweed()` host running under `fspec vm` gets on its first boot, so it boots the way
+/// a root `switch --beside` installed does: systemd-boot on the ESP, ahead of the cloud image's
+/// shim and grub in the firmware's order, and fspec-esp-sync copying this root's kernels there
+/// with entries that count tries. The files go in first, then the script runs as root.
+pub fn vm_boot(name: &str, kernel_args: &[String]) -> (Vec<(String, String, bool)>, String) {
+    let files = [
+        ("etc/fspec/esp-sync.sh", ESP_SYNC.to_string(), false),
+        ("usr/lib/zypp/plugins/commit/fspec-esp-sync", zypp_plugin(name), true),
+        ("etc/systemd/system/fspec-esp-sync.service", sync_service(name), false),
+        ("etc/systemd/system/fspec-esp-sync.path", ESP_SYNC_PATH.to_string(), false),
+        ("etc/systemd/system/systemd-bless-boot.service.d/fspec.conf", bless_dropin(name), false),
+    ]
+    .map(|(p, text, exec)| (format!("/{p}"), text, exec))
+    .to_vec();
+    let args: String = kernel_args.iter().map(|a| format!("{a}\n")).collect();
+    let script = format!(
+        r#"set -eu
+zypper -n --gpg-auto-import-keys install --no-recommends systemd-boot
+bootctl install
+# The image's console and LSM options carry over, since its root is labeled for its policy; the
+# rest is what a beside root boots with.
+image=$(tr ' ' '\n' </proc/cmdline | grep -E '^(console|security|selinux|enforcing)=' || true)
+args=$(cat <<'FSPEC_ARGS'
+{args}FSPEC_ARGS
+)
+printf '%s\n' "root=UUID=$(findmnt -no UUID /)" rw panic=10 rd.shell=0 rd.emergency=reboot $image $args |
+	awk 'NF && !seen[$0]++' | paste -sd ' ' - >/etc/kernel/cmdline
+systemctl daemon-reload
+systemctl enable fspec-esp-sync.service fspec-esp-sync.path
+sh /etc/fspec/esp-sync.sh / /boot/efi {name}
+"#
+    );
+    (files, script)
+}
+
 /// Bootstrap openSUSE Tumbleweed into a new subvolume `@<name>` beside the other roots of the btrfs
 /// filesystem of `m`, from a live system or from one of those roots. zypper runs from the official
 /// container against the mounted subvolume, so Tumbleweed's own rpm writes the rpmdb. The root

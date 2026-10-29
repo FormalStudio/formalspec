@@ -2062,3 +2062,29 @@ fn a_tumbleweed_install_refuses_a_user_the_inherited_root_lacks() {
     );
     assert!(!runner.lines().iter().any(|l| l.starts_with("btrfs subvolume create")));
 }
+
+#[test]
+fn a_tumbleweed_vm_boots_through_systemd_boot_and_the_esp_sync() {
+    let (files, script) = crate::tumbleweed::vm_boot("fstestvm0", &["quiet".into(), "splash".into()]);
+    let paths: Vec<&str> = files.iter().map(|(p, _, _)| p.as_str()).collect();
+    assert!(paths.contains(&"/etc/fspec/esp-sync.sh"), "{paths:?}");
+    let (_, plugin, exec) = files.iter().find(|(p, _, _)| p.ends_with("commit/fspec-esp-sync")).unwrap();
+    assert!(*exec && plugin.contains("/boot/efi fstestvm0"), "{plugin}");
+    assert!(script.contains("install --no-recommends systemd-boot\nbootctl install\n"), "{script}");
+    assert!(script.contains("quiet\nsplash\nFSPEC_ARGS"), "{script}");
+    assert!(script.ends_with("sh /etc/fspec/esp-sync.sh / /boot/efi fstestvm0\n"), "{script}");
+    let out = std::process::Command::new("bash").args(["-n", "-c", &script]).output().unwrap();
+    assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    // The image's own console and policy options carry over, the rest of its line does not.
+    let cmdline = "BOOT_IMAGE=/boot/vmlinuz root=UUID=x rw quiet systemd.show_status=1 console=ttyS0,115200 console=tty0 security=selinux selinux=1";
+    let line = script.lines().find(|l| l.starts_with("image=")).unwrap();
+    let out = std::process::Command::new("bash")
+        .args(["-c", &format!("{}; echo $image", line.replace("</proc/cmdline", "<<<\"$1\""))])
+        .args(["sh", cmdline])
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&out.stdout).trim(),
+        "console=ttyS0,115200 console=tty0 security=selinux selinux=1"
+    );
+}

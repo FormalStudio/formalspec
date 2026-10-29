@@ -31,7 +31,7 @@ pub use machine::{
 pub use recipe::{Recipe, caveats, misfit, recipe};
 pub use tumbleweed::{
     ESP_SYNC as TUMBLEWEED_ESP_SYNC, ESP_SYNC_PATH as TUMBLEWEED_ESP_SYNC_PATH, TUMBLEWEED_IMAGE, Tumbleweed,
-    tumbleweed,
+    tumbleweed, vm_boot as tumbleweed_vm_boot,
 };
 pub use windows::{
     BesideWindows, GB, Gap, MIN_LINUX, Shrink, Space, WINDOWS_HEADROOM, WindowsDisk, XBOOTLDR_SIZE, ntfs_info,

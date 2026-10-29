@@ -1908,22 +1908,49 @@ The disk is not installed by fspec. It starts as the distro's cloud image
 `disk_gib`; the image stays cached in `~/.cache/fspec/vm/images/` for the next
 VM. A cloud image ships cloud-init, so a NoCloud seed (a FAT volume labelled
 `CIDATA`, made with mtools, no root) gives the first boot the host's name, its
-first user with `authorized_keys` and passwordless sudo, and nothing else.
-Everything after that is the spec's, applied over ssh. The guest has no fspec
+first user with `authorized_keys` and passwordless sudo, and the distro's
+first-boot setup. Everything after that is the spec's, applied over ssh. The guest has no fspec
 yet, so the first remote apply installs the locked one before shipping the
 spec ([Remote hosts](#remote-hosts)). Bootstrapping a distro root the way `disk
 init` does would need a live system around the disk; a cloud image is already
 that root, made by the distro for exactly this.
 
+A Tumbleweed VM's first-boot setup makes it boot the way a root `switch
+--beside` installed does (`fspec_switch::tumbleweed_vm_boot`), so a spec's boot
+chain finds what it builds on, as on a real host: systemd-boot installed on the
+image's ESP and first in the firmware's order, `/etc/kernel/cmdline` from the
+root's UUID, the image's console and LSM options and the host's
+`tumbleweed(kernel_args = ...)`, and the same esp-sync script, zypp plugin and
+units copying the kernels to the ESP with entries that count tries. The image's
+grub goes, since `bootctl install` takes the removable-media path. cloud-init
+runs it from `runcmd` and writes `fspec vm: first boot done` (or `failed`, with
+the log's tail) to the serial port, which `start` waits for on a new disk: a
+first apply racing cloud-init's zypper would fail on the lock.
+
 `fspec_try::vm` holds the scripts, one per command, built on the same qemu
 pieces as `fspec try`: q35 with `-cpu host`, OVMF from the same list, the
-virtio disk on its own iothread with the kept-disk cache and aio probes. It is
-headless: no display device, the serial console in `serial.log`, a QMP socket,
-user-mode networking with only `hostfwd=tcp:127.0.0.1:<port>-:22`, and qemu
+virtio disk on its own iothread with the kept-disk cache and aio probes. There
+is no window: a `virtio-vga` display that firmware, kernel, splash and
+compositor draw on, read only over QMP; the serial console in `serial.log`;
+user-mode networking with only `hostfwd=tcp:127.0.0.1:<port>-:22`; and qemu
 daemonized with a pid file, so the VM outlives the ssh session that started it.
 `start` returns once the forwarded port answers with an ssh banner, and is a
-no-op for a running VM. Each VM lives in `~/.local/share/fspec/vm/<host>/` on
-`on` (disk, UEFI variables, seed, pid, QMP socket, console log); `rm -rf` of it
+no-op for a running VM.
+
+Two QMP sockets, so a recording never shares a connection with a key press:
+`qmp.sock` takes `cont`, `send-key` and `system_powerdown`, and `rec.sock` the
+recorder's `screendump`s. `fspec vm record` starts the recorder detached
+beside qemu: it writes `frames/%06d.png`, frame n issued n × `--every-ms` after
+its start, without waiting for replies, so a slow frame delays the ones after
+it rather than the schedule. With `--boot`, `start` runs qemu with `-S`,
+waits for the recorder's first frame, then sends `cont`, so frame 0 is before
+the firmware. `fspec vm frames` waits for the recorder to exit and streams a
+tar of `frames/` into a local directory. `fspec vm type` maps text to qcodes
+through a US layout (`shift` plus the key for the upper row), and `fspec vm
+key` takes QEMU's own `ctrl-alt-f2` spelling; each press is its own
+`send-key`, 60 ms apart, since a guest reading a burst can drop repeats. Each VM lives in `~/.local/share/fspec/vm/<host>/` on
+`on` (disk, UEFI variables, seed, pid, QMP sockets, console log, the last
+recording); `rm -rf` of it
 while stopped is how one starts over. Two VM hosts with their own ports run at
 once.
 
