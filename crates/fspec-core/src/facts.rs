@@ -103,8 +103,23 @@ pub fn os_release_id(contents: &str) -> Option<String> {
     contents.lines().find_map(|l| l.strip_prefix("ID=")).map(|v| v.trim_matches('"').to_string())
 }
 
-/// This machine's short host name, as `host(name = …)` usually spells it.
+/// Names this machine's host when its OS host name is not the one the spec uses (a Mac called
+/// `MacBook-Pro-2` whose tailnet name every alias depends on). The spec writes it, so after one
+/// apply the machine knows itself.
+pub const HOST_FILE: &str = "/etc/fspec/host";
+
+/// Which `host(name = …)` this machine is: `$FSPEC_HOST`, else [`HOST_FILE`], else its short host
+/// name.
 pub fn local_hostname() -> String {
+    let declared = std::env::var("FSPEC_HOST").ok().or_else(|| std::fs::read_to_string(HOST_FILE).ok());
+    match declared.as_deref().map(str::trim).filter(|n| !n.is_empty()) {
+        Some(name) => name.to_lowercase(),
+        None => os_hostname(),
+    }
+}
+
+/// This machine's short host name, as `host(name = …)` usually spells it.
+pub fn os_hostname() -> String {
     // Void's `hostname` has no `-s`, and minimal Arch and Fedora installs ship no `hostname` at all.
     #[cfg(target_os = "linux")]
     let name = std::fs::read_to_string("/proc/sys/kernel/hostname").unwrap_or_default();

@@ -2207,7 +2207,11 @@ macOS hosts are left out: the macbook's fspec comes from Nix.
 
 ## Remote hosts
 
-A host is remote when its name is not this machine's short host name. It is
+A host is remote when its name is not this machine's: `$FSPEC_HOST`, else the
+first line of `/etc/fspec/host`, else the short host name. A machine whose OS name
+differs from its spec name (a Mac called `MacBook-Pro-2`, a name its tailnet
+address depends on) gets `file("/etc/fspec/host", content = "macbook\n")` in its
+spec; until its first apply, `FSPEC_HOST=macbook fspec apply` says the same. It is
 reached by the ssh alias in its `ssh` field (`host(name = "g815", ssh =
 "kyan@g815.lan", ...)`), which defaults to the host name, so `~/.ssh/config`
 decides keys, ports and jump hosts.
