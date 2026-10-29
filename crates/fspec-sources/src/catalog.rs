@@ -33,7 +33,8 @@ pub struct Catalog {
     pub cache: PathBuf,
     /// Homebrew's API cache (`~/Library/Caches/Homebrew/api`), on macOS.
     pub brew: Option<PathBuf>,
-    /// Per-query HTTP (npm, crates.io), with a short timeout. `None` searches offline.
+    /// HTTP with a short timeout, for per-query catalogs (npm, crates.io) and Flathub's id list.
+    /// `None` searches offline.
     pub net: Option<Box<dyn Fetch>>,
 }
 
@@ -267,7 +268,7 @@ pub fn search(query: &str, cx: &Cx) -> Found {
         jobs.push(("Homebrew", Box::new(|| brew_hits(dir))));
     }
     if linux {
-        jobs.push(("Flathub", Box::new(|| flathub_hits(cx, cat))));
+        jobs.push(("Flathub", Box::new(|| flathub_hits(cat))));
         jobs.push(("distro", Box::new(|| distro_hits(query, cx))));
     }
     let results: Vec<(&str, Result<Vec<Hit>>)> = std::thread::scope(|s| {
@@ -350,7 +351,7 @@ pub fn table(hits: &[&Hit]) -> String {
 
 fn aqua_hits(cx: &Cx, cat: &Catalog) -> Result<Vec<Hit>> {
     if cx.registry.get().is_none() {
-        let body = cached(&cat.cache.join("aqua-registry.yaml"), aqua::REGISTRY, cx.fetch)?;
+        let body = cached(&cat.cache.join("aqua-registry.yaml"), aqua::REGISTRY, Some(cx.fetch))?;
         let _ = cx.registry.set(Registry::parse(&body)?);
     }
     let reg = cx.registry.get().expect("set above");
@@ -359,8 +360,8 @@ fn aqua_hits(cx: &Cx, cat: &Catalog) -> Result<Vec<Hit>> {
 
 /// Flathub's app ids, one download a day. They carry no description; the last segment of an id
 /// is the name a user knows the app by.
-fn flathub_hits(cx: &Cx, cat: &Catalog) -> Result<Vec<Hit>> {
-    let body = cached(&cat.cache.join("flathub-ids.json"), FLATHUB_IDS, cx.fetch)?;
+fn flathub_hits(cat: &Catalog) -> Result<Vec<Hit>> {
+    let body = cached(&cat.cache.join("flathub-ids.json"), FLATHUB_IDS, cat.net.as_deref())?;
     let ids: Vec<String> = serde_json::from_slice(&body).context("parsing Flathub's app ids")?;
     Ok(ids
         .into_iter()
@@ -541,13 +542,17 @@ fn encode(s: &str) -> String {
 }
 
 /// `url`'s body, kept at `path` for a day. A stale copy is fetched again, and still used when
-/// that fails.
-fn cached(path: &Path, url: &str, fetch: &dyn Fetch) -> Result<Vec<u8>> {
+/// that fails; with no `fetch` (offline) any copy is used.
+fn cached(path: &Path, url: &str, fetch: Option<&dyn Fetch>) -> Result<Vec<u8>> {
     let age =
         std::fs::metadata(path).and_then(|m| m.modified()).ok().and_then(|t| SystemTime::now().duration_since(t).ok());
     if age.is_some_and(|a| a < FRESH) {
         return std::fs::read(path).with_context(|| format!("reading {}", path.display()));
     }
+    let Some(fetch) = fetch else {
+        return std::fs::read(path)
+            .with_context(|| format!("no copy of {url} at {} to search offline", path.display()));
+    };
     match fetch.get(url) {
         Ok(body) => {
             // A cache that cannot be written only costs the next search a download.

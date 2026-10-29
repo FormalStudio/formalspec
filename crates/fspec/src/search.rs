@@ -12,6 +12,8 @@ use serde_json::json;
 
 /// Per-query catalogs answer within this or are skipped.
 const QUICK: Duration = Duration::from_secs(2);
+/// The aqua registry is 3.5 MB, fetched at most once a day.
+const INDEX: Duration = Duration::from_secs(15);
 
 pub fn catalog(paths: &Paths, network: bool) -> Catalog {
     let net = network.then(|| Box::new(LiveFetch::with_timeout(Some(QUICK))) as Box<dyn fspec_core::fetch::Fetch>);
@@ -19,7 +21,7 @@ pub fn catalog(paths: &Paths, network: bool) -> Catalog {
 }
 
 pub fn run(paths: &Paths, query: &str, json: bool, limit: usize, offline: bool) -> Result<()> {
-    let fetch = LiveFetch::new();
+    let fetch = LiveFetch::with_timeout(Some(INDEX));
     let cx = fspec_sources::Cx::new(&fetch, &LiveRunner).with_catalog(catalog(paths, !offline));
     let found = catalog::search(query, &cx);
     let hits: Vec<_> = found.hits.iter().map(|(_, h)| h).take(limit).collect();

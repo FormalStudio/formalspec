@@ -522,10 +522,12 @@ fn a_git_tag_ignores_paths() {
 }
 
 fn searching<'a>(fetch: &'a MapFetch, runner: &'a RecordingRunner, cache: &std::path::Path) -> Cx<'a> {
+    let net =
+        MapFetch::default().with("https://flathub.org/api/v2/appstream", r#"["org.mozilla.firefox","org.gnome.Maps"]"#);
     let mut cx = cx(fetch, runner).with_catalog(fspec_sources::catalog::Catalog {
         cache: cache.to_path_buf(),
         brew: None,
-        net: None,
+        net: Some(Box::new(net)),
     });
     cx.local = ("x86_64-linux".into(), "opensuse-tumbleweed".into());
     cx
@@ -534,7 +536,7 @@ fn searching<'a>(fetch: &'a MapFetch, runner: &'a RecordingRunner, cache: &std::
 #[test]
 fn an_unknown_name_lists_close_spellings_and_where_else_it_is() {
     let dir = tempfile::tempdir().unwrap();
-    let fetch = registry().with("https://flathub.org/api/v2/appstream", r#"["org.mozilla.firefox","org.gnome.Maps"]"#);
+    let fetch = registry();
     let runner = RecordingRunner::default();
     runner.respond(
         "zypper",
