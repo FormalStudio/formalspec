@@ -159,11 +159,12 @@ fn start(runner: &dyn Runner, spec: &fspec_eval::Spec, name: &str, record: Optio
         _ => bail!("host {} needs a distro system for fspec vm to boot its cloud image", host.name),
     };
     let user = host.users.first().with_context(|| format!("host {} declares no user to log in as", host.name))?;
-    // A Tumbleweed VM boots the way a root `switch --beside` installed does, so a spec's boot
-    // chain (Limine, plymouth) finds what it builds on.
+    // A Tumbleweed VM boots the way a root `switch --beside tumbleweed` installed does, under the
+    // same name on the ESP, so a spec's boot chain (Limine, plymouth, a `preferred` entry) finds
+    // what it builds on.
     let (files, first_boot) = match distro.distro.as_str() {
         "opensuse-tumbleweed" => {
-            let (files, script) = fspec_switch::tumbleweed_vm_boot(&host.name, &distro.kernel_args);
+            let (files, script) = fspec_switch::tumbleweed_vm_boot("tumbleweed", &distro.kernel_args);
             (files, Some(script))
         }
         _ => (vec![], None),
