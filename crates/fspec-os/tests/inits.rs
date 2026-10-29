@@ -46,6 +46,7 @@ fn apply(host: &str) -> Run {
         protect: &[],
         builders: &[],
         build_cache: None,
+        checkout: None,
     };
     for scope in [Scope::System, Scope::User] {
         let state = State::load(&state_dir(&run.paths, scope).join("state.json")).unwrap();

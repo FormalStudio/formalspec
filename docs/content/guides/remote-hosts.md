@@ -148,6 +148,25 @@ fspec apply --host server --dirty
 Use it for experiments. Two hosts that apply the same commit end up with the same software; a
 dirty apply breaks that link, so commit once the change works.
 
+## Apply a commit while others edit
+
+When someone else (a person, or another agent) has uncommitted edits in the same spec checkout,
+apply what is committed instead of passing `--dirty`:
+
+```sh
+fspec apply --host server --rev HEAD
+```
+
+fspec unpacks the spec directory as that commit has it into `~/.cache/fspec/rev/<commit>/` and
+evaluates and ships that copy, so nobody's half-finished edit reaches the host. `--rev` takes any
+commit git can name: `HEAD`, a branch, a hash. It works for this machine too, and for `fspec plan`.
+
+Applies of one host from this machine run one at a time. A second one waits, printing which apply
+it waits for and for how long, and reads the spec (and resolves `--rev`) only once it is at the
+front, so it never applies an older spec over a newer one. Several waiting applies collapse into
+one run. `--no-wait` fails at once instead. An apply the host is already running from another
+machine makes the host's own fspec wait the same way.
+
 ## How it works
 
 `fspec apply --host server` on a remote host runs four steps. `plan` runs the same steps with
@@ -193,7 +212,11 @@ unpacks them on the host into:
 
 With `--dirty`, the archive also holds untracked files that git does not ignore, and lands in
 `~/.cache/fspec/spec/<commit>-dirty-<hash>/`. The hash covers every shipped file, so a second edit
-at the same commit gets its own directory. Earlier dirty copies of that commit are deleted first.
+at the same commit gets its own directory. Earlier dirty copies of that commit are deleted first
+once they are an hour old; a younger one may be what another apply is still running from.
+
+With `--rev`, the whole snapshot of that commit is shipped into `~/.cache/fspec/spec/<commit>/`
+without asking git about the working tree.
 
 Files loaded with `gh:` ([Hosts and modules](../concepts/hosts-and-modules.md)) are copied from
 this machine's load cache, `~/.cache/fspec/loads`, into `.fspec/loads` inside the shipped
@@ -244,9 +267,10 @@ lock pins none. Run `fspec update fspec`, or update fspec on the host by hand.
 The `ssh` destination reaches a different machine than the declaration describes, or the host's
 `system` is wrong. Fix whichever is out of date.
 
-**`the spec tree has uncommitted changes; commit them so every host applies the same commit, or pass --dirty`**
+**`the spec tree has uncommitted changes; pass --rev HEAD to ship only what is committed, or --dirty to ship them too`**
 
-Commit, or pass `--dirty` for a one-off test.
+Pass `--rev HEAD` to apply the last commit and leave the edits out, commit them, or pass
+`--dirty` for a one-off test.
 
 **`the spec must live in a git repository to be shipped`**
 

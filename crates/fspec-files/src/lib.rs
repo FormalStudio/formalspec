@@ -201,7 +201,7 @@ fn require_src(cx: &Cx, src: &str) -> Result<()> {
 fn link_target(cx: &Cx, f: &File) -> Result<PathBuf> {
     match (&f.src, &f.target) {
         (Some(src), None) => {
-            let path = cx.spec_dir.join(src);
+            let path = cx.checkout.unwrap_or(cx.spec_dir).join(src);
             if !path.exists() {
                 bail!("src {} does not exist", path.display());
             }

@@ -41,7 +41,9 @@ The same `/opt/fspec` root is used on macOS.
 | `~/.local/state/fspec/state.json` | User: what it owns in your home |
 | `<state dir>/generations/<n>.json` | A snapshot of state per generation, used by `rollback` |
 | `<state dir>/journal.json` | The undo journal of an apply in progress |
-| `<state dir>/apply.lock` | Held by the running apply, with its pid; a second apply is refused |
+| `<state dir>/apply.lock` | Held by the running apply, with its pid and start time; a second apply waits for it |
+| `~/.local/state/fspec/queue/<host>.lock` | The queue of `fspec apply`s of one host on this machine |
+| `~/.local/state/fspec/queue/<host>.json` | The last apply of the host that ran, for skipping applies it already covered |
 | `<state dir>/secrets/<sha256>.age` | Kept ciphertext of each applied secret, for `fspec secret install` |
 
 Deleting a state file makes FormalSpec forget what it owns. The next apply then treats every
@@ -63,7 +65,9 @@ resource as new, and removals stop working for anything it forgot.
 | --- | --- |
 | `~/.cache/fspec/loads/` | `gh:` load files, by owner, repo and commit |
 | `~/.cache/fspec/spec/<commit>/` | On a remote host: the spec a remote apply shipped |
-| `~/.cache/fspec/build/<name>-<platform>/` | Where a package builds: its checkout, build directory, `FSPEC_CACHE` and the `deps` package files (`pkgs/`), kept between revs |
+| `~/.cache/fspec/rev/<commit>/` | The spec dir as one commit has it, for `--rev` |
+| `~/.cache/fspec/locks/<hash>.lock` | Held while `fspec update` writes an `fspec.lock` |
+| `~/.cache/fspec/build/<name>-<platform>/` | Where a package builds: its checkout, build directory, `FSPEC_CACHE` and the `deps` package files (`pkgs/`), kept between revs. `last/` keeps the newest archive and its tag, which a second build of the same tag takes instead of building |
 | `~/.cache/fspec/jobs/<name>-<rev>-<id>/` | On a builder: one build job, deleted when it finishes |
 | `~/.cache/fspec/dev/farms/<hash>/bin` | A project environment's commands |
 | `~/.cache/fspec/dev/run/<project>/logs` | Logs of a project's `exec` services |

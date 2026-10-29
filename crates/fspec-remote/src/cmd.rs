@@ -48,6 +48,29 @@ pub fn git_commit(spec_dir: &Path) -> Cmd {
     Cmd::new("git").arg("-C").arg(spec_dir.display().to_string()).args(["rev-parse", "HEAD"])
 }
 
+/// The commit `rev` names, or a failure when it names none.
+pub fn git_rev(spec_dir: &Path, rev: &str) -> Cmd {
+    Cmd::new("git")
+        .arg("-C")
+        .arg(spec_dir.display().to_string())
+        .args(["rev-parse", "--verify", "--quiet"])
+        .arg(format!("{rev}^{{commit}}"))
+}
+
+/// Run in the spec dir, `git archive` holds only that directory, at paths relative to it.
+pub fn git_archive(spec_dir: &Path, commit: &str, archive: &Path) -> Cmd {
+    Cmd::new("git")
+        .arg("-C")
+        .arg(spec_dir.display().to_string())
+        .args(["archive", "--format=tar", "-o"])
+        .arg(archive.display().to_string())
+        .arg(commit)
+}
+
+pub fn tar_extract(archive: &Path, dir: &Path) -> Cmd {
+    Cmd::new("tar").args(["-xf", &archive.display().to_string(), "-C", &dir.display().to_string()])
+}
+
 pub fn git_status(spec_dir: &Path) -> Cmd {
     Cmd::new("git").arg("-C").arg(spec_dir.display().to_string()).args(["status", "--porcelain", "--", "."])
 }
@@ -80,12 +103,13 @@ pub fn ship_into(alias: &str, dir: &str, archive: &Path) -> Cmd {
     batch(alias).arg(format!("mkdir -p {dir} && tar -xf - -C {dir}")).stdin_file(archive)
 }
 
-/// A dirty ship first drops the earlier dirty copies of the same commit. The login shell can be
+/// A dirty ship first drops the earlier dirty copies of the same commit, once they are an hour
+/// old: a younger one may be what another apply is still running from. The login shell can be
 /// fish, which fails a glob that matches nothing, so `find` does the matching.
 pub fn ship(alias: &str, commit: &str, dest: &str, archive: &Path, dirty: bool) -> Cmd {
     let wipe = if dirty {
         format!(
-            "find \"$HOME/.cache/fspec/spec\" -maxdepth 1 -name '{commit}-dirty*' -exec rm -rf '{{}}' + 2>/dev/null; "
+            "find \"$HOME/.cache/fspec/spec\" -maxdepth 1 -name '{commit}-dirty*' -mmin +60 -exec rm -rf '{{}}' + 2>/dev/null; "
         )
     } else {
         String::new()
@@ -97,10 +121,13 @@ fn fspec(dest: &str, spec_file: &str, args: &[&str]) -> String {
     format!("{FSPEC} --spec {dest}/{spec_file} {}", args.join(" "))
 }
 
-pub fn apply(alias: &str, dest: &str, spec_file: &str, host: &str, scope: Option<&str>) -> Cmd {
+pub fn apply(alias: &str, dest: &str, spec_file: &str, host: &str, scope: Option<&str>, wait: bool) -> Cmd {
     let mut args = vec!["apply", "--local", "--host", host];
     if let Some(scope) = scope {
         args.extend(["--scope", scope]);
+    }
+    if !wait {
+        args.push("--no-wait");
     }
     Cmd::new("ssh").args(["-t", alias]).arg(fspec(dest, spec_file, &args)).interactive()
 }
@@ -194,6 +221,11 @@ mod tests {
         assert_eq!(git_commit(d).to_string(), "git -C /r/spec rev-parse HEAD");
         assert_eq!(git_status(d).to_string(), "git -C /r/spec status --porcelain -- .");
         assert_eq!(git_files(d).to_string(), "git -C /r/spec ls-files -- .");
+        assert_eq!(git_rev(d, "HEAD").to_string(), "git -C /r/spec rev-parse --verify --quiet HEAD^{commit}");
+        assert_eq!(
+            git_archive(d, "abc", Path::new("/t/s.tar")).to_string(),
+            "git -C /r/spec archive --format=tar -o /t/s.tar abc"
+        );
     }
 
     #[test]
@@ -224,14 +256,14 @@ mod tests {
         let ship = ship("g815", "abc123", &dest, Path::new("/t/s.tar"), true);
         assert_eq!(
             ship.args.last().unwrap(),
-            "find \"$HOME/.cache/fspec/spec\" -maxdepth 1 -name 'abc123-dirty*' -exec rm -rf '{}' + 2>/dev/null; mkdir -p \"$HOME/.cache/fspec/spec/abc123-dirty-0a1b2c3d4e5f\" && tar -xf - -C \"$HOME/.cache/fspec/spec/abc123-dirty-0a1b2c3d4e5f\""
+            "find \"$HOME/.cache/fspec/spec\" -maxdepth 1 -name 'abc123-dirty*' -mmin +60 -exec rm -rf '{}' + 2>/dev/null; mkdir -p \"$HOME/.cache/fspec/spec/abc123-dirty-0a1b2c3d4e5f\" && tar -xf - -C \"$HOME/.cache/fspec/spec/abc123-dirty-0a1b2c3d4e5f\""
         );
     }
 
     #[test]
     fn apply_and_plan_lines() {
         let dest = spec_dir("abc123", None);
-        let apply = apply("g815", &dest, "spec.star", "g815", None);
+        let apply = apply("g815", &dest, "spec.star", "g815", None, true);
         assert_eq!(apply.program, "ssh");
         assert_eq!(
             apply.args,
@@ -242,8 +274,8 @@ mod tests {
             ]
         );
         assert!(apply.interactive);
-        let scoped = super::apply("g815", &dest, "spec.star", "g815", Some("user"));
-        assert!(scoped.args[2].ends_with("apply --local --host g815 --scope user"));
+        let scoped = super::apply("g815", &dest, "spec.star", "g815", Some("user"), false);
+        assert!(scoped.args[2].ends_with("apply --local --host g815 --scope user --no-wait"));
         assert_eq!(
             plan("g815", &dest, "spec.star", "g815").args[5],
             r#"PATH="/usr/local/bin:$PATH" fspec --spec "$HOME/.cache/fspec/spec/abc123"/spec.star plan --json --local --host g815"#

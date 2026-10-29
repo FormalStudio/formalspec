@@ -48,10 +48,13 @@ locked like any other, at the newest commit of FormalSpec's `main` that changes 
 
 In a directory with a `dev.star` and no `spec.star`, it locks the project environment instead.
 
+The lock is written as a change to the file as it is on disk when the update ends, under a lock
+of its own: two updates of different packages at once both land, each moving only its own entries.
+
 ### fspec plan
 
 ```
-fspec plan [--host <h> | --all] [--json] [--dirty]
+fspec plan [--host <h> | --all] [--json] [--dirty | --rev <rev>]
 ```
 
 Shows what `apply` would change. Never changes anything.
@@ -62,22 +65,30 @@ Shows what `apply` would change. Never changes anything.
 | `--all` | Plan every host, asking each remote host over ssh. An unreachable one prints `unreachable, skipped` |
 | `--json` | Print the plan as JSON |
 | `--dirty` | Ship a spec with uncommitted changes to remote hosts anyway |
+| `--rev <rev>` | Plan the spec as this commit has it (`HEAD`, a branch, a hash), uncommitted edits left out |
 
 [How FormalSpec works](../concepts/how-it-works.md#plan) explains the output.
 
 ### fspec apply
 
 ```
-fspec apply [--host <h> | --all] [--dirty] [--scope system|user] [--skip-undecryptable-secrets]
+fspec apply [--host <h> | --all] [--dirty | --rev <rev>] [--no-wait] [--scope system|user] [--skip-undecryptable-secrets]
 ```
 
 Converges a host. A remote host is reached over ssh.
+
+Applies of one host queue: a second `fspec apply` waits for the running one, printing its pid and
+how long it has run, then reads the spec and applies. Of several applies waiting at once, only
+the first one runs; the others find it read the spec after they queued and stop with nothing
+left to do.
 
 | Flag | Meaning |
 | --- | --- |
 | `--host <h>` | Apply this host |
 | `--all` | Apply every remote host in spec order, then this machine. Stops at the first failure |
 | `--dirty` | Allow uncommitted changes when applying remote hosts |
+| `--rev <rev>` | Apply the spec as this commit has it (`HEAD`, a branch, a hash), so nobody's uncommitted edits reach the host. Resolved when the apply reaches the front of the queue. `mode = "link"` files still point into the working tree |
+| `--no-wait` | Fail at once when another apply of the host is running instead of queueing |
 | `--scope <s>` | Apply only the `system` or the `user` scope. Without it, the system scope runs through `sudo`, then the user scope |
 | `--skip-undecryptable-secrets` | Leave out each new secret no identity on this machine decrypts, with a warning, instead of failing, and name them at the end. A secret an earlier apply installed is never left out. This machine only. The installer's first apply uses it |
 

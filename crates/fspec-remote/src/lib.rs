@@ -101,6 +101,51 @@ pub struct Remote<'a> {
     pub dirty: bool,
     /// Where the `gh:` load files are cached, default [`loads_cache`].
     pub loads_cache: Option<PathBuf>,
+    /// Set when `spec_dir` is a [`snapshot`] of this commit (`--rev`): shipped whole, without
+    /// asking git about it.
+    pub commit: Option<String>,
+    /// Queue behind an apply already running on the remote rather than fail (`--no-wait`).
+    pub wait: bool,
+}
+
+/// One commit of the spec's repo, unpacked on its own (`--rev`).
+#[derive(Debug)]
+pub struct Snapshot {
+    /// The spec dir as that commit has it.
+    pub dir: PathBuf,
+    pub commit: String,
+}
+
+/// Unpack the spec dir as `rev` of its repo has it into `<cache>/<commit>`, so applying it never
+/// reads an uncommitted edit. A snapshot is never changed once it is in place, so applies of
+/// one commit share it.
+pub fn snapshot(runner: &dyn Runner, spec_dir: &Path, rev: &str, cache: &Path) -> Result<Snapshot> {
+    let out = runner.run(&cmd::git_rev(spec_dir, rev))?;
+    if out.status != 0 {
+        bail!("{rev} is not a commit of the repo holding {}: {}", spec_dir.display(), out.stderr.trim());
+    }
+    let commit = out.stdout.trim().to_string();
+    let dir = cache.join(&commit);
+    if dir.is_dir() {
+        return Ok(Snapshot { dir, commit });
+    }
+    std::fs::create_dir_all(cache).with_context(|| format!("creating {}", cache.display()))?;
+    let tmp = tempfile::tempdir_in(cache)?;
+    let archive = tmp.path().join("spec.tar");
+    let tree = tmp.path().join("tree");
+    std::fs::create_dir(&tree)?;
+    runner.check(&cmd::git_archive(spec_dir, &commit, &archive))?;
+    runner.check(&cmd::tar_extract(&archive, &tree))?;
+    // Another apply of the same commit may have put its copy in place first; either will do.
+    if std::fs::rename(&tree, &dir).is_err() && !dir.is_dir() {
+        bail!("could not move the snapshot of {commit} into {}", dir.display());
+    }
+    Ok(Snapshot { dir, commit })
+}
+
+/// `<cache>/rev`, where [`snapshot`]s go.
+pub fn snapshots() -> Option<PathBuf> {
+    Some(fspec_core::lock::cache_dir()?.join("rev"))
 }
 
 /// Runs `fspec facts --json` on `alias`.
@@ -237,22 +282,10 @@ impl Remote<'_> {
     /// (it may have no GitHub token for a private repo). Returns the remote directory as a shell
     /// word.
     pub fn ship(&self, alias: &str) -> Result<String> {
-        let git = |c| self.runner.check(&c).context("the spec must live in a git repository to be shipped");
-        let commit = git(cmd::git_commit(&self.spec_dir))?.stdout.trim().to_string();
-        let tree_dirty = !git(cmd::git_status(&self.spec_dir))?.stdout.trim().is_empty();
-        if tree_dirty && !self.dirty {
-            bail!(
-                "the spec tree has uncommitted changes; commit them so every host applies the same commit, or pass --dirty"
-            );
-        }
-        let mut files: Vec<String> = git(cmd::git_files(&self.spec_dir))?.stdout.lines().map(str::to_string).collect();
-        if tree_dirty {
-            files.extend(git(cmd::git_untracked(&self.spec_dir))?.stdout.lines().map(str::to_string));
-            files.retain(|f| self.spec_dir.join(f).exists());
-        }
-        if self.spec_dir.join("fspec.lock").exists() && !files.iter().any(|f| f == "fspec.lock") {
-            files.push("fspec.lock".into());
-        }
+        let (commit, tree_dirty, files) = match &self.commit {
+            Some(commit) => (commit.clone(), false, vec![".".to_string()]),
+            None => self.tracked()?,
+        };
         let content = tree_dirty.then(|| content_hash(&self.spec_dir, &files)).transpose()?;
         let dest = cmd::spec_dir(&commit, content.as_deref());
         let tmp = tempfile::tempdir()?;
@@ -277,12 +310,33 @@ impl Remote<'_> {
         Ok(dest)
     }
 
+    /// The commit, whether the tree is dirty, and the files of the working tree to ship.
+    fn tracked(&self) -> Result<(String, bool, Vec<String>)> {
+        let git = |c| self.runner.check(&c).context("the spec must live in a git repository to be shipped");
+        let commit = git(cmd::git_commit(&self.spec_dir))?.stdout.trim().to_string();
+        let tree_dirty = !git(cmd::git_status(&self.spec_dir))?.stdout.trim().is_empty();
+        if tree_dirty && !self.dirty {
+            bail!(
+                "the spec tree has uncommitted changes; pass --rev HEAD to ship only what is committed, or --dirty to ship them too"
+            );
+        }
+        let mut files: Vec<String> = git(cmd::git_files(&self.spec_dir))?.stdout.lines().map(str::to_string).collect();
+        if tree_dirty {
+            files.extend(git(cmd::git_untracked(&self.spec_dir))?.stdout.lines().map(str::to_string));
+            files.retain(|f| self.spec_dir.join(f).exists());
+        }
+        if self.spec_dir.join("fspec.lock").exists() && !files.iter().any(|f| f == "fspec.lock") {
+            files.push("fspec.lock".into());
+        }
+        Ok((commit, tree_dirty, files))
+    }
+
     pub fn apply(&self, host: &Host, alias: &str, scope: Option<&str>) -> Result<()> {
         if let Reach::Unreachable(why) = self.reach(host, alias)? {
             bail!("host {} is unreachable over ssh ({alias}): {why}", host.name);
         }
         let dest = self.ship(alias)?;
-        let out = self.runner.run(&cmd::apply(alias, &dest, &self.spec_file, &host.name, scope))?;
+        let out = self.runner.run(&cmd::apply(alias, &dest, &self.spec_file, &host.name, scope, self.wait))?;
         if out.status != 0 {
             bail!("apply on {} exited {}", host.name, out.status);
         }

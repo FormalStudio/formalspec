@@ -168,6 +168,7 @@ mod tests {
                 protect: &[],
                 builders: &[],
                 build_cache: None,
+                checkout: None,
             }
         }
 

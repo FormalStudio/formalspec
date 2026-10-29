@@ -48,6 +48,7 @@ fn apply(host: &str) -> Run {
             protect: &[],
             builders: &[],
             build_cache: None,
+            checkout: None,
         };
         apply_scope(&cx, &backends, &desired).unwrap();
 

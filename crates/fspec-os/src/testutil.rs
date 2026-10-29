@@ -56,6 +56,7 @@ impl World {
             protect: &[],
             builders: &[],
             build_cache: None,
+            checkout: None,
         }
     }
 }

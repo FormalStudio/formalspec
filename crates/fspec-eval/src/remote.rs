@@ -132,9 +132,9 @@ impl Remote<'_> {
                 }
                 if let Some(dir) = self.dirs.last() {
                     let to = dir.join(&rel);
-                    // The cache only saves a fetch; a read-only or missing home is fine.
-                    let _ = to.parent().map(std::fs::create_dir_all);
-                    let _ = std::fs::write(&to, &body);
+                    // The cache only saves a fetch; a read-only or missing home is fine. Written
+                    // whole, since another evaluation may be reading it.
+                    let _ = fspec_core::flock::write_atomic(&to, &body);
                 }
                 body
             }

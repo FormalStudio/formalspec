@@ -66,12 +66,7 @@ impl State {
 
     /// Write-then-rename, so a crash never leaves a torn state file.
     pub fn save(&self, path: &Path) -> Result<()> {
-        let dir = path.parent().context("state path has no parent")?;
-        fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-        let tmp = path.with_extension("json.tmp");
-        fs::write(&tmp, serde_json::to_string_pretty(self)? + "\n")
-            .with_context(|| format!("writing {}", tmp.display()))?;
-        fs::rename(&tmp, path).with_context(|| format!("renaming {} into place", tmp.display()))
+        crate::flock::write_atomic(path, (serde_json::to_string_pretty(self)? + "\n").as_bytes())
     }
 }
 

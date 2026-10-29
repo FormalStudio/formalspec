@@ -199,6 +199,7 @@ pub(crate) fn with_store<R>(
         protect: &[],
         builders: &[],
         build_cache: None,
+        checkout: None,
     };
     f(&cx, &paths.fspec_root().join("store"), &user_store(&paths.home))
 }

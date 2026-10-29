@@ -108,6 +108,7 @@ impl World {
             protect: &[],
             builders: &[],
             build_cache: None,
+            checkout: None,
         }
     }
 
@@ -400,11 +401,21 @@ fn a_deferred_package_and_what_it_owns_are_left_out_and_retried() {
 }
 
 #[test]
-fn a_second_apply_of_a_scope_is_refused_while_the_first_holds_it() {
+fn a_second_apply_of_a_scope_is_refused_with_no_wait_while_the_first_holds_it() {
     let dir = tempfile::tempdir().unwrap();
-    let first = lock_scope(dir.path()).unwrap();
-    let err = lock_scope(dir.path()).unwrap_err().to_string();
-    assert!(err.contains(&format!("another apply (pid {})", std::process::id())), "{err}");
+    let first = lock_scope(dir.path(), true).unwrap();
+    let err = lock_scope(dir.path(), false).unwrap_err().to_string();
+    assert!(err.contains(&format!("(pid {}, running", std::process::id())), "{err}");
     drop(first);
-    lock_scope(dir.path()).unwrap();
+    lock_scope(dir.path(), false).unwrap();
+}
+
+#[test]
+fn an_apply_that_waited_takes_the_generation_after_the_one_before_it() {
+    let w = World::new();
+    let backends: &[&dyn Backend] = &[&FakeFiles];
+    let stale = w.cx(Scope::System);
+    apply_scope(&w.cx(Scope::System), backends, &[file("/etc/a", "1")]).unwrap();
+    apply_scope(&stale, backends, &[file("/etc/a", "2")]).unwrap();
+    assert_eq!(w.state(Scope::System).generation, 2);
 }

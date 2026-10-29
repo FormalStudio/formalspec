@@ -47,9 +47,23 @@ pub struct Built {
 pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     let cache = job.cache.join(format!("{}-{}", job.pkg.name, job.platform));
     fs::create_dir_all(&cache).with_context(|| format!("creating {}", cache.display()))?;
-    // Two applies can build the same package at once; the second waits for the first's cache.
-    let lock = fs::File::create(cache.with_extension("lock"))?;
-    lock.lock().with_context(|| format!("locking {}", cache.display()))?;
+    // Two applies can build the same package at once; the second waits for the first's cache,
+    // and takes its archive when it built the same thing.
+    let what = format!("build of {} for {}", job.pkg.name, job.platform);
+    let lock = fspec_core::flock::acquire(&cache.with_extension("lock"), &what, true)?;
+    // A tag that cannot be made (a missing patch) fails at `git apply`, which says why.
+    let tag = job_tag(job);
+    let archive = job.out.join(format!("{}-{}.tar.zst", job.pkg.name, job.platform));
+    let last = cache.join("last");
+    if let Ok(tag) = &tag
+        && fs::read_to_string(last.join("tag")).is_ok_and(|t| t == *tag)
+        && last.join("archive.tar.zst").is_file()
+    {
+        fs::create_dir_all(job.out)?;
+        fs::copy(last.join("archive.tar.zst"), &archive).with_context(|| format!("copying {}", archive.display()))?;
+        fs::write(job.out.join("tag"), tag)?;
+        return Ok(Built { archive, tag: tag.clone() });
+    }
     let user = build_user(job.platform);
     if let Some(u) = &user {
         runner.check(&Cmd::new("chown").args(["-R", u]).arg(cache.display().to_string()))?;
@@ -132,11 +146,15 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
             pack::tree_zst(&dirs.out)?
         }
     };
-    let archive = job.out.join(format!("{}-{}.tar.zst", job.pkg.name, job.platform));
+    let tag = tag?;
     fs::create_dir_all(job.out)?;
-    fs::write(&archive, body).with_context(|| format!("writing {}", archive.display()))?;
-    let tag = job_tag(job)?;
+    fs::write(&archive, &body).with_context(|| format!("writing {}", archive.display()))?;
     fs::write(job.out.join("tag"), &tag)?;
+    // The tag goes last, so a crash between the two never pairs it with another build's archive.
+    let _ = fs::remove_file(last.join("tag"));
+    fs::create_dir_all(&last)?;
+    fspec_core::flock::write_atomic(&last.join("archive.tar.zst"), &body)?;
+    fspec_core::flock::write_atomic(&last.join("tag"), tag.as_bytes())?;
     drop(lock);
     Ok(Built { archive, tag })
 }

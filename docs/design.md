@@ -767,9 +767,12 @@ within the cutoff, then the user-store packages no remaining farm links into.
    reverted from the journal on the next run.
 
 Each scope's apply holds `<state dir>/apply.lock` from before that recovery to
-the end, with its pid in the file. A second apply of the same scope is refused
-and names the pid, rather than replaying the first one's live journal or
-sharing its staging directory.
+the end, with its pid and start time in the file. A second apply of the same
+scope waits for it (`--no-wait` refuses instead), rather than replaying the
+first one's live journal or sharing its staging directory, and takes its
+generation from the state it finds once it holds the lock. `adopt`, `orphans`
+and `gc` hold the same lock while they change the state or delete what a
+generation may keep. See [Concurrent agents](#concurrent-agents).
 
 Before step 4, FormalSpec takes a btrfs or APFS snapshot of the paths it is
 about to touch when the filesystem supports it.
@@ -2236,13 +2239,15 @@ through the `Runner`:
    may not run there.
 2. Refuse a dirty spec tree. Hosts that apply the same commit end up with the
    same software, so uncommitted changes under the spec directory stop the
-   apply unless `--dirty` is passed.
+   apply unless `--dirty` or `--rev` is passed. With `--rev`, the spec is a
+   snapshot of that commit and git is not asked about the working tree.
 3. Ship: `git ls-files` in the spec directory plus `fspec.lock` go through
    `tar` and ssh into `~/.cache/fspec/spec/<commit>/` on the remote. A dirty
    tree also ships its untracked files that git does not ignore, and lands in
    `<commit>-dirty-<hash>/`, named after a hash of what is shipped, so a
    second edit at the same commit never evaluates the first one's copy; the
-   earlier dirty copies of that commit are deleted first. The `gh:` load files the
+   earlier dirty copies of that commit are deleted first once they are an hour
+   old, so a copy another apply still runs from stays. The `gh:` load files the
    lock names follow from this machine's cache into `<dir>/.fspec/loads`, so
    the remote needs no GitHub token to evaluate them.
 4. Run `ssh -t h fspec --spec <dir>/spec.star apply --local --host h` with the
@@ -2255,6 +2260,48 @@ attempted. `fspec plan --all` probes each host: a reachable remote host is
 shipped the spec and runs `fspec plan --json --host h`, whose plan is rendered
 locally; an unreachable one prints `unreachable, skipped`, since its state lives
 on the host. Runs under `--root` never go remote.
+
+## Concurrent agents
+
+Several agents (or people) run fspec against one spec checkout and one set of
+hosts at once. Nothing about that needs waiting loops, worktrees or care:
+
+- **Applies queue.** `fspec apply` of a host takes
+  `~/.local/state/fspec/queue/<host>.lock` on the machine running it, for the
+  whole apply, remote ones included. A second apply waits, printing the
+  holder's pid and how long it has run, every 30 seconds while it waits.
+  `--no-wait` fails at once. Inside, each scope's `apply.lock` still guards
+  the state, and an apply driven from another machine waits on it the same way.
+- **The spec is read at the front of the queue.** An apply that waited
+  evaluates the spec again (and resolves `--rev` only then), so it never
+  converges an older spec over the newer one the apply ahead of it applied.
+- **Waiting applies coalesce.** `<host>.json` records the last apply that ran:
+  when it started, its spec dir, `--rev` and scope, and whether it succeeded.
+  An apply that waited is skipped when that record started after this one
+  queued, read the same spec dir and `--rev` and covered its scope, and
+  succeeded: it read every edit this one was asked to apply. Of N applies that
+  queue behind a running one, one runs.
+- **`--rev` applies exactly a commit.** `fspec apply --rev HEAD` (and
+  `plan --rev`) unpacks the spec dir as that commit has it, with
+  `git archive`, into `~/.cache/fspec/rev/<commit>/`, evaluates that and ships
+  it whole to a remote host under the same commit name. Another agent's
+  uncommitted edits in the checkout never reach a host. A `mode = "link"` file
+  still points into the checkout (`Cx::checkout`), since a link exists to
+  follow edits. A scoped apply (only the resources from given files) was not
+  built: it still ships whatever else is half-edited in those files, and `--rev`
+  covers the case.
+- **`fspec.lock` writes merge.** `fspec update` writes the lock as the
+  difference between the lock it read and the one it resolved, applied to the
+  file as it is on disk, under `~/.cache/fspec/locks/<hash>.lock`. Two updates
+  of different packages both land; the same entry is last writer wins.
+- **Builds share their result.** A `git(...)` build holds
+  `<build cache>/<name>-<platform>.lock` and keeps its archive and tag in
+  `<name>-<platform>/last/`. A second build of the same tag, on the same
+  builder or host, waits for the first and copies its archive instead of
+  building.
+- **Shared files are written whole.** The state, the lock and the `gh:` load
+  cache are written to a uniquely named temporary file and renamed into place,
+  so a reader never sees half a file and two writers never share a temporary.
 
 ## Repo layout
 

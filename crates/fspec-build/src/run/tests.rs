@@ -251,6 +251,25 @@ fn a_second_build_reuses_the_checkout_and_the_target_dir() {
 }
 
 #[test]
+fn a_build_of_what_the_last_one_built_takes_its_archive_without_building() {
+    let spec = tempfile::tempdir().unwrap();
+    let cache = tempfile::tempdir().unwrap();
+    let (first_out, second_out) = (tempfile::tempdir().unwrap(), tempfile::tempdir().unwrap());
+    let p = pkg(serde_json::json!({}));
+    let fake =
+        Fake { checkout: BTreeMap::from([("Cargo.toml", "")]), produce: vec![("exe", "tool")], ..Default::default() };
+    let first = build(&fake, &Job { cache: cache.path(), ..job(&p, spec.path(), first_out.path()) }).unwrap();
+    fake.calls.lock().unwrap().clear();
+    let second = build(&fake, &Job { cache: cache.path(), ..job(&p, spec.path(), second_out.path()) }).unwrap();
+    assert!(fake.calls.lock().unwrap().is_empty(), "{:?}", fake.calls.lock().unwrap());
+    assert_eq!(first.tag, second.tag);
+    assert_eq!(fs::read(&first.archive).unwrap(), fs::read(&second.archive).unwrap());
+
+    build(&fake, &Job { rev: "def456", cache: cache.path(), ..job(&p, spec.path(), second_out.path()) }).unwrap();
+    assert!(fake.calls.lock().unwrap().iter().any(|c| c.starts_with("cargo ")), "another rev builds");
+}
+
+#[test]
 fn an_explicit_build_in_docker_gets_the_cache_mounted_and_handed_back() {
     let spec = tempfile::tempdir().unwrap();
     let out = tempfile::tempdir().unwrap();

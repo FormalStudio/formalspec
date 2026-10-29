@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
-use fspec_core::apply::{apply_scope, desired_from_generation, plan_scope, state_dir};
+use fspec_core::apply::{apply_held, apply_scope, desired_from_generation, lock_scope, plan_scope, state_dir};
 use fspec_core::engine;
 use fspec_core::facts::{Facts, local_hostname};
 use fspec_core::fetch::LiveFetch;
@@ -30,6 +30,10 @@ struct Cli {
     /// The user's home, default $HOME (with --root, `<root>/home/<user>`).
     #[arg(long, global = true)]
     home: Option<PathBuf>,
+    /// The working tree a `--rev` snapshot was taken from, for `mode = "link"` files. Set on the
+    /// sudo end of the system scope.
+    #[arg(long, global = true, hide = true)]
+    checkout: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -59,6 +63,10 @@ enum Command {
         /// Ship a spec tree with uncommitted changes to remote hosts anyway.
         #[arg(long)]
         dirty: bool,
+        /// Plan the spec as this commit of its repo has it (`HEAD`, a branch, a hash), leaving
+        /// uncommitted edits out.
+        #[arg(long, conflicts_with = "dirty")]
+        rev: Option<String>,
         /// Plan on this machine whatever the host is called. Set on the remote end of an ssh plan.
         #[arg(long, hide = true)]
         local: bool,
@@ -76,6 +84,14 @@ enum Command {
         /// Ship a spec tree with uncommitted changes to remote hosts anyway.
         #[arg(long)]
         dirty: bool,
+        /// Apply the spec as this commit of its repo has it (`HEAD`, a branch, a hash), leaving
+        /// uncommitted edits out, the one shipped to a remote host included. Resolved once this
+        /// apply reaches the front of the host's queue.
+        #[arg(long, conflicts_with = "dirty")]
+        rev: Option<String>,
+        /// Fail at once when another apply of the host is running, instead of queueing behind it.
+        #[arg(long)]
+        no_wait: bool,
         /// Apply on this machine whatever the host is called. Set on the remote end of an ssh apply.
         #[arg(long, hide = true)]
         local: bool,
@@ -470,10 +486,14 @@ fn main() -> Result<()> {
             Command::Update { pkgs, .. } => dev::update(&paths, pkgs),
             _ => dev::plan_here(&paths),
         },
-        Command::Plan { host, json, all, dirty, local, scope } => {
-            let spec = fspec_eval::evaluate(&spec_path)?;
+        Command::Plan { host, json, all, dirty, rev, local, scope } => {
+            let pinned = match local {
+                true => Pinned::given(&spec_path, cli.checkout.clone())?,
+                false => Pinned::new(&spec_path, rev.as_deref())?,
+            };
+            let spec = fspec_eval::evaluate(&pinned.spec_path)?;
             if *all {
-                return plan_all(&spec, &paths, &spec_path, *dirty);
+                return plan_all(&spec, &paths, &pinned, *dirty);
             }
             let host = named(&spec, host.as_deref())?;
             let alias = remote_alias(host, &local_hostname(), &paths, *local);
@@ -497,20 +517,11 @@ fn main() -> Result<()> {
                 }
             }
             let plan = match alias {
-                Some(alias) => {
-                    let remote = Remote {
-                        runner: &LiveRunner,
-                        spec_dir: spec_dir.clone(),
-                        spec_file: file_name(&spec_path)?,
-                        dirty: *dirty,
-                        loads_cache: None,
-                    };
-                    match remote.plan(host, &alias)? {
-                        Planned::Plan(plan) => plan,
-                        Planned::Unreachable => bail!("host {} is unreachable over ssh ({alias})", host.name),
-                    }
-                }
-                None => plan_local(&paths, &spec_path, host, *scope)?,
+                Some(alias) => match pinned.remote(*dirty, true)?.plan(host, &alias)? {
+                    Planned::Plan(plan) => plan,
+                    Planned::Unreachable => bail!("host {} is unreachable over ssh ({alias})", host.name),
+                },
+                None => plan_local(&paths, &pinned, host, *scope)?,
             };
             if *json {
                 println!("{}", serde_json::to_string_pretty(&plan)?);
@@ -535,7 +546,7 @@ fn main() -> Result<()> {
                 let (lines, failed) = fspec_build::cache::record(&mut lock, &spec.hosts, &registry, &runner)?;
                 lines.iter().for_each(|l| println!("cached {l}"));
                 if lock != old {
-                    lock.save(&lock_path)?;
+                    lock.save_over(&old, &lock_path)?;
                 }
                 if !failed.is_empty() {
                     bail!("{} problem(s):\n{}", failed.len(), failed.join("\n"));
@@ -546,7 +557,7 @@ fn main() -> Result<()> {
                 let registry = registry_for(registry.as_deref(), &runner, &spec_dir)?;
                 let u = fspec_image::update_images(&spec.hosts, &old, &registry, &fetch)?;
                 if u.lock != old {
-                    u.lock.save(&lock_path)?;
+                    u.lock.save_over(&old, &lock_path)?;
                 }
                 for line in &u.changes {
                     println!("{line}");
@@ -571,7 +582,7 @@ fn main() -> Result<()> {
             }
             result.lock.loads = spec.loads.clone();
             if result.lock != old {
-                result.lock.save(&lock_path)?;
+                result.lock.save_over(&old, &lock_path)?;
             }
             if !errors.is_empty() {
                 bail!("{} problem(s):\n{}", errors.len(), errors.join("\n"));
@@ -701,24 +712,43 @@ fn main() -> Result<()> {
             println!("wrote {}", path.display());
             Ok(())
         }
-        Command::Apply { host, all, dirty, local, scope, skip_undecryptable_secrets } => {
+        Command::Apply { host, all, dirty, rev, no_wait, local, scope, skip_undecryptable_secrets } => {
+            let (wait, skip) = (!*no_wait, *skip_undecryptable_secrets);
             let spec = fspec_eval::evaluate(&spec_path)?;
+            if *local {
+                let pinned = Pinned::given(&spec_path, cli.checkout.clone())?;
+                return apply_local(&paths, &pinned, named(&spec, host.as_deref())?, *scope, wait, skip);
+            }
             let this = local_hostname();
-            let remote = Remote {
-                runner: &LiveRunner,
+            let queue = paths.user_state_dir().join("queue");
+            let request = fspec_core::queue::Request {
                 spec_dir: spec_dir.clone(),
-                spec_file: file_name(&spec_path)?,
-                dirty: *dirty,
-                loads_cache: None,
+                rev: rev.clone(),
+                scope: scope.map(|s| scope_name(s).to_string()),
             };
+            // The spec is read again at the front of the queue: what was read before waiting may
+            // be older than what the apply ahead of this one converged.
             let apply_one = |h: &Host| -> Result<()> {
-                match remote_alias(h, &this, &paths, *local) {
-                    Some(_) if *skip_undecryptable_secrets => {
-                        bail!("--skip-undecryptable-secrets applies this machine only, not {}", h.name)
+                fspec_core::queue::run(&queue, &h.name, &request, wait, |waited| {
+                    let pinned = Pinned::new(&spec_path, rev.as_deref())?;
+                    let fresh;
+                    let spec = match waited || rev.is_some() {
+                        true => {
+                            fresh = fspec_eval::evaluate(&pinned.spec_path)?;
+                            &fresh
+                        }
+                        false => &spec,
+                    };
+                    let h = spec.host(&h.name)?;
+                    match remote_alias(h, &this, &paths, false) {
+                        Some(_) if skip => {
+                            bail!("--skip-undecryptable-secrets applies this machine only, not {}", h.name)
+                        }
+                        Some(alias) => pinned.remote(*dirty, wait)?.apply(h, &alias, scope.map(scope_name)),
+                        None => apply_local(&paths, &pinned, h, *scope, wait, skip),
                     }
-                    Some(alias) => remote.apply(h, &alias, scope.map(scope_name)),
-                    None => apply_local(&paths, &spec_path, &spec_dir, h, *scope, *skip_undecryptable_secrets),
-                }
+                })
+                .map(drop)
             };
             if *all {
                 if !is_live(&paths) {
@@ -731,7 +761,7 @@ fn main() -> Result<()> {
         Command::Adopt { path, host } => {
             let spec = fspec_eval::evaluate(&spec_path)?;
             let host = select(&spec, host.as_deref(), &paths)?;
-            let env = Env::new(&paths, host, &spec_dir)?;
+            let env = Env::new(&paths, host, &spec_dir, None)?;
             adopt(&env, host, path)
         }
         Command::Watch => {
@@ -741,7 +771,7 @@ fn main() -> Result<()> {
         Command::Rollback { generation, host, scope } => {
             let spec = fspec_eval::evaluate(&spec_path)?;
             let host = select(&spec, host.as_deref(), &paths)?;
-            let mut env = Env::new(&paths, host, &spec_dir)?;
+            let mut env = Env::new(&paths, host, &spec_dir, None)?;
             let scopes: Vec<Scope> = scope.map(|s| vec![s.into()]).unwrap_or(SCOPES.to_vec());
             for scope in scopes {
                 let dir = state_dir(&paths, scope);
@@ -753,7 +783,7 @@ fn main() -> Result<()> {
                     None => state.generation - 1,
                 };
                 if scope == Scope::System && is_live(&paths) && !is_root(env.runner.as_ref())? {
-                    sudo_system(&spec_path, &host.name, &paths, &["rollback", &n.to_string()])?;
+                    sudo_system(&spec_path, &host.name, &paths, &["rollback", &n.to_string()], None)?;
                     continue;
                 }
                 let desired = desired_from_generation(&dir, n)?;
@@ -867,7 +897,7 @@ fn main() -> Result<()> {
         Command::Orphans { claim, delete, host } => {
             let spec = fspec_eval::evaluate(&spec_path)?;
             let host = select(&spec, host.as_deref(), &paths)?;
-            let env = Env::new(&paths, host, &spec_dir)?;
+            let env = Env::new(&paths, host, &spec_dir, None)?;
             orphans(&env, claim.as_deref(), delete.as_deref())
         }
         Command::Gc { older_than, host, scope } => {
@@ -877,9 +907,12 @@ fn main() -> Result<()> {
             let scopes: Vec<Scope> = scope.map(|s| vec![s.into()]).unwrap_or(SCOPES.to_vec());
             for scope in scopes {
                 if scope == Scope::System && is_live(&paths) && !is_root(&LiveRunner)? {
-                    sudo_system(&spec_path, &host, &paths, &["gc", "--older-than", older_than])?;
+                    sudo_system(&spec_path, &host, &paths, &["gc", "--older-than", older_than], None)?;
                     continue;
                 }
+                // An apply running beside it may be about to record a generation that keeps what
+                // gc would delete.
+                let _held = lock_scope(&state_dir(&paths, scope), true)?;
                 let report = fspec_store::gc::run(&paths, scope, cutoff)?;
                 for line in &report.removed {
                     println!("removed {line}");
@@ -1519,18 +1552,23 @@ fn remote_alias(host: &Host, this: &str, paths: &Paths, local: bool) -> Option<S
     }
 }
 
-fn plan_local(paths: &Paths, spec_path: &Path, host: &Host, scope: Option<ScopeArg>) -> Result<Plan> {
+fn plan_local(paths: &Paths, pinned: &Pinned, host: &Host, scope: Option<ScopeArg>) -> Result<Plan> {
     if is_live(paths) {
         check_declared(host)?;
     }
-    let spec_dir = spec_path.parent().context("spec has no parent directory")?;
-    let env = Env::new(paths, host, spec_dir)?;
+    let env = Env::new(paths, host, &pinned.spec_dir, pinned.checkout.as_deref())?;
     let scopes: Vec<Scope> = scope.map(|s| vec![s.into()]).unwrap_or(SCOPES.to_vec());
     let mut plans = Vec::new();
     for scope in scopes {
         // The system scope reads root-only files (sudoers drop-ins, the ESP), as apply writes them.
         if scope == Scope::System && is_live(paths) && !is_root(env.runner.as_ref())? {
-            let out = sudo_system(spec_path, &host.name, paths, &["plan", "--json", "--local"])?;
+            let out = sudo_system(
+                &pinned.spec_path,
+                &host.name,
+                paths,
+                &["plan", "--json", "--local"],
+                pinned.checkout.as_deref(),
+            )?;
             plans.push(serde_json::from_slice(&out).context("reading the system scope's plan from sudo")?);
             continue;
         }
@@ -1545,16 +1583,9 @@ fn plan_local(paths: &Paths, spec_path: &Path, host: &Host, scope: Option<ScopeA
     Ok(merge(plans))
 }
 
-fn plan_all(spec: &fspec_eval::Spec, paths: &Paths, spec_path: &Path, dirty: bool) -> Result<()> {
-    let spec_dir = spec_path.parent().context("spec has no parent directory")?;
+fn plan_all(spec: &fspec_eval::Spec, paths: &Paths, pinned: &Pinned, dirty: bool) -> Result<()> {
     let this = local_hostname();
-    let remote = Remote {
-        runner: &LiveRunner,
-        spec_dir: spec_dir.to_path_buf(),
-        spec_file: file_name(spec_path)?,
-        dirty,
-        loads_cache: None,
-    };
+    let remote = pinned.remote(dirty, true)?;
     let mut failed = 0;
     for host in &spec.hosts {
         let outcome = match remote_alias(host, &this, paths, false) {
@@ -1562,7 +1593,7 @@ fn plan_all(spec: &fspec_eval::Spec, paths: &Paths, spec_path: &Path, dirty: boo
                 Planned::Plan(plan) => plan.to_string(),
                 Planned::Unreachable => format!("host {}\n  unreachable, skipped", host.name),
             }),
-            None => plan_local(paths, spec_path, host, None).map(|p| p.to_string()),
+            None => plan_local(paths, pinned, host, None).map(|p| p.to_string()),
         };
         match outcome {
             Ok(text) => println!("{text}"),
@@ -1583,6 +1614,7 @@ fn orphans(env: &Env, claim: Option<&[String]>, delete: Option<&str>) -> Result<
     use fspec_core::{attribute, trash};
     let system = State::load(&state_dir(env.paths, Scope::System).join("state.json"))?;
     let dir = state_dir(env.paths, Scope::User);
+    let _held = lock_scope(&dir, true)?;
     let user_path = dir.join("state.json");
     let mut user = State::load(&user_path)?;
     let orphans = attribute::orphans(env.paths, &system, &user);
@@ -1620,35 +1652,44 @@ fn orphans(env: &Env, claim: Option<&[String]>, delete: Option<&str>) -> Result<
 
 fn apply_local(
     paths: &Paths,
-    spec_path: &Path,
-    spec_dir: &Path,
+    pinned: &Pinned,
     host: &Host,
     scope: Option<ScopeArg>,
+    wait: bool,
     skip_secrets: bool,
 ) -> Result<()> {
     if is_live(paths) {
         check_declared(host)?;
     }
-    let env = Env::new(paths, host, spec_dir)?;
+    let env = Env::new(paths, host, &pinned.spec_dir, pinned.checkout.as_deref())?;
     let scopes: Vec<Scope> = scope.map(|s| vec![s.into()]).unwrap_or(SCOPES.to_vec());
     let mut skipped = Vec::new();
     for scope in scopes {
         if scope == Scope::System && is_live(paths) && !is_root(env.runner.as_ref())? {
-            let flag: &[&str] = if skip_secrets { &["--skip-undecryptable-secrets"] } else { &[] };
-            sudo_system(spec_path, &host.name, paths, &[&["apply", "--local"], flag].concat())?;
+            let mut args = vec!["apply", "--local"];
+            if !wait {
+                args.push("--no-wait");
+            }
+            if skip_secrets {
+                args.push("--skip-undecryptable-secrets");
+            }
+            sudo_system(&pinned.spec_path, &host.name, paths, &args, pinned.checkout.as_deref())?;
             continue;
         }
-        let state = State::load(&state_dir(paths, scope).join("state.json"))?;
+        let dir = state_dir(paths, scope);
+        let held = lock_scope(&dir, wait)?;
+        let state = State::load(&dir.join("state.json"))?;
         let mut desired = engine::unless_unlocked(host.desired(), &env.lock);
         if skip_secrets {
             let left_out;
-            (desired, left_out) = fspec_files::secret::without_undecryptable(paths, scope, spec_dir, &state, desired);
+            (desired, left_out) =
+                fspec_files::secret::without_undecryptable(paths, scope, &pinned.spec_dir, &state, desired);
             for (path, why) in &left_out {
                 eprintln!("warning: skipped secret {path}: {why}");
             }
             skipped.extend(left_out.into_iter().map(|(path, _)| path));
         }
-        let plan = apply_scope(&env.cx(scope, &state), &backends::all(), &desired)?;
+        let plan = apply_held(&env.cx(scope, &state), &backends::all(), &desired, &held)?;
         println!("{plan}");
     }
     if !skipped.is_empty() {
@@ -1661,6 +1702,50 @@ fn apply_local(
         );
     }
     Ok(())
+}
+
+/// The spec a plan or apply reads: the working tree, or a snapshot of one commit of it.
+struct Pinned {
+    spec_path: PathBuf,
+    spec_dir: PathBuf,
+    /// The snapshot's commit, which a remote host gets it under.
+    commit: Option<String>,
+    /// The working tree the snapshot was taken from.
+    checkout: Option<PathBuf>,
+}
+
+impl Pinned {
+    /// The spec at `spec_path` as it is on disk, `checkout` being where it was snapshotted from.
+    fn given(spec_path: &Path, checkout: Option<PathBuf>) -> Result<Pinned> {
+        let spec_dir = spec_path.parent().context("spec has no parent directory")?.to_path_buf();
+        Ok(Pinned { spec_path: spec_path.to_path_buf(), spec_dir, commit: None, checkout })
+    }
+
+    /// The working tree, or with `rev` a snapshot of that commit.
+    fn new(spec_path: &Path, rev: Option<&str>) -> Result<Pinned> {
+        let working = Pinned::given(spec_path, None)?;
+        let Some(rev) = rev else { return Ok(working) };
+        let cache = fspec_remote::snapshots().context("neither XDG_CACHE_HOME nor HOME is set")?;
+        let snap = fspec_remote::snapshot(&LiveRunner, &working.spec_dir, rev, &cache)?;
+        let file = file_name(spec_path)?;
+        let spec_path = snap.dir.join(&file);
+        if !spec_path.is_file() {
+            bail!("{rev} ({}) has no {file}", &snap.commit[..12.min(snap.commit.len())]);
+        }
+        Ok(Pinned { spec_path, spec_dir: snap.dir, commit: Some(snap.commit), checkout: Some(working.spec_dir) })
+    }
+
+    fn remote(&self, dirty: bool, wait: bool) -> Result<Remote<'static>> {
+        Ok(Remote {
+            runner: &LiveRunner,
+            spec_dir: self.spec_dir.clone(),
+            spec_file: file_name(&self.spec_path)?,
+            dirty,
+            loads_cache: None,
+            commit: self.commit.clone(),
+            wait,
+        })
+    }
 }
 
 fn registry_for(flag: Option<&str>, runner: &dyn Runner, spec_dir: &Path) -> Result<String> {
@@ -1687,7 +1772,9 @@ fn adopt(env: &Env, host: &Host, path: &str) -> Result<()> {
             _ => None,
         })
         .with_context(|| format!("host {} declares no file at {path}", host.name))?;
-    let state_path = state_dir(env.paths, scope).join("state.json");
+    let dir = state_dir(env.paths, scope);
+    let _held = lock_scope(&dir, true)?;
+    let state_path = dir.join("state.json");
     let mut state = State::load(&state_path)?;
     let key = Resource::File(file.clone()).key();
     let record = state.entries.get(&key).map(|e| e.record.clone()).unwrap_or_default();
@@ -1720,6 +1807,7 @@ struct Env<'a> {
     paths: &'a Paths,
     facts: Facts,
     spec_dir: &'a Path,
+    checkout: Option<&'a Path>,
     lock: Lock,
     runner: Box<dyn Runner>,
     fetch: LiveFetch,
@@ -1728,11 +1816,12 @@ struct Env<'a> {
 }
 
 impl<'a> Env<'a> {
-    fn new(paths: &'a Paths, host: &Host, spec_dir: &'a Path) -> Result<Env<'a>> {
+    fn new(paths: &'a Paths, host: &Host, spec_dir: &'a Path, checkout: Option<&'a Path>) -> Result<Env<'a>> {
         Ok(Env {
             paths,
             facts: Facts::declared(&host.name, &host.platform, host.system.as_ref())?,
             spec_dir,
+            checkout,
             lock: Lock::load(&spec_dir.join("fspec.lock"))?,
             runner: if is_live(paths) {
                 Box::new(LiveRunner)
@@ -1758,6 +1847,7 @@ impl<'a> Env<'a> {
             protect: &self.protect,
             builders: &self.builders,
             build_cache: None,
+            checkout: self.checkout,
         }
     }
 }
@@ -1814,7 +1904,7 @@ fn is_root(runner: &dyn Runner) -> Result<bool> {
 /// The system scope needs root and the user scope must not run as root, so a non-root apply,
 /// plan or rollback hands the system scope to `sudo fspec <command> --scope system`. What it
 /// prints is returned for `plan --json` and passed through otherwise.
-fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str]) -> Result<Vec<u8>> {
+fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str], checkout: Option<&Path>) -> Result<Vec<u8>> {
     let exe = std::env::current_exe()?;
     let mut sudo = std::process::Command::new("sudo");
     // A builder is reached with the user's ssh agent (fspec-build's `ssh`), which a remote apply
@@ -1829,6 +1919,9 @@ fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str]) -> Resu
         .arg(&paths.home)
         .args(command)
         .args(["--scope", "system", "--host", host]);
+    if let Some(checkout) = checkout {
+        sudo.arg("--checkout").arg(checkout);
+    }
     let capture = command.contains(&"--json");
     if capture {
         sudo.stdout(std::process::Stdio::piped());

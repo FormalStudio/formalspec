@@ -44,13 +44,18 @@ pub fn load_rel(repo: &str, rev: &str, path: &str) -> PathBuf {
     Path::new(repo).join(rev).join(path)
 }
 
-/// `$XDG_CACHE_HOME/fspec/loads`, else `~/.cache/fspec/loads`.
-pub fn loads_cache() -> Option<PathBuf> {
+/// `$XDG_CACHE_HOME/fspec`, else `~/.cache/fspec`.
+pub fn cache_dir() -> Option<PathBuf> {
     let base = std::env::var_os("XDG_CACHE_HOME")
         .filter(|v| !v.is_empty())
         .map(PathBuf::from)
         .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".cache")))?;
-    Some(base.join("fspec/loads"))
+    Some(base.join("fspec"))
+}
+
+/// `$XDG_CACHE_HOME/fspec/loads`, else `~/.cache/fspec/loads`.
+pub fn loads_cache() -> Option<PathBuf> {
+    Some(cache_dir()?.join("loads"))
 }
 
 impl LockedLoad {
@@ -148,9 +153,49 @@ impl Lock {
     }
 
     pub fn save(&self, path: &Path) -> Result<()> {
-        let tmp = path.with_extension("lock.tmp");
-        fs::write(&tmp, toml::to_string(self)?).with_context(|| format!("writing {}", tmp.display()))?;
-        fs::rename(&tmp, path).with_context(|| format!("renaming {} into place", tmp.display()))
+        crate::flock::write_atomic(path, toml::to_string(self)?.as_bytes())
+    }
+
+    /// Save what this run changed from `base`, the lock it read, onto the lock as it is on disk
+    /// now. Two `fspec update`s of different packages at once then both land: each re-reads the
+    /// file under a lock and moves only its own entries.
+    pub fn save_over(&self, base: &Lock, path: &Path) -> Result<()> {
+        let name = std::path::absolute(path)?.display().to_string();
+        let guard = cache_dir().unwrap_or_else(std::env::temp_dir).join("locks").join(format!("{}.lock", hash8(&name)));
+        let _held = crate::flock::acquire(&guard, &format!("write of {}", path.display()), true)?;
+        let mut disk = Lock::load(path)?;
+        disk.take_changes(base, self);
+        disk.save(path)
+    }
+
+    /// Apply every entry that differs between `base` and `new` to `self`: replaced or added
+    /// where `new` has it, removed where it does not.
+    fn take_changes(&mut self, base: &Lock, new: &Lock) {
+        let pkg_key = |p: &LockedPkg| (p.name.clone(), p.source.clone());
+        for key in base.pkg.iter().chain(&new.pkg).map(pkg_key).collect::<std::collections::BTreeSet<_>>() {
+            let find = |l: &Lock| l.pkg(&key.0, &key.1).cloned();
+            match (find(base), find(new)) {
+                (was, now) if was == now => {}
+                (_, Some(now)) => self.upsert(now),
+                (_, None) => self.pkg.retain(|p| pkg_key(p) != key),
+            }
+        }
+        let native_key = |n: &LockedNative| (n.kind.clone(), n.name.clone());
+        for key in base.native.iter().chain(&new.native).map(native_key).collect::<std::collections::BTreeSet<_>>() {
+            let find = |l: &Lock| l.native(&key.0, &key.1).cloned();
+            match (find(base), find(new)) {
+                (was, now) if was == now => {}
+                (_, Some(now)) => match self.native.iter_mut().find(|n| native_key(n) == key) {
+                    Some(slot) => *slot = now,
+                    None => self.native.push(now),
+                },
+                (_, None) => self.native.retain(|n| native_key(n) != key),
+            }
+        }
+        take_map(&mut self.system, &base.system, &new.system);
+        take_map(&mut self.zypper, &base.zypper, &new.zypper);
+        take_map(&mut self.image, &base.image, &new.image);
+        take_map(&mut self.loads, &base.loads, &new.loads);
     }
 
     pub fn native(&self, kind: &str, name: &str) -> Option<&LockedNative> {
@@ -174,6 +219,29 @@ impl Lock {
         self.pkg.push(locked);
         self.pkg.sort_by(|a, b| (&a.name, &a.source).cmp(&(&b.name, &b.source)));
     }
+}
+
+fn take_map<V: Clone + PartialEq>(
+    into: &mut BTreeMap<String, V>,
+    base: &BTreeMap<String, V>,
+    new: &BTreeMap<String, V>,
+) {
+    for key in base.keys().chain(new.keys()).cloned().collect::<std::collections::BTreeSet<_>>() {
+        match (base.get(&key), new.get(&key)) {
+            (was, now) if was == now => {}
+            (_, Some(now)) => {
+                into.insert(key, now.clone());
+            }
+            (_, None) => {
+                into.remove(&key);
+            }
+        }
+    }
+}
+
+fn hash8(s: &str) -> String {
+    use sha2::{Digest, Sha256};
+    Sha256::digest(s.as_bytes()).iter().take(4).map(|b| format!("{b:02x}")).collect()
 }
 
 #[cfg(test)]
@@ -233,5 +301,40 @@ snapshot = "20261020"
         assert_eq!(lock.pkg.len(), 2);
         assert_eq!(lock.pkg("herdr", "brew:herdr").unwrap().version.as_deref(), Some("0.4.2"));
         assert_eq!(lock.pkg("herdr", "github:ogulcancelik/herdr").unwrap().version.as_deref(), Some("0.4.0"));
+    }
+
+    #[test]
+    fn two_updates_of_different_packages_both_land() {
+        let entry = |name: &str, version: &str| LockedPkg {
+            name: name.into(),
+            source: format!("brew:{name}"),
+            version: Some(version.into()),
+            rev: None,
+            patches: None,
+            parts: Default::default(),
+            artifacts: BTreeMap::new(),
+        };
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("fspec.lock");
+        let mut base = Lock::default();
+        base.upsert(entry("a", "1"));
+        base.upsert(entry("b", "1"));
+        base.upsert(entry("gone", "1"));
+        base.save(&path).unwrap();
+
+        let mut first = base.clone();
+        first.upsert(entry("a", "2"));
+        first.pkg.retain(|p| p.name != "gone");
+        let mut second = base.clone();
+        second.upsert(entry("b", "2"));
+        second.zypper.insert("e1504g".into(), LockedZypper { snapshot: "20261028".into() });
+        first.save_over(&base, &path).unwrap();
+        second.save_over(&base, &path).unwrap();
+
+        let disk = Lock::load(&path).unwrap();
+        let versions: Vec<_> =
+            disk.pkg.iter().map(|p| format!("{}={}", p.name, p.version.as_deref().unwrap())).collect();
+        assert_eq!(versions, ["a=2", "b=2"]);
+        assert_eq!(disk.zypper["e1504g"].snapshot, "20261028");
     }
 }

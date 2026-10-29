@@ -43,7 +43,15 @@ fn with_untracked(status: &str, untracked: &str) -> (tempfile::TempDir, Recordin
 }
 
 fn remote<'a>(dir: &Path, runner: &'a RecordingRunner, dirty: bool) -> Remote<'a> {
-    Remote { runner, spec_dir: dir.to_path_buf(), spec_file: "spec.star".into(), dirty, loads_cache: None }
+    Remote {
+        runner,
+        spec_dir: dir.to_path_buf(),
+        spec_file: "spec.star".into(),
+        dirty,
+        loads_cache: None,
+        commit: None,
+        wait: true,
+    }
 }
 
 fn apply_lines(dir: &Path, runner: &RecordingRunner) -> Vec<String> {
@@ -112,7 +120,54 @@ fn dirty_tree_is_refused_unless_allowed() {
 
     remote(dir.path(), &runner, true).apply(&h, "g815", None).unwrap();
     let lines = runner.lines();
-    assert!(lines.iter().any(|l| l.contains("-name 'abc123-dirty*' -exec rm -rf")));
+    assert!(lines.iter().any(|l| l.contains("-name 'abc123-dirty*' -mmin +60 -exec rm -rf")));
+}
+
+#[test]
+fn a_snapshot_ships_whole_under_its_commit_without_asking_git() {
+    let (dir, runner) = fixture(" M spec.star\n");
+    runner.respond(PROBE, ok(&probe_json("x86_64-linux", "bazzite")));
+    let h = host("g815", "x86_64-linux", "bazzite");
+    let r = Remote { commit: Some("def456".into()), ..remote(dir.path(), &runner, false) };
+    r.apply(&h, "g815", None).unwrap();
+
+    let lines = runner.lines();
+    assert!(!lines.iter().any(|l| l.starts_with("git")), "{lines:?}");
+    let dest = "\"$HOME/.cache/fspec/spec/def456\"";
+    assert_eq!(lines[2], format!("{PROBE} 'mkdir -p {dest} && tar -xf - -C {dest}'"));
+    let calls = runner.calls.lock().unwrap();
+    assert_eq!(calls.iter().find(|c| c.program == "tar").unwrap().stdin.as_deref(), Some("."));
+}
+
+#[test]
+fn a_snapshot_resolves_the_rev_then_unpacks_its_archive_once() {
+    let (dir, runner) = (tempfile::tempdir().unwrap(), RecordingRunner::default());
+    let git = format!("git -C {}", dir.path().display());
+    runner.respond(&format!("{git} rev-parse --verify --quiet HEAD^{{commit}}"), ok("def456\n"));
+    let cache = tempfile::tempdir().unwrap();
+    let snap = fspec_remote::snapshot(&runner, dir.path(), "HEAD", cache.path()).unwrap();
+    assert_eq!(snap.commit, "def456");
+    assert_eq!(snap.dir, cache.path().join("def456"));
+    assert!(snap.dir.is_dir());
+    let lines = runner.lines();
+    assert!(lines[1].starts_with(&format!("{git} archive --format=tar -o ")) && lines[1].ends_with(" def456"));
+    assert!(lines[2].starts_with("tar -xf "), "{lines:?}");
+
+    fspec_remote::snapshot(&runner, dir.path(), "HEAD", cache.path()).unwrap();
+    assert_eq!(runner.lines().len(), 4, "a second snapshot of the commit only resolves the rev");
+}
+
+#[test]
+fn a_rev_that_names_no_commit_fails_with_git_s_reason() {
+    let (dir, runner) = (tempfile::tempdir().unwrap(), RecordingRunner::default());
+    let git = format!("git -C {}", dir.path().display());
+    runner.respond(
+        &format!("{git} rev-parse --verify"),
+        Output { status: 1, stdout: String::new(), stderr: "fatal: bad revision".into() },
+    );
+    let cache = tempfile::tempdir().unwrap();
+    let err = fspec_remote::snapshot(&runner, dir.path(), "nope", cache.path()).unwrap_err().to_string();
+    assert!(err.starts_with("nope is not a commit of the repo holding") && err.contains("bad revision"), "{err}");
 }
 
 #[test]
@@ -328,6 +383,8 @@ fn an_older_remote_gets_the_locked_engine_before_the_spec() {
         spec_file: "spec.star".into(),
         dirty: false,
         loads_cache: None,
+        commit: None,
+        wait: true,
     };
     r.plan(&h, "g815").unwrap();
 
@@ -364,6 +421,8 @@ fn a_remote_with_no_fspec_gets_the_locked_engine_for_its_declared_platform() {
         spec_file: "spec.star".into(),
         dirty: false,
         loads_cache: None,
+        commit: None,
+        wait: true,
     };
     r.plan(&h, "g815").unwrap();
 
@@ -405,6 +464,8 @@ fn an_older_remote_builds_the_locked_engine_when_ci_has_not() {
         spec_file: "spec.star".into(),
         dirty: false,
         loads_cache: None,
+        commit: None,
+        wait: true,
     };
     r.plan(&h, "g815").unwrap();
 
@@ -444,6 +505,8 @@ fn a_host_with_builders_has_them_build_the_locked_engine() {
         spec_file: "spec.star".into(),
         dirty: false,
         loads_cache: None,
+        commit: None,
+        wait: true,
     };
     r.plan(&h, "g815").unwrap();
 

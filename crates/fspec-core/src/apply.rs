@@ -12,6 +12,7 @@ use serde_json::{Map, Value};
 use crate::attribute;
 use crate::facts::Facts;
 use crate::fetch::Fetch;
+use crate::flock::{self, Held};
 use crate::journal::{Journal, remove_any};
 use crate::lock::Lock;
 use crate::par;
@@ -40,6 +41,9 @@ pub struct Cx<'a> {
     pub builders: &'a [crate::resource::Builder],
     /// Where git packages build; `None` is the user's cache (`fspec_build::cache_root`).
     pub build_cache: Option<&'a Path>,
+    /// The spec's working tree when `spec_dir` is a snapshot of one commit (`apply --rev`).
+    /// A `mode = "link"` file points into it, since a link is there to follow edits.
+    pub checkout: Option<&'a Path>,
 }
 
 impl Cx<'_> {
@@ -381,62 +385,33 @@ fn backend_for<'b>(cx: &Cx, backends: &[&'b dyn Backend], r: &Resource) -> Resul
     }
 }
 
-/// `<dir>/apply.lock`, held until dropped.
-#[derive(Debug)]
-struct ScopeLock(fs::File);
-
-impl Drop for ScopeLock {
-    /// Closing is not enough: a child spawned on another thread holds a copy of every fd until its
-    /// exec closes the CLOEXEC ones, and the flock lives until the last copy goes.
-    fn drop(&mut self) {
-        let _ = self.0.unlock();
-    }
+/// Hold `<dir>/apply.lock` for the life of the returned guard: one apply per scope at a time.
+/// Another apply holding it makes this one wait, or fail at once when `wait` is false.
+pub fn lock_scope(dir: &Path, wait: bool) -> Result<Held> {
+    let what = format!("apply of {}", dir.display());
+    flock::acquire(&dir.join("apply.lock"), &what, wait)
 }
 
-/// Hold `<dir>/apply.lock` for the life of the returned guard, refusing when another apply has it.
-/// The holder writes its pid there so the refusal can name it.
-fn lock_scope(dir: &Path) -> Result<ScopeLock> {
-    use std::io::{Read, Seek, Write};
-    fs::create_dir_all(dir).with_context(|| format!("creating {}", dir.display()))?;
-    let path = dir.join("apply.lock");
-    let mut file = fs::OpenOptions::new()
-        .read(true)
-        .write(true)
-        .create(true)
-        .truncate(false)
-        .open(&path)
-        .with_context(|| format!("opening {}", path.display()))?;
-    if let Err(e) = file.try_lock() {
-        let mut pid = String::new();
-        let _ = file.read_to_string(&mut pid);
-        return match e {
-            fs::TryLockError::WouldBlock => {
-                bail!("another apply (pid {}) is running here; wait for it or stop it", pid.trim())
-            }
-            fs::TryLockError::Error(e) => Err(e).with_context(|| format!("locking {}", path.display())),
-        };
-    }
-    file.set_len(0)?;
-    file.rewind()?;
-    write!(file, "{}", std::process::id())?;
-    Ok(ScopeLock(file))
-}
-
-/// Converge one scope. Recovers an interrupted apply first. On failure the journal is replayed
-/// and the state file is left as it was.
+/// Converge one scope, waiting for another apply of it to finish first. Recovers an interrupted
+/// apply first. On failure the journal is replayed and the state file is left as it was.
 pub fn apply_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired]) -> Result<Plan> {
-    let dir = cx.state_dir();
-    let state_path = dir.join("state.json");
     // Taken before recovery: a second apply would otherwise replay the first one's live journal
     // and share its staging directory.
-    let _lock = lock_scope(&dir)?;
+    let held = lock_scope(&cx.state_dir(), true)?;
+    apply_held(cx, backends, desired, &held)
+}
+
+/// [`apply_scope`] under a [`lock_scope`] the caller already holds. The generation is the locked
+/// state's next one, whatever `cx` was built with: an apply that waited sees the generation the
+/// one before it wrote.
+pub fn apply_held(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], _held: &Held) -> Result<Plan> {
+    let dir = cx.state_dir();
+    let state_path = dir.join("state.json");
     Journal::recover(&dir, cx.runner)?;
     let mut state = State::load(&state_path)?;
+    let cx = &Cx { generation: state.generation + 1, ..*cx };
     if cx.scope == Scope::User && attribute::refresh(cx, &mut state, desired)? {
         state.save(&state_path)?;
-    }
-    if cx.generation != state.generation + 1 {
-        bail!("apply for generation {} but the state is at {}", cx.generation, state.generation);
     }
     let p = plan_scope(cx, backends, desired, &state)?;
     if !p.unsupported.is_empty() {

@@ -97,6 +97,10 @@ The checkout, the build directory and `FSPEC_CACHE` stay in `~/.cache/fspec/buil
 between revs, so a rev bump builds incrementally. Point your script's toolchains, downloads and
 target directories at `$FSPEC_CACHE` and it gets the same.
 
+Two builds of one package at once on the same machine or builder take turns: the second waits for
+the first, and when the first built the same commit, patches and recipe, it takes that archive
+instead of building again.
+
 ```starlark
 pkg("fetch", source = git("https://github.com/example/fetch", rev = "7b19d22c2d8e4b7b2295cc625c9fdf87adcabbcd"),
     build = ["sh", "-c", "cd $FSPEC_SRC && zig build -Doptimize=ReleaseSafe --prefix $FSPEC_OUT"]),

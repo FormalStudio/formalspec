@@ -94,6 +94,7 @@ impl World {
             protect: &[],
             builders: &[],
             build_cache: Some(&self.build_cache),
+            checkout: None,
         }
     }
 
