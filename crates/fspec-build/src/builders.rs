@@ -55,7 +55,7 @@ fn ssh(route: &str) -> Cmd {
     // error instead of a hang.
     let opts = ["-o", "ConnectTimeout=5", "-o", "BatchMode=yes", "-o", "ServerAliveInterval=15"];
     let cmd = match std::env::var("SUDO_USER").ok().filter(|_| is_root()) {
-        Some(user) => Cmd::new("sudo").args(["-u", &user, "-H", "ssh"]),
+        Some(user) => Cmd::new("sudo").args(["-u", &user, "-H", "--preserve-env=SSH_AUTH_SOCK", "ssh"]),
         None => Cmd::new("ssh"),
     };
     cmd.args(opts).arg(route)

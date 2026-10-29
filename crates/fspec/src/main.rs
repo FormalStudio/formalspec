@@ -1784,6 +1784,11 @@ fn is_root(runner: &dyn Runner) -> Result<bool> {
 fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str]) -> Result<Vec<u8>> {
     let exe = std::env::current_exe()?;
     let mut sudo = std::process::Command::new("sudo");
+    // A builder is reached with the user's ssh agent (fspec-build's `ssh`), which a remote apply
+    // forwards and sudo would drop.
+    if std::env::var_os("SSH_AUTH_SOCK").is_some() {
+        sudo.arg("--preserve-env=SSH_AUTH_SOCK");
+    }
     sudo.arg(exe)
         .arg("--spec")
         .arg(spec)
