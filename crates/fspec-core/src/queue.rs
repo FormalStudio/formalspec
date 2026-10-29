@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::flock;
+use crate::{activity, flock};
 
 /// What one apply was asked to converge.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -50,7 +50,15 @@ pub fn run(
     apply: impl FnOnce(bool) -> Result<()>,
 ) -> Result<Outcome> {
     let queued = now();
-    let held = flock::acquire(&dir.join(format!("{host}.lock")), &format!("apply of host {host}"), wait)?;
+    let (path, what) = (dir.join(format!("{host}.lock")), format!("apply of host {host}"));
+    let held = match flock::acquire(&path, &what, false) {
+        Ok(held) => held,
+        Err(_) if wait => {
+            activity::phase(activity::Phase::Queued, None);
+            flock::acquire(&path, &what, true)?
+        }
+        Err(e) => return Err(e),
+    };
     let record = dir.join(format!("{host}.json"));
     if held.waited
         && let Some(last) = std::fs::read(&record).ok().and_then(|b| serde_json::from_slice::<Run>(&b).ok())

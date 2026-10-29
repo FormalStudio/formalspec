@@ -117,6 +117,7 @@ kept. `--older-than 0s` keeps only what the current generation needs.
 | --- | --- |
 | `fspec adopt <path> [--host <h>]` | Copies an app's edit of a managed file back into the spec repository. `<path>` is the path as the spec writes it (`~/.config/x`) or on disk |
 | `fspec watch` | Reports drift on managed files as it happens |
+| `fspec activity [--json] [--once]` | Prints what each running apply, update and rollback is doing, and follows them and any that start. `--json` passes the stream's lines through (the protocol is `docs/activity.md` in the repository); `--once` prints where each is and exits |
 | `fspec orphans [--host <h>]` | Lists app data under `~/.config`, `~/.local/share`, `~/.local/state` and `~/.cache` that no package claims |
 | `fspec orphans --claim <path> <pkg>` | Records `<path>` as `<pkg>`'s data, so removing the package trashes it |
 | `fspec orphans --delete <path>` | Moves `<path>` to the trash |

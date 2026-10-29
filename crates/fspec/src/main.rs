@@ -1,3 +1,4 @@
+mod activity;
 mod backends;
 mod dev;
 mod secret;
@@ -8,6 +9,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
+use fspec_core::activity::{Kind, Operation, Phase};
 use fspec_core::apply::{apply_held, apply_scope, desired_from_generation, lock_scope, plan_scope, state_dir};
 use fspec_core::engine;
 use fspec_core::facts::{Facts, local_hostname};
@@ -34,6 +36,10 @@ struct Cli {
     /// sudo end of the system scope.
     #[arg(long, global = true, hide = true)]
     checkout: Option<PathBuf>,
+    /// The parent's operation socket, on the sudo end of the system scope: its progress is sent
+    /// there instead of published.
+    #[arg(long, global = true, hide = true)]
+    activity_relay: Option<PathBuf>,
     #[command(subcommand)]
     command: Command,
 }
@@ -326,6 +332,16 @@ enum Command {
         #[arg(last = true)]
         args: Vec<String>,
     },
+    /// Print what the applies, updates and rollbacks running now are doing, and keep following
+    /// them and any that start (see docs/activity.md).
+    Activity {
+        /// Print the stream's JSON lines as they arrive.
+        #[arg(long)]
+        json: bool,
+        /// Print where each running operation is, then exit.
+        #[arg(long)]
+        once: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -475,6 +491,9 @@ const SCOPES: [Scope; 2] = [Scope::System, Scope::User];
 
 fn main() -> Result<()> {
     let cli = Cli::parse();
+    if let Some(relay) = &cli.activity_relay {
+        fspec_core::activity::relay(relay);
+    }
     let paths = paths(&cli)?;
     let for_project = matches!(cli.command, Command::Plan { .. } | Command::Update { .. });
     let env = std::env::var_os("FSPEC_SPEC").map(PathBuf::from);
@@ -534,60 +553,8 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Update { pkgs, images, cache, registry } => {
-            let lock_path = spec_dir.join("fspec.lock");
-            let old = Lock::load(&lock_path)?;
-            let (fetch, runner) = (LiveFetch::new(), LiveRunner);
-            // Updating named packages keeps every gh: load at its locked commit.
-            let keep = !pkgs.is_empty() || *images || *cache;
-            let spec = fspec_eval::evaluate_resolving(&spec_path, &runner, &fetch, &old.loads, keep)?;
-            if *cache {
-                let registry = fspec_build::cache::registry(&runner, &spec_dir, registry.as_deref())?;
-                let mut lock = old.clone();
-                let (lines, failed) = fspec_build::cache::record(&mut lock, &spec.hosts, &registry, &runner)?;
-                lines.iter().for_each(|l| println!("cached {l}"));
-                if lock != old {
-                    lock.save_over(&old, &lock_path)?;
-                }
-                if !failed.is_empty() {
-                    bail!("{} problem(s):\n{}", failed.len(), failed.join("\n"));
-                }
-                return Ok(());
-            }
-            if *images {
-                let registry = registry_for(registry.as_deref(), &runner, &spec_dir)?;
-                let u = fspec_image::update_images(&spec.hosts, &old, &registry, &fetch)?;
-                if u.lock != old {
-                    u.lock.save_over(&old, &lock_path)?;
-                }
-                for line in &u.changes {
-                    println!("{line}");
-                }
-                if !u.errors.is_empty() {
-                    bail!("{} image(s) failed:\n{}", u.errors.len(), u.errors.join("\n"));
-                }
-                return Ok(());
-            }
-            let sources = fspec_sources::Cx::new(&fetch, &runner).with_spec_dir(&spec_dir);
-            let mut result = fspec_sources::update::update(&spec.hosts, &old, pkgs, &sources)?;
-            let errors = std::mem::take(&mut result.errors);
-            for line in &result.changes {
-                println!("{line}");
-            }
-            for (key, load) in &spec.loads {
-                match old.loads.get(key) {
-                    Some(was) if was.rev == load.rev => {}
-                    Some(was) => println!("{key} {} -> {}", &was.rev[..12], &load.rev[..12]),
-                    None => println!("+ {key} {}", &load.rev[..12]),
-                }
-            }
-            result.lock.loads = spec.loads.clone();
-            if result.lock != old {
-                result.lock.save_over(&old, &lock_path)?;
-            }
-            if !errors.is_empty() {
-                bail!("{} problem(s):\n{}", errors.len(), errors.join("\n"));
-            }
-            Ok(())
+            let op = Operation::new(Kind::Update, &spec_dir.display().to_string(), "Updating fspec.lock", None);
+            fspec_core::activity::run(op, || update(&spec_path, &spec_dir, pkgs, *images, *cache, registry.as_deref()))
         }
         Command::Build { job: Some(job), platform, out, .. } => {
             let file: fspec_build::builders::JobFile =
@@ -713,50 +680,65 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Apply { host, all, dirty, rev, no_wait, local, scope, skip_undecryptable_secrets } => {
-            let (wait, skip) = (!*no_wait, *skip_undecryptable_secrets);
-            let spec = fspec_eval::evaluate(&spec_path)?;
-            if *local {
-                let pinned = Pinned::given(&spec_path, cli.checkout.clone())?;
-                return apply_local(&paths, &pinned, named(&spec, host.as_deref())?, *scope, wait, skip);
-            }
-            let this = local_hostname();
-            let queue = paths.user_state_dir().join("queue");
-            let request = fspec_core::queue::Request {
-                spec_dir: spec_dir.clone(),
-                rev: rev.clone(),
-                scope: scope.map(|s| scope_name(s).to_string()),
+            let subject = match all {
+                true => "all".to_string(),
+                false => host.clone().unwrap_or_else(local_hostname),
             };
-            // The spec is read again at the front of the queue: what was read before waiting may
-            // be older than what the apply ahead of this one converged.
-            let apply_one = |h: &Host| -> Result<()> {
-                fspec_core::queue::run(&queue, &h.name, &request, wait, |waited| {
-                    let pinned = Pinned::new(&spec_path, rev.as_deref())?;
-                    let fresh;
-                    let spec = match waited || rev.is_some() {
-                        true => {
-                            fresh = fspec_eval::evaluate(&pinned.spec_path)?;
-                            &fresh
-                        }
-                        false => &spec,
-                    };
-                    let h = spec.host(&h.name)?;
-                    match remote_alias(h, &this, &paths, false) {
-                        Some(_) if skip => {
-                            bail!("--skip-undecryptable-secrets applies this machine only, not {}", h.name)
-                        }
-                        Some(alias) => pinned.remote(*dirty, wait)?.apply(h, &alias, scope.map(scope_name)),
-                        None => apply_local(&paths, &pinned, h, *scope, wait, skip),
-                    }
-                })
-                .map(drop)
+            let op = match all {
+                true => Operation::new(Kind::Apply, &subject, "Applying every host", None),
+                false => Operation::new(Kind::Apply, &subject, format!("Applying {subject}"), Some(&subject)),
             };
-            if *all {
-                if !is_live(&paths) {
-                    bail!("--all applies real machines; it cannot run under --root");
+            fspec_core::activity::run(op, || {
+                let (wait, skip) = (!*no_wait, *skip_undecryptable_secrets);
+                let spec = fspec_eval::evaluate(&spec_path)?;
+                if *local {
+                    let pinned = Pinned::given(&spec_path, cli.checkout.clone())?;
+                    return apply_local(&paths, &pinned, named(&spec, host.as_deref())?, *scope, wait, skip);
                 }
-                return fspec_remote::apply_all(&spec.hosts, &this, apply_one);
-            }
-            apply_one(named(&spec, host.as_deref())?)
+                let this = local_hostname();
+                let queue = paths.user_state_dir().join("queue");
+                let request = fspec_core::queue::Request {
+                    spec_dir: spec_dir.clone(),
+                    rev: rev.clone(),
+                    scope: scope.map(|s| scope_name(s).to_string()),
+                };
+                // The spec is read again at the front of the queue: what was read before waiting may
+                // be older than what the apply ahead of this one converged.
+                let apply_one = |h: &Host| -> Result<()> {
+                    fspec_core::queue::run(&queue, &h.name, &request, wait, |waited| {
+                        fspec_core::activity::phase(Phase::Evaluating, None);
+                        let pinned = Pinned::new(&spec_path, rev.as_deref())?;
+                        let fresh;
+                        let spec = match waited || rev.is_some() {
+                            true => {
+                                fresh = fspec_eval::evaluate(&pinned.spec_path)?;
+                                &fresh
+                            }
+                            false => &spec,
+                        };
+                        let h = spec.host(&h.name)?;
+                        match remote_alias(h, &this, &paths, false) {
+                            Some(_) if skip => {
+                                bail!("--skip-undecryptable-secrets applies this machine only, not {}", h.name)
+                            }
+                            Some(alias) => {
+                                fspec_core::activity::phase(Phase::Remote, None);
+                                fspec_core::activity::step(|s| s.item = Some(format!("{} over ssh", h.name)));
+                                pinned.remote(*dirty, wait)?.apply(h, &alias, scope.map(scope_name))
+                            }
+                            None => apply_local(&paths, &pinned, h, *scope, wait, skip),
+                        }
+                    })
+                    .map(drop)
+                };
+                if *all {
+                    if !is_live(&paths) {
+                        bail!("--all applies real machines; it cannot run under --root");
+                    }
+                    return fspec_remote::apply_all(&spec.hosts, &this, apply_one);
+                }
+                apply_one(named(&spec, host.as_deref())?)
+            })
         }
         Command::Adopt { path, host } => {
             let spec = fspec_eval::evaluate(&spec_path)?;
@@ -769,36 +751,41 @@ fn main() -> Result<()> {
             fspec_files::watch::run(&paths, &mut |line| println!("{line}"), &stop)
         }
         Command::Rollback { generation, host, scope } => {
-            let spec = fspec_eval::evaluate(&spec_path)?;
-            let host = select(&spec, host.as_deref(), &paths)?;
-            let mut env = Env::new(&paths, host, &spec_dir, None)?;
-            let scopes: Vec<Scope> = scope.map(|s| vec![s.into()]).unwrap_or(SCOPES.to_vec());
-            for scope in scopes {
-                let dir = state_dir(&paths, scope);
-                let state = State::load(&dir.join("state.json"))?;
-                let n = match generation {
-                    Some(n) if *n > state.generation => continue,
-                    Some(n) => *n,
-                    None if state.generation == 0 => continue,
-                    None => state.generation - 1,
-                };
-                if scope == Scope::System && is_live(&paths) && !is_root(env.runner.as_ref())? {
-                    sudo_system(&spec_path, &host.name, &paths, &["rollback", &n.to_string()], None)?;
-                    continue;
+            let subject = host.clone().unwrap_or_else(local_hostname);
+            let op = Operation::new(Kind::Rollback, &subject, format!("Rolling back {subject}"), Some(&subject));
+            fspec_core::activity::run(op, || {
+                let spec = fspec_eval::evaluate(&spec_path)?;
+                let host = select(&spec, host.as_deref(), &paths)?;
+                let mut env = Env::new(&paths, host, &spec_dir, None)?;
+                let scopes: Vec<Scope> = scope.map(|s| vec![s.into()]).unwrap_or(SCOPES.to_vec());
+                for scope in scopes {
+                    let dir = state_dir(&paths, scope);
+                    let state = State::load(&dir.join("state.json"))?;
+                    let n = match generation {
+                        Some(n) if *n > state.generation => continue,
+                        Some(n) => *n,
+                        None if state.generation == 0 => continue,
+                        None => state.generation - 1,
+                    };
+                    if scope == Scope::System && is_live(&paths) && !is_root(env.runner.as_ref())? {
+                        sudo_system(&spec_path, &host.name, &paths, &["rollback", &n.to_string()], None)?;
+                        continue;
+                    }
+                    let desired = desired_from_generation(&dir, n)?;
+                    let past = if n == 0 {
+                        State::default()
+                    } else {
+                        State::load(&dir.join("generations").join(format!("{n}.json")))?
+                    };
+                    // The generation records its packages; the rest of the lock, such as the
+                    // Tumbleweed snapshot and the image digests, stays as the lock has it.
+                    env.lock.pkg = fspec_store::lock_from_state(&past).pkg;
+                    let plan = apply_scope(&env.cx(scope, &state), &backends::all(), &desired)?;
+                    fspec_core::activity::changed(plan.changes.len() as u64);
+                    println!("{plan}");
                 }
-                let desired = desired_from_generation(&dir, n)?;
-                let past = if n == 0 {
-                    State::default()
-                } else {
-                    State::load(&dir.join("generations").join(format!("{n}.json")))?
-                };
-                // The generation records its packages; the rest of the lock, such as the
-                // Tumbleweed snapshot and the image digests, stays as the lock has it.
-                env.lock.pkg = fspec_store::lock_from_state(&past).pkg;
-                let plan = apply_scope(&env.cx(scope, &state), &backends::all(), &desired)?;
-                println!("{plan}");
-            }
-            Ok(())
+                Ok(())
+            })
         }
         Command::Switch {
             distro,
@@ -927,6 +914,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Dev { dir, cmd, args } => dev::run(&paths, dir.as_deref(), cmd.as_ref(), args),
+        Command::Activity { json, once } => activity::print(&fspec_core::activity::dir(), *json, *once),
         Command::Vm { cmd } => vm::run(&fspec_eval::evaluate(&spec_path)?, cmd),
         Command::Try { target, host, keep, cpus, memory, disk, headless, print, list, delete } => {
             try_vm::run(&try_vm::Args {
@@ -957,6 +945,80 @@ struct Switch<'a> {
 }
 
 /// Commands run for real only on a live root; under `--root` they are logged.
+/// `fspec update`: resolve the spec's packages, images or CI digests into its lock.
+fn update(
+    spec_path: &Path,
+    spec_dir: &Path,
+    pkgs: &[String],
+    images: bool,
+    cache: bool,
+    registry: Option<&str>,
+) -> Result<()> {
+    let lock_path = spec_dir.join("fspec.lock");
+    let old = Lock::load(&lock_path)?;
+    let (fetch, runner) = (LiveFetch::new(), LiveRunner);
+    // Updating named packages keeps every gh: load at its locked commit.
+    let keep = !pkgs.is_empty() || images || cache;
+    let spec = fspec_eval::evaluate_resolving(spec_path, &runner, &fetch, &old.loads, keep)?;
+    if cache {
+        let registry = fspec_build::cache::registry(&runner, spec_dir, registry)?;
+        let mut lock = old.clone();
+        let (lines, failed) = fspec_build::cache::record(&mut lock, &spec.hosts, &registry, &runner)?;
+        lines.iter().for_each(|l| println!("cached {l}"));
+        fspec_core::activity::changed(lines.len() as u64);
+        if lock != old {
+            fspec_core::activity::phase(Phase::Writing, None);
+            lock.save_over(&old, &lock_path)?;
+        }
+        if !failed.is_empty() {
+            bail!("{} problem(s):\n{}", failed.len(), failed.join("\n"));
+        }
+        return Ok(());
+    }
+    if images {
+        let registry = registry_for(registry, &runner, spec_dir)?;
+        fspec_core::activity::phase(Phase::Resolving, None);
+        let u = fspec_image::update_images(&spec.hosts, &old, &registry, &fetch)?;
+        fspec_core::activity::changed(u.changes.len() as u64);
+        if u.lock != old {
+            fspec_core::activity::phase(Phase::Writing, None);
+            u.lock.save_over(&old, &lock_path)?;
+        }
+        for line in &u.changes {
+            println!("{line}");
+        }
+        if !u.errors.is_empty() {
+            bail!("{} image(s) failed:\n{}", u.errors.len(), u.errors.join("\n"));
+        }
+        return Ok(());
+    }
+    let sources = fspec_sources::Cx::new(&fetch, &runner).with_spec_dir(spec_dir);
+    let mut result = fspec_sources::update::update(&spec.hosts, &old, pkgs, &sources)?;
+    let errors = std::mem::take(&mut result.errors);
+    for line in &result.changes {
+        println!("{line}");
+    }
+    let mut changed = result.changes.len() as u64;
+    for (key, load) in &spec.loads {
+        match old.loads.get(key) {
+            Some(was) if was.rev == load.rev => continue,
+            Some(was) => println!("{key} {} -> {}", &was.rev[..12], &load.rev[..12]),
+            None => println!("+ {key} {}", &load.rev[..12]),
+        }
+        changed += 1;
+    }
+    fspec_core::activity::changed(changed);
+    result.lock.loads = spec.loads.clone();
+    if result.lock != old {
+        fspec_core::activity::phase(Phase::Writing, None);
+        result.lock.save_over(&old, &lock_path)?;
+    }
+    if !errors.is_empty() {
+        bail!("{} problem(s):\n{}", errors.len(), errors.join("\n"));
+    }
+    Ok(())
+}
+
 fn switch_runner(paths: &Paths) -> Result<Box<dyn Runner>> {
     if !is_live(paths) {
         return Ok(Box::new(LogRunner { log: paths.system("/var/log/fspec-commands.log") }));
@@ -1690,6 +1752,7 @@ fn apply_local(
             skipped.extend(left_out.into_iter().map(|(path, _)| path));
         }
         let plan = apply_held(&env.cx(scope, &state), &backends::all(), &desired, &held)?;
+        fspec_core::activity::changed(plan.changes.len() as u64);
         println!("{plan}");
     }
     if !skipped.is_empty() {
@@ -1912,13 +1975,11 @@ fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str], checkou
     if std::env::var_os("SSH_AUTH_SOCK").is_some() {
         sudo.arg("--preserve-env=SSH_AUTH_SOCK");
     }
-    sudo.arg(exe)
-        .arg("--spec")
-        .arg(spec)
-        .arg("--home")
-        .arg(&paths.home)
-        .args(command)
-        .args(["--scope", "system", "--host", host]);
+    sudo.arg(exe).arg("--spec").arg(spec).arg("--home").arg(&paths.home);
+    if let Some(relay) = fspec_core::activity::relay_path() {
+        sudo.arg("--activity-relay").arg(relay);
+    }
+    sudo.args(command).args(["--scope", "system", "--host", host]);
     if let Some(checkout) = checkout {
         sudo.arg("--checkout").arg(checkout);
     }

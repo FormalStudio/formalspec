@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod apply;
 pub mod attribute;
 pub mod dev;

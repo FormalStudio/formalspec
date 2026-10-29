@@ -2087,6 +2087,7 @@ self-signed chain are unverified.
 | `fspec adopt <path>` | Pull an app's edit of a managed file into the repo |
 | `fspec orphans` | Unattributed app data |
 | `fspec watch` | Report drift live |
+| `fspec activity [--json] [--once]` | Follow the operation stream of every running apply, update and rollback |
 | `fspec switch --distro d [--release r]` | Install another distro beside this one |
 | `fspec switch --adopt-boot` | Make the running root own boot, so the old one can be forgotten |
 | `fspec switch --reset-var` | Stage a reset of `/etc` and `/var` for the next boot of a bootc host |
@@ -2309,6 +2310,17 @@ hosts at once. Nothing about that needs waiting loops, worktrees or care:
 - **Shared files are written whole.** The state, the lock and the `gh:` load
   cache are written to a uniquely named temporary file and renamed into place,
   so a reader never sees half a file and two writers never share a temporary.
+
+## Operation stream
+
+`apply`, `update` and `rollback` publish what they are doing (phase, progress in typed units,
+the current item, then the result or error) on a socket of their own under
+`$XDG_RUNTIME_DIR/fspec/activity/`, for a desktop shell to show as live activity. Every line
+carries the whole operation, the first one on each connection being where it is now, so a reader
+that joins or rejoins mid-apply needs no history. A thread writes the lines without blocking and
+cuts off a reader that does not keep up, so nobody listening, or somebody stuck, costs the apply
+nothing. The system scope's `sudo fspec` child relays its steps to its parent's socket. The
+protocol is [activity.md](activity.md).
 
 ## Repo layout
 

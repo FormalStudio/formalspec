@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value};
 
+use crate::activity::{self, Unit};
 use crate::attribute;
 use crate::facts::Facts;
 use crate::fetch::Fetch;
@@ -407,6 +408,7 @@ pub fn apply_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired]) -> R
 pub fn apply_held(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], _held: &Held) -> Result<Plan> {
     let dir = cx.state_dir();
     let state_path = dir.join("state.json");
+    activity::phase(activity::Phase::Planning, Some(cx.scope));
     Journal::recover(&dir, cx.runner)?;
     let mut state = State::load(&state_path)?;
     let cx = &Cx { generation: state.generation + 1, ..*cx };
@@ -470,9 +472,15 @@ pub fn apply_held(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], _held
     let staging = dir.join("staging").join(cx.generation.to_string());
     remove_any(&staging)?;
     fs::create_dir_all(&staging).with_context(|| format!("creating {}", staging.display()))?;
+    let total = by_backend.iter().map(|(_, ops)| ops.len() as u64).sum();
+    activity::phase(activity::Phase::Preparing, Some(cx.scope));
+    let mut done = 0;
     for (b, ops) in &by_backend {
+        report(*b, ops, done, total);
         b.prepare(cx, ops, &staging).with_context(|| format!("preparing {}", b.name()))?;
+        done += ops.len() as u64;
     }
+    activity::phase(activity::Phase::Committing, Some(cx.scope));
 
     let mut journal = Journal::begin(&dir, cx.generation)?;
     let result = commit_all(cx, &by_backend, &staging, &mut journal).and_then(|records| {
@@ -532,10 +540,14 @@ fn commit_all(
     journal: &mut Journal,
 ) -> Result<Records> {
     let mut records = Records::new();
+    let total = by_backend.iter().map(|(_, ops)| ops.len() as u64).sum();
+    let mut done = 0;
     for (b, ops) in by_backend.iter().rev() {
         let removals: Vec<Op> = ops.iter().filter(|o| o.is_removal()).cloned().collect();
         if !removals.is_empty() {
+            report(*b, &removals, done, total);
             b.commit(cx, &removals, staging, journal).with_context(|| format!("{}: removing", b.name()))?;
+            done += removals.len() as u64;
         }
     }
     let ops = || by_backend.iter().flat_map(|(_, ops)| ops);
@@ -555,6 +567,7 @@ fn commit_all(
             }
         }
         if !rest.is_empty() {
+            report(*b, &rest, done, total);
             let got = b.commit(cx, &rest, staging, journal).with_context(|| format!("{}: applying", b.name()))?;
             for (key, record) in &got {
                 if let Some(why) = deferral(Some(record)) {
@@ -568,7 +581,9 @@ fn commit_all(
             }
             records.extend(got);
         }
+        done += ops.iter().filter(|o| !o.is_removal()).count() as u64;
     }
+    activity::progress(done, total, Unit::Resources, None, vec![]);
     for (b, ops) in by_backend {
         let rest: Vec<Op> =
             ops.iter().filter(|o| !o.is_removal() && deferral(records.get(&o.key)).is_none()).cloned().collect();
@@ -579,6 +594,14 @@ fn commit_all(
     let added = ops().filter(|o| o.current.is_none() && !o.is_removal() && deferral(records.get(&o.key)).is_none());
     restore_returned(cx, added, journal)?;
     Ok(records)
+}
+
+/// Put the batch `ops` of `b` on the operation stream, `done` of `total` resources in.
+fn report(b: &dyn Backend, ops: &[Op], done: u64, total: u64) {
+    let ids: Vec<String> = ops.iter().map(|o| o.key.id.clone()).collect();
+    let item = format!("{}: {}", b.name(), activity::batch_label(&ids));
+    let keys = ops.iter().take(activity::MAX_KEYS).map(|o| o.key.to_string()).collect();
+    activity::progress(done, total, Unit::Resources, Some(item), keys);
 }
 
 fn refresh_untouched(

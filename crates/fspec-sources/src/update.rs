@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use anyhow::{Result, bail};
+use fspec_core::activity::{self, Unit};
 use fspec_core::lock::{Lock, LockedPkg};
 use fspec_core::resource::{Channel, Host, Pkg, Resource};
 
@@ -63,9 +64,13 @@ pub fn update(hosts: &[Host], old: &Lock, only: &[String], cx: &Cx) -> Result<Up
 
     let mut lock = Lock { pkg: vec![], ..old.clone() };
     let mut changes = Vec::new();
+    let wanted = decls.keys().filter(|(n, _)| only.is_empty() || only.contains(n)).count() as u64;
+    activity::phase(activity::Phase::Resolving, None);
     if only.is_empty() {
+        activity::progress(0, wanted, Unit::Packages, Some("zypper snapshot".into()), vec![]);
         lock.zypper = crate::snapshot::update(hosts, &old.zypper, cx, &mut changes, &mut errors);
     }
+    let mut resolved = 0;
     for gone in old.pkg.iter().filter(|p| !decls.contains_key(&(p.name.clone(), p.source.clone()))) {
         changes.push(format!("- {} {}", gone.name, label(gone)));
     }
@@ -77,6 +82,8 @@ pub fn update(hosts: &[Host], old: &Lock, only: &[String], cx: &Cx) -> Result<Up
             }
             continue;
         }
+        activity::progress(resolved, wanted, Unit::Packages, Some(name.clone()), vec![format!("pkg:{name}")]);
+        resolved += 1;
         match resolve_decl(d, cx) {
             Ok(mut new) => {
                 keep_cache(before, &mut new);
@@ -93,6 +100,7 @@ pub fn update(hosts: &[Host], old: &Lock, only: &[String], cx: &Cx) -> Result<Up
             }
         }
     }
+    activity::progress(resolved, wanted, Unit::Packages, None, vec![]);
     Ok(Update { lock, changes, errors })
 }
 

@@ -24,5 +24,7 @@ fspec-image.workspace = true
 fspec-switch.workspace = true
 fspec-try.workspace = true
 libc.workspace = true
+notify.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
