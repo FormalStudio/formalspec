@@ -54,6 +54,24 @@ fn uninstall_cmd(id: &str) -> Cmd {
     Cmd::new("flatpak").args(["uninstall", "-y", "--noninteractive", "--system"]).arg(id)
 }
 
+/// The GL extensions Flatpak apps need to render on the loaded NVIDIA driver, when not installed.
+/// Flatpak pulls them in only while it installs or updates a runtime, and the apps here are
+/// pinned by commit, so a driver update would otherwise leave them on software rendering.
+fn missing_driver_gl(cx: &Cx) -> Result<Vec<String>> {
+    let Ok(version) = std::fs::read_to_string(cx.paths.system("/sys/module/nvidia/version")) else {
+        return Ok(vec![]);
+    };
+    let version = version.trim().replace('.', "-");
+    let mut missing = vec![];
+    for arch in ["GL", "GL32"] {
+        let id = format!("org.freedesktop.Platform.{arch}.nvidia-{version}");
+        if cx.runner.run(&Cmd::new("flatpak").args(["info", "--system"]).arg(&id))?.status != 0 {
+            missing.push(id);
+        }
+    }
+    Ok(missing)
+}
+
 fn live_commit(cx: &Cx, id: &str) -> Result<Option<String>> {
     query(cx, &Cmd::new("flatpak").args(["info", "--system", "--show-commit"]).arg(id))
 }
@@ -115,9 +133,10 @@ impl Backend for FlatpakBackend {
     }
 
     fn drift(&self, cx: &Cx, entry: &Entry) -> Result<Vec<String>> {
+        let gl = missing_driver_gl(cx)?.into_iter().map(|id| format!("{id} for the NVIDIA driver is not installed"));
         let p = pkg(&entry.resource)?;
         if p.mode != PkgMode::Pinned {
-            return Ok(vec![]);
+            return Ok(gl.collect());
         }
         let a = app(p)?;
         let output = cx.runner.run(&Cmd::new("flatpak").args(["info", "--system", "--show-commit"]).arg(&a.id))?;
@@ -129,10 +148,17 @@ impl Backend for FlatpakBackend {
         Ok(match expected {
             Some(e) if !live.is_empty() && live != e => vec![format!("commit {live} is installed, {e} is locked")],
             _ => vec![],
-        })
+        }
+        .into_iter()
+        .chain(gl)
+        .collect())
     }
 
     fn commit(&self, cx: &Cx, ops: &[Op], _staging: &Path, journal: &mut Journal) -> Result<Records> {
+        // A driver newer than Flathub's extensions fails here and stays drift until they ship.
+        for id in missing_driver_gl(cx)? {
+            cx.runner.run(&install_cmd(&App { id, remote: "flathub".into() }))?;
+        }
         let mut records = Records::new();
         for op in ops {
             let had = match &op.current {

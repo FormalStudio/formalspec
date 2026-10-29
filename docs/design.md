@@ -590,6 +590,12 @@ copied.
 Distro packages and Flatpaks live where their package manager puts them; the
 state file still records them, so rollback reinstalls the previous set.
 
+On a host with the NVIDIA driver loaded, any apply with a Flatpak installs the
+`org.freedesktop.Platform.GL.nvidia-<version>` and `GL32` extensions matching
+`/sys/module/nvidia/version`. Flatpak only adds them while it updates a runtime, which
+commit-pinned apps never trigger, so a driver update would otherwise leave every Flatpak
+on software rendering. A missing one shows as drift until Flathub ships it.
+
 ## Project environments
 
 A `dev.star` at a repo root is FormalSpec's version of a flake devShell: the

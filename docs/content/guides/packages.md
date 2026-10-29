@@ -125,7 +125,9 @@ pkg("beta-app", source = flatpak("org.example.App", remote = "flathub-beta")),
 
 A Flatpak installs system-wide (`flatpak install --system`) and is pinned to the commit in the
 lock with `flatpak update --commit=`. A runtime, such as a Vulkan layer, takes the full
-`id/arch/branch` form. Flatpak is Linux only.
+`id/arch/branch` form. Flatpak is Linux only. With the NVIDIA driver loaded, fspec also installs
+the Flatpak GL extensions for that driver version, so Flatpak apps keep the GPU after a driver
+update.
 
 ### Homebrew
 

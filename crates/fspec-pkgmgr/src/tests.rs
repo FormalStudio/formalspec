@@ -1433,3 +1433,31 @@ fn a_dropped_name_skips_the_dry_run_and_takes_its_deps_before_the_adds() {
     let add = lines.iter().position(|l| l.starts_with(FAMS[4].install) && l.ends_with(" rustup"));
     assert!(rm.is_some() && rm < add, "{lines:#?}");
 }
+
+#[test]
+fn flatpak_installs_the_gl_extensions_for_the_loaded_nvidia_driver() {
+    let mut w = World::linux();
+    w.lock.upsert(locked("sober", "flatpak:org.vinegarhq.Sober", None, &[("any", commit("aaa"))]));
+    let want = [flatpak("sober", "org.vinegarhq.Sober")];
+    w.apply(Scope::System, &want).unwrap();
+    w.take();
+
+    let module = w.paths.system("/sys/module/nvidia");
+    fs::create_dir_all(&module).unwrap();
+    fs::write(module.join("version"), "595.112.07\n").unwrap();
+    w.answer(INFO, 0, "aaa\n");
+    w.answer("flatpak info --system org.freedesktop.Platform.GL", 1, "");
+    let plan = w.plan(Scope::System, &want).unwrap();
+    assert!(is_drift(&plan), "{plan}");
+    w.take();
+    w.apply(Scope::System, &want).unwrap();
+    let lines = w.take();
+    for arch in ["GL", "GL32"] {
+        let install = format!("{INSTALL} org.freedesktop.Platform.{arch}.nvidia-595-112-07");
+        assert!(lines.contains(&install), "{lines:?}");
+    }
+
+    w.forget_answers();
+    w.answer(INFO, 0, "aaa\n");
+    assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
+}
