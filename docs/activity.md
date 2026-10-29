@@ -1,6 +1,6 @@
 # The operation stream
 
-`fspec apply`, `fspec update` and `fspec rollback` say what they are doing on a local socket while
+`fspec apply`, `fspec update`, `fspec rollback` and `fspec run` say what they are doing on a local socket while
 they run, so a desktop shell can show them as live activity instead of a terminal. This is the
 protocol, version 1. The write side is `crates/fspec-core/src/activity.rs`; `fspec activity`
 prints it.
@@ -83,10 +83,10 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
 | Field | Meaning |
 | --- | --- |
 | `id` | Opaque and unique, stable for the operation's life; the socket's file name |
-| `kind` | `apply`, `update` or `rollback` |
-| `source` | Opaque. Operations with equal sources are one row: applies of one host, updates of one spec. `fspec:<kind>:<host>`, `fspec:update:<spec dir>`, `fspec:apply:all` |
-| `title` | A sentence for people: `Applying g815`, `Updating fspec.lock`, `Rolling back e1504g` |
-| `host` | The host being changed, `null` for an update and for `apply --all` |
+| `kind` | `apply`, `update`, `rollback` or `run` |
+| `source` | Opaque. Operations with equal sources are one row: applies of one host, updates of one spec. `fspec:<kind>:<host>`, `fspec:update:<spec dir>`, `fspec:apply:all`, `fspec:run:<package>` |
+| `title` | A sentence for people: `Applying g815`, `Updating fspec.lock`, `Rolling back e1504g`, `Running ripgrep` |
+| `host` | The host being changed, `null` for an update, a run and `apply --all` |
 | `pid` | The fspec process |
 | `started`, `updated` | Milliseconds since the epoch: when it started and when the step last changed |
 | `state` | `running`, `succeeded` or `failed` |
@@ -95,7 +95,7 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
 | `progress` | `{done, total, unit}`, or `null` while the phase cannot say how far it is |
 | `item` | What the step works on now, for people: a backend and its batch (`zypper: firefox, git and 3 more`), a package name, `g815 over ssh` |
 | `keys` | The resource keys of the current step (`pkg:firefox`, `file:~/.config/x`), at most 32 |
-| `result` | On success: `{changes, summary}`, the number of changes made and a sentence (`12 changes`, `no changes`, `3 lock entries changed`) |
+| `result` | On success: `{changes, summary}`, the number of changes made and a sentence (`12 changes`, `no changes`, `3 lock entries changed`; a run's is `started`, with 0) |
 | `error` | On failure: the error as fspec prints it |
 
 `phase`, in the order an operation passes through them:
@@ -108,11 +108,12 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
 | `planning` | apply, rollback | Diffing the spec against the state, per scope |
 | `preparing` | apply, rollback | Fetching, verifying and staging; nothing live has changed yet |
 | `committing` | apply, rollback | Changing the machine, in phase order under the journal |
-| `resolving` | update | Asking upstream for each package's newest version |
+| `resolving` | update, run | Asking upstream for each package's newest version (a run only before its first start, or with `--update`) |
 | `writing` | update | Writing `fspec.lock` |
+| `preparing` | run | Unpacking into the user store and linking its commands; the run succeeds when the command starts, not when it exits |
 
 `progress.unit` is `resources` (apply and rollback: one per resource the plan changes, counted in
-each of `preparing` and `committing`) or `packages` (update: one per package declaration).
+each of `preparing` and `committing`) or `packages` (update and run: one per package declaration).
 Progress starts again at 0 in each phase and each scope. `done` counts finished work, so `item`
 is the work in progress past `done`.
 

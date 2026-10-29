@@ -35,7 +35,7 @@ pub fn project(dir: Option<&Path>) -> Result<Project> {
     Project::find(&from).with_context(|| format!("no {} at or above {}", fspec_dev::FILE, from.display()))
 }
 
-fn machine<'a>(paths: &'a Paths, fetch: &'a LiveFetch) -> Machine<'a> {
+pub(crate) fn machine<'a>(paths: &'a Paths, fetch: &'a LiveFetch) -> Machine<'a> {
     let (platform, _) = Facts::probe_local();
     let manager = if cfg!(target_os = "macos") {
         Some("brew")

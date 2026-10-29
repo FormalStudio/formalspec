@@ -753,8 +753,9 @@ project's environment in its own process group, logging under
 `fspec dev up` starts them and keeps them running until `fspec dev down`. A
 direnv shell does not start services, since direnv has no exit hook.
 
-`fspec gc` also drops link farms whose project is gone or that were not used
-within the cutoff, then the user-store packages no remaining farm links into.
+`fspec gc` also drops `fspec run` projects and link farms not used within the
+cutoff, and farms whose project is gone, then the user-store packages no remaining
+farm links into.
 
 ## Apply is a transaction
 
@@ -2089,7 +2090,8 @@ self-signed chain are unverified.
 | `fspec adopt <path>` | Pull an app's edit of a managed file into the repo |
 | `fspec orphans` | Unattributed app data |
 | `fspec watch` | Report drift live |
-| `fspec activity [--json] [--once]` | Follow the operation stream of every running apply, update and rollback |
+| `fspec activity [--json] [--once]` | Follow the operation stream of every running apply, update, rollback and run |
+| `fspec run <pkg> [--bin b] [--update] [--detach] [-- args]` | Run a store package once, outside the spec |
 | `fspec switch --distro d [--release r]` | Install another distro beside this one |
 | `fspec switch --adopt-boot` | Make the running root own boot, so the old one can be forgotten |
 | `fspec switch --reset-var` | Stage a reset of `/etc` and `/var` for the next boot of a bootc host |
@@ -2315,7 +2317,7 @@ hosts at once. Nothing about that needs waiting loops, worktrees or care:
 
 ## Operation stream
 
-`apply`, `update` and `rollback` publish what they are doing (phase, progress in typed units,
+`apply`, `update`, `rollback` and `run` publish what they are doing (phase, progress in typed units,
 the current item, then the result or error) on a socket of their own under
 `$XDG_RUNTIME_DIR/fspec/activity/`, for a desktop shell to show as live activity. Every line
 carries the whole operation, the first one on each connection being where it is now, so a reader
@@ -2323,6 +2325,18 @@ that joins or rejoins mid-apply needs no history. A thread writes the lines with
 cuts off a reader that does not keep up, so nobody listening, or somebody stuck, costs the apply
 nothing. The system scope's `sudo fspec` child relays its steps to its parent's socket. The
 protocol is [activity.md](activity.md).
+
+## Run once
+
+`fspec run ripgrep` (or `github:sharkdp/bat`, `npm:cowsay`, `cargo:xh`) runs a package without
+adding it to the spec: fspec writes a one-package `dev.star` for this platform under
+`~/.cache/fspec/dev/once/<hash>/`, locks it there on the first run (`--update` locks it again),
+and activates it like a project, so the package unpacks into the user store and runs from a link
+farm with no privilege. Every run rewrites that `dev.star`; `fspec gc --older-than <age>` deletes
+the ones older than the age, and with them their farms and the user-store packages only they
+used. `--detach` starts the command in a session of its own with no terminal and returns, which is
+how the shell starts a GUI app. Flatpaks and distro packages cannot run without being installed
+and are refused. [shell-install.md](shell-install.md) has the shell's side.
 
 ## Repo layout
 

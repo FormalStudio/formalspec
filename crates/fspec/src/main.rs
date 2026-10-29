@@ -1,6 +1,7 @@
 mod activity;
 mod backends;
 mod dev;
+mod run;
 mod secret;
 mod try_vm;
 mod vm;
@@ -329,6 +330,23 @@ enum Command {
         dir: Option<PathBuf>,
         #[command(subcommand)]
         cmd: Option<dev::DevCommand>,
+        #[arg(last = true)]
+        args: Vec<String>,
+    },
+    /// Run a package once without adding it to the spec: `ripgrep`, `github:sharkdp/bat`,
+    /// `npm:cowsay`, `cargo:xh`. Its store path goes at the next `fspec gc` past its last run.
+    Run {
+        pkg: String,
+        /// The command to run, when the package has several.
+        #[arg(long)]
+        bin: Option<String>,
+        /// Resolve the package's newest version again instead of the one the last run used.
+        #[arg(long)]
+        update: bool,
+        /// Start it in a session of its own with no terminal and return: how a GUI app is
+        /// launched.
+        #[arg(long)]
+        detach: bool,
         #[arg(last = true)]
         args: Vec<String>,
     },
@@ -914,6 +932,9 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Dev { dir, cmd, args } => dev::run(&paths, dir.as_deref(), cmd.as_ref(), args),
+        Command::Run { pkg, bin, update, detach, args } => {
+            run::run(&paths, pkg, bin.as_deref(), *update, *detach, args)
+        }
         Command::Activity { json, once } => activity::print(&fspec_core::activity::dir(), *json, *once),
         Command::Vm { cmd } => vm::run(&fspec_eval::evaluate(&spec_path)?, cmd),
         Command::Try { target, host, keep, cpus, memory, disk, headless, print, list, delete } => {

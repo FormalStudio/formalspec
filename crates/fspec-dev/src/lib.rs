@@ -80,7 +80,7 @@ impl Project {
     }
 }
 
-pub(crate) fn short_hash(s: &str) -> String {
+pub fn short_hash(s: &str) -> String {
     Sha256::digest(s.as_bytes()).iter().take(4).map(|b| format!("{b:02x}")).collect()
 }
 

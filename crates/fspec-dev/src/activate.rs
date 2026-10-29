@@ -40,6 +40,8 @@ pub struct Activated {
     pub env: BTreeMap<String, String>,
     /// Set when `dev.star` names a container.
     pub run: Option<Run>,
+    /// The link farm whose `bin` holds the project's commands.
+    pub farm: PathBuf,
 }
 
 pub fn activate(project: &Project, m: &Machine) -> Result<Activated> {
@@ -71,7 +73,7 @@ pub fn activate(project: &Project, m: &Machine) -> Result<Activated> {
         let dev = if platform == m.platform { here } else { project.evaluate(&platform)? };
         let farm = link_farm(project, &dev, &lock, m, &platform)?;
         let (run, env) = container::prepare(project, &dev, &image, &lock, &farm, m)?;
-        return Ok(Activated { project: project.clone(), dev, lock, env, run: Some(run) });
+        return Ok(Activated { project: project.clone(), dev, lock, env, run: Some(run), farm: farm.dir });
     }
     let dev = here;
     let farm = link_farm(project, &dev, &lock, m, &m.platform)?;
@@ -102,7 +104,7 @@ pub fn activate(project: &Project, m: &Machine) -> Result<Activated> {
     if let Some(hook) = &dev.shell_hook {
         env = run_hook(hook, &env, &project.dir)?;
     }
-    Ok(Activated { project: project.clone(), dev, lock, env, run: None })
+    Ok(Activated { project: project.clone(), dev, lock, env, run: None, farm: farm.dir })
 }
 
 /// Why this machine's package manager cannot provide some `lib(...)` or `bin(...)`: misses the
