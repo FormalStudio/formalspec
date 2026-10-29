@@ -546,7 +546,7 @@ the lock does not have fails the apply until the next update. The parts'
 hashes are part of the store directory's name. A `git` or `nix` package has no
 downloaded archive and takes no `parts`.
 
-A `url(...)` package can also take `build`, a command run on the host after the
+A `url(...)` or `github(...)` package can also take `build`, a command run on the host after the
 parts and patches, for a download that needs more than a text patch (an
 AppImage whose bundled app has to be extracted and edited). It sees the
 unpacked download in `FSPEC_SRC` and installs the package into `FSPEC_OUT`,

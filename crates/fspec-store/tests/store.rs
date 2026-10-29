@@ -400,6 +400,23 @@ fn a_url_build_installs_from_the_download_and_reinstalls_when_it_changes() {
 }
 
 #[test]
+fn a_github_release_takes_a_build_like_a_url() {
+    let mut w = World::new();
+    let appimage = b"\x7fELF\x02\x01\x01 AppImage".to_vec();
+    let url = "https://example/Kopuz_0.67.0_x86_64.AppImage";
+    w.lock.upsert(locked("kopuz", "github:Kopuz-org/kopuz", "0.67.0", url, &appimage));
+    w.fetch = MapFetch::default().with(url, appimage);
+    w.runner = Box::new(BuildHere);
+    let script = r#"test -f "$FSPEC_SRC/kopuz" && mkdir -p "$FSPEC_OUT/bin" && printf '#!/bin/sh\necho extracted\n' > "$FSPEC_OUT/bin/kopuz" && chmod +x "$FSPEC_OUT/bin/kopuz""#;
+    let kopuz = with_fields(
+        pkg("kopuz", json!({"kind": "github", "repo": "Kopuz-org/kopuz"}), "pinned"),
+        json!({"build": ["sh", "-c", script]}),
+    );
+    w.apply(&[kopuz]).unwrap();
+    assert_eq!(w.run("kopuz"), "extracted");
+}
+
+#[test]
 fn a_data_only_pkg_links_its_share_trees() {
     let mut w = World::new();
     let fedora = serde_json::from_value(json!({"kind": "distro", "distro": "fedora", "init": "systemd"})).unwrap();

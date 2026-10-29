@@ -250,8 +250,8 @@ impl Backend for StoreBackend {
                 _ => {}
             }
         }
-        if !p.build.is_empty() && !matches!(p.source, Source::Git { .. } | Source::Url { .. }) {
-            bail!("build runs for git(...) and url(...) packages only");
+        if !p.build.is_empty() && !matches!(p.source, Source::Git { .. } | Source::Url { .. } | Source::Github { .. }) {
+            bail!("build runs for git(...), url(...) and github(...) packages only");
         }
         if !p.share.is_empty() && cx.facts.os != Os::Linux {
             bail!("share links into /usr/local/share, which only Linux searches");
@@ -523,7 +523,7 @@ fn unpack_into(cx: &Cx, p: &Pkg, origin: &Origin, dirname: &str, dest: &Path, sc
     Ok(())
 }
 
-/// A url(...) package's `build`: the command reads the unpacked download from `FSPEC_SRC` and
+/// A url(...) or github(...) package's `build`: the command reads the unpacked download from `FSPEC_SRC` and
 /// installs the package into `FSPEC_OUT`. It runs on the host, at each install.
 fn build_download(cx: &Cx, p: &Pkg, dest: &Path, src: &Path) -> Result<()> {
     if src.exists() {
