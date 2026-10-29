@@ -335,6 +335,8 @@ bootctl install
 # The image's console and LSM options carry over, since its root is labeled for its policy; the
 # rest is what a beside root boots with.
 image=$(tr ' ' '\n' </proc/cmdline | grep -E '^(console|security|selinux|enforcing)=' || true)
+# A serial console makes plymouth force its text splash; a real host has none.
+case $image in *console=ttyS*) image="$image plymouth.ignore-serial-consoles" ;; esac
 args=$(cat <<'FSPEC_ARGS'
 {args}FSPEC_ARGS
 )

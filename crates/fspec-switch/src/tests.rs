@@ -2079,14 +2079,16 @@ fn a_tumbleweed_vm_boots_through_systemd_boot_and_the_esp_sync() {
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     // The image's own console and policy options carry over, the rest of its line does not.
     let cmdline = "BOOT_IMAGE=/boot/vmlinuz root=UUID=x rw quiet systemd.show_status=1 console=ttyS0,115200 console=tty0 security=selinux selinux=1";
-    let line = script.lines().find(|l| l.starts_with("image=")).unwrap();
+    let at = script.find("image=").unwrap();
+    let lines: Vec<&str> = script[at..].lines().take(3).collect();
+    let image = lines.join("\n").replace("</proc/cmdline", "<<<\"$1\"");
     let out = std::process::Command::new("bash")
-        .args(["-c", &format!("{}; echo $image", line.replace("</proc/cmdline", "<<<\"$1\""))])
+        .args(["-c", &format!("{image}\necho $image")])
         .args(["sh", cmdline])
         .output()
         .unwrap();
     assert_eq!(
         String::from_utf8_lossy(&out.stdout).trim(),
-        "console=ttyS0,115200 console=tty0 security=selinux selinux=1"
+        "console=ttyS0,115200 console=tty0 security=selinux selinux=1 plymouth.ignore-serial-consoles"
     );
 }

@@ -1922,7 +1922,9 @@ A Tumbleweed VM's first-boot setup makes it boot the way a root `switch
 --beside` installed does (`fspec_switch::tumbleweed_vm_boot`), so a spec's boot
 chain finds what it builds on, as on a real host: systemd-boot installed on the
 image's ESP and first in the firmware's order, `/etc/kernel/cmdline` from the
-root's UUID, the image's console and LSM options and the host's
+root's UUID, the image's console and LSM options (plus
+`plymouth.ignore-serial-consoles`, since a serial console forces plymouth's
+text splash) and the host's
 `tumbleweed(kernel_args = ...)`, and the same esp-sync script, zypp plugin and
 units copying the kernels to the ESP with entries that count tries. The image's
 grub goes, since `bootctl install` takes the removable-media path. cloud-init
