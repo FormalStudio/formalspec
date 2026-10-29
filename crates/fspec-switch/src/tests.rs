@@ -1536,13 +1536,17 @@ fn tw_kernel(root: &Path, k: &str) {
 }
 
 fn tw_sync(root: &Path, esp: &Path) -> Vec<String> {
-    let out = std::process::Command::new("sh")
-        .args(["-c", crate::tumbleweed::ESP_SYNC, "sh"])
-        .arg(root)
-        .arg(esp)
-        .arg("tumbleweed")
-        .output()
-        .unwrap();
+    let mut sync = std::process::Command::new("sh");
+    sync.args(["-c", crate::tumbleweed::ESP_SYNC, "sh"]).arg(root).arg(esp).arg("tumbleweed");
+    // macOS has no flock(1); the lock only matters between runs on a real ESP.
+    let shim = tempfile::tempdir().unwrap();
+    if cfg!(not(target_os = "linux")) {
+        let flock = shim.path().join("flock");
+        std::fs::write(&flock, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(&flock, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+        sync.env("PATH", format!("{}:{}", shim.path().display(), std::env::var("PATH").unwrap()));
+    }
+    let out = sync.output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     let mut names: Vec<String> = std::fs::read_dir(esp.join("loader/entries"))
         .unwrap()
@@ -1585,6 +1589,15 @@ fn tumbleweed_esp_sync_follows_the_installed_kernels_and_keeps_their_counters() 
         std::fs::read_to_string(esp.join("tumbleweed/6.17.1-1-default/initrd")).unwrap(),
         "initrd 6.17.1-1-default"
     );
+
+    // A FAT copy reads up to 2 s older than its source and is still the same file.
+    let copy = esp.join("tumbleweed/6.17.1-1-default/linux");
+    std::fs::write(&copy, "LINUX 6.17.1-1-default").unwrap();
+    let source = std::fs::metadata(root.join("usr/lib/modules/6.17.1-1-default/vmlinuz")).unwrap();
+    let older = source.modified().unwrap() - std::time::Duration::from_secs(1);
+    std::fs::File::options().write(true).open(&copy).unwrap().set_modified(older).unwrap();
+    tw_sync(&root, &esp);
+    assert_eq!(std::fs::read_to_string(&copy).unwrap(), "LINUX 6.17.1-1-default");
 
     // systemd-boot blessed the first; the second kernel gets its initrd; the first is removed.
     std::fs::rename(

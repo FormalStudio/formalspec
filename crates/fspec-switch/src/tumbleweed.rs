@@ -99,6 +99,10 @@ if [ ! -d "$entries" ]; then
 	echo "fspec-esp-sync: $entries is missing" >&2
 	exit 1
 fi
+# The boot-time service, systemd-bless-boot's drop-in and the zypp plugin can all start a run at
+# once, and one run's EXIT trap deletes the files another is still writing.
+exec 9<"$esp"
+flock 9
 options=$(cat "$root/etc/kernel/cmdline")
 trial="systemd.mask=emergency.target systemd.mask=emergency.service systemd.mask=rescue.target systemd.mask=rescue.service"
 title=$(sed -n 's/^PRETTY_NAME="\{0,1\}\([^"]*\)"\{0,1\}$/\1/p' "$root/usr/lib/os-release")
@@ -116,7 +120,9 @@ for m in "$root"/usr/lib/modules/*/; do
 	for f in "linux $m/vmlinuz" "initrd $initrd"; do
 		to=$dir/$k/${f%% *}
 		from=${f#* }
-		if [ -f "$to" ] && ! [ "$from" -nt "$to" ] && [ "$(wc -c <"$from")" = "$(wc -c <"$to")" ]; then
+		# FAT keeps mtimes to 2 s, so a copy can read up to 2 s older than its source.
+		if [ -f "$to" ] && [ "$(date -r "$from" +%s)" -le "$(($(date -r "$to" +%s) + 2))" ] &&
+			[ "$(wc -c <"$from")" = "$(wc -c <"$to")" ]; then
 			continue
 		fi
 		cp "$from" "$to.new"
