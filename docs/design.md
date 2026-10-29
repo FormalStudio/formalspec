@@ -417,7 +417,8 @@ Tumbleweed snapshot under `https://download.opensuse.org/history/<YYYYMMDD>/tumb
 and lists them newest first in `https://download.opensuse.org/history/list`.
 `fspec update` (without package names) pins each Tumbleweed host to the newest
 listed snapshot, or with `release_age` the newest whose day ended at least that
-long ago, and prints `snapshot <host> <old> -> <new>`. openSUSE keeps about a
+long ago, and prints `snapshot <host> <old> -> <new>`. The history holds x86_64 alone, so an
+aarch64 Tumbleweed host gets no pin and stays on the rolling ports repos. openSUSE keeps about a
 month of snapshots, so a pin older than that stops resolving and needs an
 update.
 The lock entry for a distro package holds one artifact per platform, so the

@@ -264,8 +264,10 @@ impl Backend for DistroBackend {
         }
         let fam = family(cx)?;
         let mut notes = Vec::new();
-        if fam == Family::Zypper {
-            notes.extend(zypper::snapshot_drift(cx, zypper::pin(cx)?));
+        if fam == Family::Zypper
+            && let Some(s) = zypper::pin(cx)?
+        {
+            notes.extend(zypper::snapshot_drift(cx, s));
         }
         notes.extend(drift_names(cx, fam, &recorded(entry), &entry.record)?);
         for path in stale_esp_sync(cx) {
@@ -336,7 +338,7 @@ impl Backend for DistroBackend {
             let had = op.current.as_ref().map(recorded).unwrap_or_default();
             let rec = op.record();
             let pinned = match fam {
-                Family::Zypper => Some(zypper::pin(cx)?),
+                Family::Zypper => zypper::pin(cx)?,
                 _ => None,
             };
             if let Some(s) = pinned

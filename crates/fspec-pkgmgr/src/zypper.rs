@@ -12,7 +12,7 @@ use fspec_core::runner::Cmd;
 
 use crate::family::zypper;
 
-use fspec_core::zypp::{SNAPSHOT_REPOS, SNAPSHOT_VAR as VAR, snapshot_repo};
+use fspec_core::zypp::{SNAPSHOT_REPOS, SNAPSHOT_VAR as VAR, pinned, snapshot_repo};
 
 /// Rolling repos a pin disables, as paths on download.opensuse.org or cdn.opensuse.org.
 /// `update` has no snapshots and would pull packages newer than the pin.
@@ -57,10 +57,14 @@ fn is_rolling(url: &str) -> bool {
     matches!(host, "download.opensuse.org" | "cdn.opensuse.org") && ROLLING.iter().any(|p| path.starts_with(p))
 }
 
-/// The snapshot `fspec.lock` pins this host's distro repos to.
-pub(crate) fn pin<'a>(cx: &'a Cx) -> Result<&'a str> {
+/// The snapshot `fspec.lock` pins this host's distro repos to. None on aarch64: openSUSE keeps
+/// dated snapshots of x86_64 only, so the ports repos stay rolling.
+pub(crate) fn pin<'a>(cx: &'a Cx) -> Result<Option<&'a str>> {
+    if !pinned(&cx.facts.arch) {
+        return Ok(None);
+    }
     match cx.lock.zypper.get(&cx.facts.name) {
-        Some(z) => Ok(&z.snapshot),
+        Some(z) => Ok(Some(&z.snapshot)),
         None => bail!("fspec.lock pins no Tumbleweed snapshot for host {}; run `fspec update`", cx.facts.name),
     }
 }

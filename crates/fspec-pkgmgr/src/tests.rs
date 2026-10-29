@@ -1029,6 +1029,17 @@ fn tumbleweed_without_a_pin_asks_for_fspec_update() {
     assert!(format!("{err:#}").contains("pins no Tumbleweed snapshot for host h"), "{err:#}");
 }
 
+#[test]
+fn aarch64_tumbleweed_keeps_the_rolling_ports_repos() {
+    let distro =
+        Distro { distro: TW.into(), init: fspec_core::facts::Init::Systemd, packages: vec![], kernel_args: vec![] };
+    let w = World::new("aarch64-linux", Some(System::Distro(distro)));
+    w.apply(Scope::System, &[distro_res(TW, &[])]).unwrap();
+    assert!(!w.take().iter().any(|l| l.contains("dist-upgrade") || l.contains("modifyrepo")));
+    assert!(!w.paths.root.join("etc/zypp/vars.d/fspec_snapshot").exists());
+    assert!(!w.paths.root.join("etc/zypp/repos.d/fspec-oss.repo").exists());
+}
+
 const ONEPASSWORD_FPR: &str = "3FEF9748469ADBE15DA7CA80AC2D62742012EA22";
 const KEY_URL: &str = "https://downloads.1password.com/linux/keys/1password.asc";
 const REPO_URL: &str = "https://downloads.1password.com/linux/rpm/stable/x86_64";

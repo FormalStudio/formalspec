@@ -237,6 +237,10 @@ Tumbleweed is a rolling distro, so a package name alone pins nothing. FormalSpec
 distro instead: openSUSE publishes a dated snapshot of the repositories every few days and keeps
 about a month of them, and the lock names one.
 
+The snapshots are of x86_64 only. An `aarch64-linux` Tumbleweed host keeps the rolling ports
+repositories: `fspec update` pins nothing for it, and an apply installs from whatever the ports
+serve that day.
+
 ```starlark
 host(
     name = "laptop",

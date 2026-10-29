@@ -15,6 +15,7 @@ pub const LIST: &str = "https://download.opensuse.org/history/list";
 
 fn tumbleweed(host: &Host) -> bool {
     matches!(&host.system, Some(System::Distro(d)) if d.distro == "opensuse-tumbleweed")
+        && host.platform.split_once('-').is_some_and(|(arch, _)| fspec_core::zypp::pinned(arch))
 }
 
 /// When a snapshot counts as released for `release_age`: the end of its day, since the date
@@ -117,5 +118,13 @@ mod tests {
         assert_eq!(newest(LIST_TEXT, &host(Some("3d")), now).unwrap(), "20261017");
         assert_eq!(newest(LIST_TEXT, &host(Some("1d")), now).unwrap(), "20261018");
         assert!(newest(LIST_TEXT, &host(Some("30d")), now).is_err());
+    }
+
+    #[test]
+    fn only_x86_64_hosts_are_pinned() {
+        let mut arm = host(None);
+        arm.platform = "aarch64-linux".into();
+        assert!(tumbleweed(&host(None)));
+        assert!(!tumbleweed(&arm));
     }
 }
