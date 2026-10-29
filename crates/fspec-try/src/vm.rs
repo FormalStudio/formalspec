@@ -54,6 +54,13 @@ const FIRST_BOOT: &str = "/var/lib/fspec/vm-first-boot.sh";
 pub const FIRST_BOOT_DONE: &str = "fspec vm: first boot done";
 pub const FIRST_BOOT_FAILED: &str = "fspec vm: first boot failed";
 
+/// The guest's ssh route to the VM's host, and the placeholders `start` replaces on that host
+/// with its own user and host keys.
+const VM_HOST_CONFIG: &str = "/etc/ssh/ssh_config.d/50-fspec-vm-host.conf";
+const VM_HOST_KEYS: &str = "/etc/fspec/vm-host.known_hosts";
+const HOST_USER: &str = "@FSPEC_VM_HOST_USER@";
+const HOST_KEYS: &str = "@FSPEC_VM_HOST_KEYS@";
+
 /// Where a VM lives on the VM's host, as a bash word.
 fn dir(name: &str) -> String {
     format!("\"${{XDG_DATA_HOME:-$HOME/.local/share}}/fspec/vm\"/{}", q(name))
@@ -81,6 +88,13 @@ pub fn seed(g: &Guest, vm: &Vm) -> (String, String) {
         })
         .collect();
     files.push(json!({"path": FIRST_BOOT, "content": g.first_boot.as_deref().unwrap_or(""), "permissions": "0700"}));
+    // The VM's host sits at user networking's gateway. Naming it there lets the first apply build
+    // on it before the spec has placed any ssh config; `start` fills in its user and host keys.
+    let on = vm.on.rsplit('@').next().unwrap_or(&vm.on);
+    files.push(json!({"path": VM_HOST_CONFIG, "permissions": "0644", "content": format!(
+        "Host {on}\n\tHostName 10.0.2.2\n\tHostKeyAlias {on}\n\tUser {HOST_USER}\n\tGlobalKnownHostsFile {VM_HOST_KEYS} /etc/ssh/ssh_known_hosts\n"
+    )}));
+    files.push(json!({"path": VM_HOST_KEYS, "permissions": "0644", "content": HOST_KEYS}));
     // The serial port is the one console qemu keeps, so the start reads the outcome there. Once it
     // has worked cloud-init is done for good: later boots, like a real host's, run without it.
     let report = format!(
@@ -264,8 +278,12 @@ pub fn start(g: &Guest, vm: &Vm, image: &Iso, record: Option<&Record>) -> Result
         vm.disk_gib
     );
     s += "  cp \"$vars\" \"$dir/vars.fd\"\n";
+    let on = q(vm.on.rsplit('@').next().unwrap_or(&vm.on));
+    // Each key line ends in a JSON `\n`; a quoted replacement keeps bash from reading `&` or `\`.
     s += &format!(
-        "  printf %s {} > \"$dir/user-data\"\n  printf %s {} > \"$dir/meta-data\"\n",
+        "  keys=$(for k in /etc/ssh/ssh_host_*_key.pub; do printf '%s %s\\\\n' {on} \"$(cut -d' ' -f1,2 \"$k\")\"; done)\n  \
+         user_data={}\n  user_data=${{user_data//{HOST_USER}/\"$(id -un)\"}}\n  user_data=${{user_data//{HOST_KEYS}/\"$keys\"}}\n  \
+         printf %s \"$user_data\" > \"$dir/user-data\"\n  printf %s {} > \"$dir/meta-data\"\n",
         q(&user_data),
         q(&meta_data)
     );

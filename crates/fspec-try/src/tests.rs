@@ -298,7 +298,18 @@ mod vm {
             "{run}"
         );
         assert!(run.contains(FIRST_BOOT_FAILED), "{run}");
+        // The first apply reaches the VM's host as a builder at the gateway, under its own name.
+        assert_eq!(v["write_files"][2]["path"], "/etc/ssh/ssh_config.d/50-fspec-vm-host.conf");
+        assert_eq!(
+            v["write_files"][2]["content"],
+            "Host g815\n\tHostName 10.0.2.2\n\tHostKeyAlias g815\n\tUser @FSPEC_VM_HOST_USER@\n\t\
+             GlobalKnownHostsFile /etc/fspec/vm-host.known_hosts /etc/ssh/ssh_known_hosts\n"
+        );
+        assert_eq!(v["write_files"][3]["content"], "@FSPEC_VM_HOST_KEYS@");
         let s = start(&guest(), &decl(), &image(Some(H)), None).unwrap();
+        assert!(s.contains("user_data=${user_data//@FSPEC_VM_HOST_USER@/\"$(id -un)\"}"), "{s}");
+        assert!(s.contains("user_data=${user_data//@FSPEC_VM_HOST_KEYS@/\"$keys\"}"), "{s}");
+        assert!(s.contains("printf '%s %s\\\\n' g815 "), "{s}");
         // Only a new disk waits for it: a later start's serial.log is truncated and never says it.
         assert!(s.contains("if [ -n \"$new\" ]; then"), "{s}");
         assert!(s.contains(&format!("grep -qF '{FIRST_BOOT_DONE}' serial.log")), "{s}");
