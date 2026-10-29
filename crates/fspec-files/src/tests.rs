@@ -916,3 +916,22 @@ fn a_link_to_a_target_a_later_phase_creates_waits_for_that_phase() {
     let state = State::load(&state_dir(&w.paths, Scope::System).join("state.json")).unwrap();
     assert!(plan_scope(&cx, &backends, &desired, &state).unwrap().changes.is_empty(), "the deferred link is recorded");
 }
+
+#[test]
+fn a_link_into_another_checkout_points_back_into_the_spec() {
+    let w = World::new();
+    w.write_src("files/rc", "same\n");
+    let clone = tempfile::tempdir().unwrap();
+    fs::create_dir_all(clone.path().join("files")).unwrap();
+    fs::write(clone.path().join("files/rc"), "same\n").unwrap();
+    let f = File { mode: FileMode::Link, src: Some("files/rc".into()), ..file("~/.rc") };
+    let mut cx = w.cx();
+    cx.checkout = Some(clone.path());
+    apply_scope(&cx, &[&FileBackend], &want([f.clone()])).unwrap();
+    assert_eq!(fs::read_link(w.at(".rc")).unwrap(), clone.path().join("files/rc"));
+
+    assert_eq!(drift_notes_of(&w.plan(&want([f.clone()]))).len(), 1);
+    w.apply(&want([f.clone()])).unwrap();
+    assert_eq!(fs::read_link(w.at(".rc")).unwrap(), w.spec.join("files/rc"));
+    assert!(w.plan(&want([f])).changes.is_empty());
+}

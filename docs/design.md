@@ -2289,7 +2289,8 @@ hosts at once. Nothing about that needs waiting loops, worktrees or care:
   it whole to a remote host under the same commit name. Another agent's
   uncommitted edits in the checkout never reach a host. A `mode = "link"` file
   still points into the checkout (`Cx::checkout`), since a link exists to
-  follow edits. A scoped apply (only the resources from given files) was not
+  follow edits. A link left pointing into another checkout, such as a clone an
+  agent applied from, is drift, so the next apply points it back. A scoped apply (only the resources from given files) was not
   built: it still ships whatever else is half-edited in those files, and `--rev`
   covers the case.
 - **`fspec.lock` writes merge.** `fspec update` writes the lock as the

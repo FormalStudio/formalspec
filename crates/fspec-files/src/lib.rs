@@ -69,7 +69,18 @@ impl Backend for FileBackend {
                 .into_iter()
                 .collect());
         }
-        let mut notes = drift_notes(&entry.resource, &entry.record, &read_live(&path)?);
+        let live = read_live(&path)?;
+        let mut notes = drift_notes(&entry.resource, &entry.record, &live);
+        // The resource names its src relative to the spec, so an apply from another checkout of the
+        // same commit leaves a link into that checkout that the record agrees with.
+        if let (Resource::File(f), Live::Link(at)) = (&entry.resource, &live)
+            && f.mode == FileMode::Link
+            && notes.is_empty()
+            && let Ok(want) = link_target(cx, f)
+            && *at != want
+        {
+            notes.push(format!("links {}, the spec links {}", at.display(), want.display()));
+        }
         let recorded = live::recorded(&entry.record, "sha256");
         match &entry.resource {
             Resource::File(f) if f.mode == FileMode::Managed => match render_bytes(cx, f) {

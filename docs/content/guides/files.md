@@ -152,6 +152,7 @@ host laptop
 | `replaced by a symlink` | A symlink now sits where fspec wrote a file |
 | `link is missing`, `link points elsewhere` | A `link` was deleted or repointed |
 | `symlink replaced by a regular file` | An app saved over a `link` |
+| `links <path>, the spec links <path>` | A `link` was applied from another checkout of the spec, such as a temporary clone |
 | `` `ui.theme` changed ``, `` `ui.theme` was removed `` | An owned key of a `patch` file no longer holds what fspec wrote |
 
 By default the next apply writes the file again. To keep the edit, take it into the spec first
