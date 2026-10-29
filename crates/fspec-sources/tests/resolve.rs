@@ -520,3 +520,58 @@ fn a_git_tag_ignores_paths() {
     assert_eq!(locked.rev.as_deref(), Some(tag.as_str()));
     assert_eq!(runner.lines().len(), 1);
 }
+
+fn searching<'a>(fetch: &'a MapFetch, runner: &'a RecordingRunner, cache: &std::path::Path) -> Cx<'a> {
+    let mut cx = cx(fetch, runner).with_catalog(fspec_sources::catalog::Catalog {
+        cache: cache.to_path_buf(),
+        brew: None,
+        net: None,
+    });
+    cx.local = ("x86_64-linux".into(), "opensuse-tumbleweed".into());
+    cx
+}
+
+#[test]
+fn an_unknown_name_lists_close_spellings_and_where_else_it_is() {
+    let dir = tempfile::tempdir().unwrap();
+    let fetch = registry().with("https://flathub.org/api/v2/appstream", r#"["org.mozilla.firefox","org.gnome.Maps"]"#);
+    let runner = RecordingRunner::default();
+    runner.respond(
+        "zypper",
+        Output {
+            status: 0,
+            stdout: r#"<solvable status="not-installed" name="MozillaFirefox" summary="Mozilla Firefox Web Browser" kind="package"/>"#
+                .into(),
+            stderr: String::new(),
+        },
+    );
+    let cx = searching(&fetch, &runner, dir.path());
+    let err = |name: &str| {
+        let p = pkg(json!({"name": name, "source": {"kind": "aqua", "name": name}}));
+        format!("{:#}", resolve(&p, &platforms(&["x86_64-linux"]), None, &cx).unwrap_err())
+    };
+    let typo = err("rpigrep");
+    assert!(typo.contains("`rpigrep` is not in the aqua registry; similar packages:"), "{typo}");
+    assert!(typo.contains("fspec run ripgrep"), "{typo}");
+    let app = err("firefox");
+    let rows: Vec<&str> = app.lines().skip(1).collect();
+    assert!(
+        rows[0].contains("flatpak:org.mozilla.firefox")
+            && rows[0].contains("install only: pkg(\"org.mozilla.firefox\", source = flatpak())"),
+        "{app}"
+    );
+    assert!(rows[1].contains("zypper:MozillaFirefox") && rows[1].contains("Mozilla Firefox Web Browser"), "{app}");
+    assert_eq!(runner.lines()[0], "zypper --no-refresh -x -q search -t package -- rpigrep");
+    // The Flathub ids are kept for a day rather than fetched per name.
+    assert!(dir.path().join("flathub-ids.json").is_file());
+}
+
+#[test]
+fn without_a_catalog_an_unknown_name_only_says_so() {
+    let fetch = registry();
+    let runner = RecordingRunner::default();
+    let p = pkg(json!({"name": "firefox", "source": {"kind": "aqua", "name": "firefox"}}));
+    let e = format!("{:#}", resolve(&p, &platforms(&["x86_64-linux"]), None, &cx(&fetch, &runner)).unwrap_err());
+    assert_eq!(e, "resolving firefox (aqua:firefox): `firefox` is not in the aqua registry");
+    assert!(runner.lines().is_empty());
+}

@@ -195,7 +195,9 @@ fn plan(project: &Project, m: &Machine) -> Result<()> {
 pub fn update(paths: &Paths, only: &[String]) -> Result<()> {
     let project = project(None)?;
     let (fetch, runner) = (LiveFetch::new(), LiveRunner);
-    let cx = fspec_sources::Cx::new(&fetch, &runner).with_spec_dir(&project.dir);
+    let cx = fspec_sources::Cx::new(&fetch, &runner)
+        .with_spec_dir(&project.dir)
+        .with_catalog(crate::search::catalog(paths, true));
     let old = Lock::load(&project.lock_path())?;
     let u = fspec_dev::update(&project, only, &cx, paths)?;
     for line in &u.changes {

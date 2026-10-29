@@ -69,7 +69,12 @@ pub struct LiveFetch {
 
 impl LiveFetch {
     pub fn new() -> LiveFetch {
-        let config = ureq::Agent::config_builder().http_status_as_error(false).build();
+        LiveFetch::with_timeout(None)
+    }
+
+    /// One whose every request gives up after `timeout`, for answers a user is waiting on.
+    pub fn with_timeout(timeout: Option<std::time::Duration>) -> LiveFetch {
+        let config = ureq::Agent::config_builder().http_status_as_error(false).timeout_global(timeout).build();
         LiveFetch { agent: ureq::Agent::new_with_config(config), github_token: OnceLock::new() }
     }
 

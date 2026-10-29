@@ -2,6 +2,7 @@ mod activity;
 mod backends;
 mod dev;
 mod run;
+mod search;
 mod secret;
 mod try_vm;
 mod vm;
@@ -41,6 +42,9 @@ struct Cli {
     /// there instead of published.
     #[arg(long, global = true, hide = true)]
     activity_relay: Option<PathBuf>,
+    /// Name the sources a package search could not read.
+    #[arg(short, long, global = true)]
+    verbose: bool,
     #[command(subcommand)]
     command: Command,
 }
@@ -350,6 +354,19 @@ enum Command {
         #[arg(last = true)]
         args: Vec<String>,
     },
+    /// Search every package catalog this machine can read: the aqua registry, Homebrew, Flathub,
+    /// the distro's packages, crates.io and npm.
+    Search {
+        query: String,
+        /// One JSON object per package.
+        #[arg(long)]
+        json: bool,
+        #[arg(long, default_value_t = 30)]
+        limit: usize,
+        /// Leave out the sources asked over the network per query (crates.io, npm).
+        #[arg(long)]
+        offline: bool,
+    },
     /// Print what the applies, updates and rollbacks running now are doing, and keep following
     /// them and any that start (see docs/activity.md).
     Activity {
@@ -513,6 +530,7 @@ fn main() -> Result<()> {
         fspec_core::activity::relay(relay);
     }
     let paths = paths(&cli)?;
+    fspec_sources::catalog::VERBOSE.store(cli.verbose, std::sync::atomic::Ordering::Relaxed);
     let for_project = matches!(cli.command, Command::Plan { .. } | Command::Update { .. });
     let env = std::env::var_os("FSPEC_SPEC").map(PathBuf::from);
     let picked = dev::pick_spec(cli.spec.clone(), env, &std::env::current_dir()?, for_project);
@@ -572,7 +590,9 @@ fn main() -> Result<()> {
         }
         Command::Update { pkgs, images, cache, registry } => {
             let op = Operation::new(Kind::Update, &spec_dir.display().to_string(), "Updating fspec.lock", None);
-            fspec_core::activity::run(op, || update(&spec_path, &spec_dir, pkgs, *images, *cache, registry.as_deref()))
+            fspec_core::activity::run(op, || {
+                update(&paths, &spec_path, &spec_dir, pkgs, *images, *cache, registry.as_deref())
+            })
         }
         Command::Build { job: Some(job), platform, out, .. } => {
             let file: fspec_build::builders::JobFile =
@@ -935,6 +955,7 @@ fn main() -> Result<()> {
         Command::Run { pkg, bin, update, detach, args } => {
             run::run(&paths, pkg, bin.as_deref(), *update, *detach, args)
         }
+        Command::Search { query, json, limit, offline } => search::run(&paths, query, *json, *limit, *offline),
         Command::Activity { json, once } => activity::print(&fspec_core::activity::dir(), *json, *once),
         Command::Vm { cmd } => vm::run(&fspec_eval::evaluate(&spec_path)?, cmd),
         Command::Try { target, host, keep, cpus, memory, disk, headless, print, list, delete } => {
@@ -968,6 +989,7 @@ struct Switch<'a> {
 /// Commands run for real only on a live root; under `--root` they are logged.
 /// `fspec update`: resolve the spec's packages, images or CI digests into its lock.
 fn update(
+    paths: &Paths,
     spec_path: &Path,
     spec_dir: &Path,
     pkgs: &[String],
@@ -1013,7 +1035,8 @@ fn update(
         }
         return Ok(());
     }
-    let sources = fspec_sources::Cx::new(&fetch, &runner).with_spec_dir(spec_dir);
+    let sources =
+        fspec_sources::Cx::new(&fetch, &runner).with_spec_dir(spec_dir).with_catalog(search::catalog(paths, true));
     let mut result = fspec_sources::update::update(&spec.hosts, &old, pkgs, &sources)?;
     let errors = std::mem::take(&mut result.errors);
     for line in &result.changes {

@@ -63,7 +63,9 @@ pub fn run(paths: &Paths, spec: &str, bin: Option<&str>, update: bool, detach: b
         let fetch = LiveFetch::new();
         if update || !project.lock_path().is_file() {
             activity::phase(Phase::Resolving, None);
-            let cx = fspec_sources::Cx::new(&fetch, &LiveRunner).with_spec_dir(&dir);
+            let cx = fspec_sources::Cx::new(&fetch, &LiveRunner)
+                .with_spec_dir(&dir)
+                .with_catalog(crate::search::catalog(paths, true));
             let u = fspec_dev::update(&project, &[], &cx, paths)?;
             if !u.errors.is_empty() {
                 bail!("{}", u.errors.join("\n"));

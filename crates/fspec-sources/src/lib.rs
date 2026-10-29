@@ -4,6 +4,7 @@
 mod age;
 mod aqua;
 mod cargo;
+pub mod catalog;
 mod distro;
 mod git;
 mod github;
@@ -38,6 +39,8 @@ pub struct Cx<'a> {
     /// `patches` hash.
     pub spec_dir: PathBuf,
     pub(crate) registry: OnceLock<aqua::Registry>,
+    /// The catalogs an unresolved name is searched in for suggestions; `None` suggests nothing.
+    pub catalog: Option<catalog::Catalog>,
 }
 
 impl<'a> Cx<'a> {
@@ -49,11 +52,17 @@ impl<'a> Cx<'a> {
             now: age::now(),
             spec_dir: PathBuf::new(),
             registry: OnceLock::new(),
+            catalog: None,
         }
     }
 
     pub fn with_spec_dir(mut self, dir: impl Into<PathBuf>) -> Cx<'a> {
         self.spec_dir = dir.into();
+        self
+    }
+
+    pub fn with_catalog(mut self, catalog: catalog::Catalog) -> Cx<'a> {
+        self.catalog = Some(catalog);
         self
     }
 }
@@ -115,7 +124,10 @@ pub fn resolve(pkg: &Pkg, platforms: &[String], min_age: Option<i64>, cx: &Cx) -
         Source::Url { url } => python::url(url, cx, &mut locked),
         Source::Pypi { .. } => Err(anyhow!("pypi(...) packages belong in a dev.star, which fspec dev locks")),
     };
-    result.map_err(|e| anyhow!("{}: {e:#}", ctx()))?;
+    result.map_err(|e| match e.downcast_ref::<aqua::NotFound>().and_then(|nf| catalog::suggest(&nf.0, cx)) {
+        Some(similar) => anyhow!("{}: {e:#}; {similar}", ctx()),
+        None => anyhow!("{}: {e:#}", ctx()),
+    })?;
     for (dest, part) in &pkg.parts {
         let Source::Url { url } = part else { return Err(anyhow!("{}: parts take url(...) sources", ctx())) };
         let hash = hash::sri(&cx.fetch.get(url).map_err(|e| anyhow!("{}: part {dest}: {e:#}", ctx()))?);

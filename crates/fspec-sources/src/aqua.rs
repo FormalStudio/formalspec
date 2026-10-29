@@ -11,7 +11,19 @@ use crate::Cx;
 use crate::github::{Platform, pick_release, pick_release_tagged, trim_v};
 use crate::hash::hash_of;
 
-const REGISTRY: &str = "https://raw.githubusercontent.com/aquaproj/aqua-registry/main/registry.yaml";
+pub(crate) const REGISTRY: &str = "https://raw.githubusercontent.com/aquaproj/aqua-registry/main/registry.yaml";
+
+/// A query no registry entry answers to, which the resolver follows with suggestions.
+#[derive(Debug)]
+pub struct NotFound(pub String);
+
+impl std::fmt::Display for NotFound {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "`{}` is not in the aqua registry", self.0)
+    }
+}
+
+impl std::error::Error for NotFound {}
 
 #[derive(Deserialize, Debug, Default)]
 pub struct Registry {
@@ -29,6 +41,8 @@ struct Entry {
     repo_name: Option<String>,
     #[serde(default)]
     aliases: Vec<Alias>,
+    #[serde(default)]
+    description: Option<String>,
     #[serde(default)]
     version_overrides: Vec<Def>,
     #[serde(flatten)]
@@ -170,8 +184,43 @@ impl Registry {
                 }
             }
         }
-        bail!("`{query}` is not in the aqua registry")
+        Err(NotFound(query.to_string()).into())
     }
+
+    /// Every package as the catalog lists it: the name `fspec run` takes (the shortest of its last
+    /// segment, repo name and full name that finds this entry), its other names and description.
+    pub(crate) fn listing(&self) -> impl Iterator<Item = (String, Vec<String>, Option<&str>)> + '_ {
+        self.packages.iter().filter_map(|e| {
+            let full = e.full_name()?;
+            let mut keys: Vec<String> = e.aliases.iter().map(|a| a.name.clone()).collect();
+            keys.extend(full.rsplit('/').next().map(str::to_string));
+            keys.extend(e.repo_name.clone());
+            keys.push(full.clone());
+            keys.dedup();
+            Some((full, keys, e.description.as_deref()))
+        })
+    }
+
+    /// The shortest name that finds the same entry as `full`, which is what a user types.
+    pub(crate) fn short_name(&self, full: &str) -> String {
+        let Ok(entry) = self.find(full) else { return full.to_string() };
+        let mut tries: Vec<String> = full.rsplit('/').next().map(str::to_string).into_iter().collect();
+        tries.extend(entry.repo_name.clone());
+        tries.sort_by_key(String::len);
+        tries
+            .into_iter()
+            .find(|t| self.find(t).is_ok_and(|e| std::ptr::eq(e, entry)))
+            .unwrap_or_else(|| full.to_string())
+    }
+}
+
+/// The registry, fetched once per [`Cx`].
+pub(crate) fn registry<'c>(cx: &'c Cx) -> Result<&'c Registry> {
+    if cx.registry.get().is_none() {
+        let reg = Registry::parse(&cx.fetch.get(REGISTRY)?)?;
+        let _ = cx.registry.set(reg);
+    }
+    Ok(cx.registry.get().expect("set above"))
 }
 
 /// Resolve aqua package `query`, installed as `pkg_name` (which names a bare downloaded binary).
@@ -184,11 +233,7 @@ pub fn resolve(
     cx: &Cx,
     out: &mut LockedPkg,
 ) -> Result<()> {
-    if cx.registry.get().is_none() {
-        let reg = Registry::parse(&cx.fetch.get(REGISTRY)?)?;
-        let _ = cx.registry.set(reg);
-    }
-    let entry = cx.registry.get().expect("set above").find(query)?;
+    let entry = registry(cx)?.find(query)?;
     let repo = entry.repo().ok_or_else(|| anyhow!("aqua package `{query}` has no repo_owner/repo_name"))?;
     let kind = entry.def.kind.as_deref().unwrap_or("?");
     if !matches!(kind, "github_release" | "http") {

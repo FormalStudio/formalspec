@@ -2092,6 +2092,7 @@ self-signed chain are unverified.
 | `fspec watch` | Report drift live |
 | `fspec activity [--json] [--once]` | Follow the operation stream of every running apply, update, rollback and run |
 | `fspec run <pkg> [--bin b] [--update] [--detach] [-- args]` | Run a store package once, outside the spec |
+| `fspec search <query> [--json] [--limit n] [--offline]` | Rank packages from every catalog this machine can read |
 | `fspec switch --distro d [--release r]` | Install another distro beside this one |
 | `fspec switch --adopt-boot` | Make the running root own boot, so the old one can be forgotten |
 | `fspec switch --reset-var` | Stage a reset of `/etc` and `/var` for the next boot of a bootc host |
@@ -2337,6 +2338,21 @@ the ones older than the age, and with them their farms and the user-store packag
 used. `--detach` starts the command in a session of its own with no terminal and returns, which is
 how the shell starts a GUI app. Flatpaks and distro packages cannot run without being installed
 and are refused. [shell-install.md](shell-install.md) has the shell's side.
+
+## Search
+
+`fspec search <query>` ranks packages from every catalog the machine can read: the aqua registry
+and Flathub's app ids (each kept a day under `~/.cache/fspec/catalog/`), Homebrew's own API cache
+on macOS, the distro's package search (zypper, pacman, apt), and crates.io and npm asked per query
+with a 2s timeout (`--offline` leaves those two out). Names equal to the query come first, then
+names ending in it (`MozillaFirefox`, `org.mozilla.firefox`), spellings within two edits, names
+containing it, and descriptions mentioning it. A source that fails is left out, and named with
+`--verbose`.
+
+A `pkg(...)` whose aqua name is not in the registry fails with the same search's best eight
+matches (three per source at most, no description-only ones), each with the `fspec run` that
+starts it or, for a source that cannot run uninstalled, `install only:` and the `pkg(...)` that
+declares it. `fspec update`, `fspec dev`'s update and `fspec run` all resolve through it.
 
 ## Repo layout
 

@@ -12,8 +12,8 @@ once without landing anywhere. This is fspec's half of the launcher's Install mo
 
 On top of those, `fspec run` runs a package once, the way `nix run` did.
 
-Status: `fspec run` for store sources is built; everything else here is design, for FormalOS
-plan task 4.1.
+Status: `fspec run` for store sources and a first `fspec search` are built; everything else here
+is design, for FormalOS plan task 4.1.
 
 ## The rule this keeps
 
@@ -130,6 +130,15 @@ The catalogs are the sources the apps module can write for this host, under
 | `distro` (`zypper`, `pacman`, `dnf`, `apt`, `xbps`) | the distro's AppStream catalog (`/usr/share/swcatalog`) for apps, the package manager's own search for the rest | system |
 | `store` (aqua, `github`) | the aqua registry's index | system |
 | `brew` (macOS) | formulae.brew.sh's JSON | system |
+
+Built so far (`fspec_sources::catalog`, which also writes the suggestions under a name that does
+not resolve): `--json`, `--limit` and `--offline`, with `id`, `name`, `source`, `description`,
+`run` and `spec` per line. Its catalogs are the aqua registry and Flathub's app ids (`/api/v2/appstream`,
+ids only, so no name or description yet) kept a day under `~/.cache/fspec/catalog/`, Homebrew's
+own API cache, the distro's package search, and crates.io and npm asked per query with a 2s
+timeout, which `--offline` leaves out for the launcher. Not built yet: `version`, `icon`,
+`installed`, `--source`, AppStream catalogs and the background refresh; a stale catalog is fetched
+again in the foreground and the stale copy used when that fails.
 
 A catalog older than a day is refreshed in the background by the search that finds it stale;
 that search answers from the old one. `installed` is true when this host's state holds the
