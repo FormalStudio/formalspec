@@ -116,7 +116,9 @@ fn download(root: &Path, verb: &[&str], name: &str) -> Result<()> {
     let mut last = None;
     for line in BufReader::new(child.stdout.take().expect("piped")).lines() {
         let Some(pct) = percent(&line?) else { continue };
-        if last == Some(pct) {
+        // OSTree's pull revises its total as it finds more objects, so a ref's own share falls
+        // back now and then; the line only ever moves forward.
+        if last.is_some_and(|l| pct <= l) {
             continue;
         }
         last = Some(pct);
