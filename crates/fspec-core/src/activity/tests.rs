@@ -166,7 +166,7 @@ fn a_relay_sets_the_parent_step_and_nothing_else() {
     let (_tmp, dir) = stream_dir();
     let p = Publisher::start(&dir, op()).unwrap();
     let lines = client(p.path());
-    let mut relay = Relay::connect(p.path()).unwrap();
+    let mut relay = Relay::connect(&p.relay_for_child()).unwrap();
     assert!(relay.step(|s| {
         s.phase = Phase::Committing;
         s.scope = Some(Scope::System);
@@ -215,4 +215,21 @@ fn a_batch_names_two_and_counts_the_rest() {
     assert_eq!(batch_label(&names(&["firefox"])), "firefox");
     assert_eq!(batch_label(&names(&["git", "firefox"])), "firefox and git");
     assert_eq!(batch_label(&names(&["c", "a", "b", "d"])), "a, b and 2 more");
+}
+
+/// The sudo child counts its changes and exits just before the parent finishes: the result
+/// still has them.
+#[test]
+fn a_relay_that_exits_at_the_end_still_counts() {
+    for _ in 0..20 {
+        let (_tmp, dir) = stream_dir();
+        let p = Publisher::start(&dir, op()).unwrap();
+        let lines = client(p.path());
+        let relay = Relay::connect(&p.relay_for_child()).unwrap();
+        assert!(send(&relay.stream, &encode(Message::Changed { changes: 3 })));
+        drop(relay);
+        p.finish(None);
+        let lines: Vec<Line> = lines.collect();
+        assert_eq!(op_of(lines.last().unwrap()).result.as_ref().unwrap().changes, 3);
+    }
 }

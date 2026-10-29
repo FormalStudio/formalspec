@@ -30,6 +30,8 @@ use crate::resource::Scope;
 pub const VERSION: u32 = 1;
 /// The shortest gap between two updates a client is sent.
 pub const INTERVAL: Duration = Duration::from_millis(50);
+/// How long the end of an operation waits for a relay's last lines.
+const RELAY_DRAIN: Duration = Duration::from_secs(2);
 /// `keys` is cut to this many.
 pub const MAX_KEYS: usize = 32;
 
@@ -39,6 +41,7 @@ pub enum Kind {
     Apply,
     Update,
     Rollback,
+    Run,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -123,6 +126,7 @@ impl Operation {
             Kind::Apply => "apply",
             Kind::Update => "update",
             Kind::Rollback => "rollback",
+            Kind::Run => "run",
         };
         Operation {
             id: format!("{started:x}-{pid}"),
@@ -238,6 +242,9 @@ struct Inner {
     clients: Vec<(u64, UnixStream)>,
     next_client: u64,
     changes: u64,
+    /// Relays handed this socket whose connection has not reached EOF: their last lines may not
+    /// have been read yet.
+    relays: u32,
 }
 
 impl Shared {
@@ -308,7 +315,15 @@ impl Publisher {
         let listener = UnixListener::bind(&path).with_context(|| format!("listening on {}", path.display()))?;
         std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
         let shared = Arc::new(Shared {
-            inner: Mutex::new(Inner { op, seq: 0, closed: false, clients: vec![], next_client: 0, changes: 0 }),
+            inner: Mutex::new(Inner {
+                op,
+                seq: 0,
+                closed: false,
+                clients: vec![],
+                next_client: 0,
+                changes: 0,
+                relays: 0,
+            }),
             changed: Condvar::new(),
         });
         let acceptor = {
@@ -324,6 +339,13 @@ impl Publisher {
 
     pub fn path(&self) -> &Path {
         &self.path
+    }
+
+    /// The socket, for a child about to relay into it. The end of the operation waits (a short
+    /// while) until that child's connection has closed, so its last changes are counted.
+    pub fn relay_for_child(&self) -> PathBuf {
+        self.shared.lock().relays += 1;
+        self.path.clone()
     }
 
     pub fn step(&self, f: impl FnOnce(&mut Step)) {
@@ -342,7 +364,13 @@ impl Publisher {
 
     fn close(&mut self, error: Option<String>) {
         {
-            let mut g = self.shared.lock();
+            let g = self.shared.lock();
+            // A relay's process has exited by now, so its socket is at EOF once its lines are read.
+            let (mut g, _) = self
+                .shared
+                .changed
+                .wait_timeout_while(g, RELAY_DRAIN, |g| g.relays > 0)
+                .unwrap_or_else(|e| e.into_inner());
             if g.closed {
                 return;
             }
@@ -395,12 +423,13 @@ fn accept(shared: &Arc<Shared>, listener: &UnixListener) {
             return;
         }
         let Ok(reader) = stream.try_clone() else { continue };
-        if !send(&stream, &snapshot) {
-            continue;
-        }
         let id = g.next_client;
         g.next_client += 1;
-        g.clients.push((id, stream));
+        // A relay that already sent its lines and exited cannot take the snapshot, but its lines
+        // are still there to read.
+        if send(&stream, &snapshot) {
+            g.clients.push((id, stream));
+        }
         drop(g);
         let shared = shared.clone();
         let _ = std::thread::Builder::new().name("activity-read".into()).spawn(move || read(&shared, id, reader));
@@ -410,7 +439,7 @@ fn accept(shared: &Arc<Shared>, listener: &UnixListener) {
 /// A client's own lines: nothing from a shell, steps from a relay. The read also notices the
 /// client going away while nothing is being sent.
 fn read(shared: &Shared, id: u64, mut stream: UnixStream) {
-    let (mut pending, mut chunk) = (Vec::new(), [0u8; 4096]);
+    let (mut pending, mut chunk, mut relay) = (Vec::new(), [0u8; 4096], false);
     while readable(&stream) {
         match stream.read(&mut chunk) {
             Ok(0) => break,
@@ -422,17 +451,23 @@ fn read(shared: &Shared, id: u64, mut stream: UnixStream) {
             let line: Vec<u8> = pending.drain(..=end).collect();
             let Ok(Line { v: VERSION, message }) = serde_json::from_slice::<Line>(&line) else { continue };
             match message {
-                Message::Relay => {
+                Message::Relay if !relay => {
+                    relay = true;
                     shared.drop_client(id);
                     let _ = stream.shutdown(Shutdown::Write);
                 }
                 Message::Step { step } => shared.change(|s| *s = step),
                 Message::Changed { changes } => shared.lock().changes += changes,
-                Message::Snapshot { .. } | Message::Update { .. } => {}
+                Message::Relay | Message::Snapshot { .. } | Message::Update { .. } => {}
             }
         }
     }
     shared.drop_client(id);
+    if relay {
+        let mut g = shared.lock();
+        g.relays = g.relays.saturating_sub(1);
+        shared.changed.notify_all();
+    }
 }
 
 fn broadcast(shared: &Shared) {
@@ -532,10 +567,11 @@ pub fn relay(path: &Path) {
     *sink() = Some(Relay::connect(path).map_or(Sink::Off, Sink::Relay));
 }
 
-/// The socket a `sudo fspec` child relays to, while this process publishes an operation.
+/// The socket a `sudo fspec` child about to start relays to, while this process publishes an
+/// operation.
 pub fn relay_path() -> Option<PathBuf> {
     match &*sink() {
-        Some(Sink::Publisher(p)) => Some(p.path().to_path_buf()),
+        Some(Sink::Publisher(p)) => Some(p.relay_for_child()),
         _ => None,
     }
 }
@@ -585,6 +621,7 @@ fn summary(kind: Kind, n: u64) -> String {
         (Kind::Update, 0) => "the lock is unchanged".into(),
         (Kind::Update, 1) => "1 lock entry changed".into(),
         (Kind::Update, n) => format!("{n} lock entries changed"),
+        (Kind::Run, _) => "started".into(),
         (_, 0) => "no changes".into(),
         (_, 1) => "1 change".into(),
         (_, n) => format!("{n} changes"),

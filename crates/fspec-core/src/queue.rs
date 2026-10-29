@@ -55,7 +55,10 @@ pub fn run(
         Ok(held) => held,
         Err(_) if wait => {
             activity::phase(activity::Phase::Queued, None);
-            flock::acquire(&path, &what, true)?
+            // Another apply held it a moment ago, even if it let go before this second try.
+            let mut held = flock::acquire(&path, &what, true)?;
+            held.waited = true;
+            held
         }
         Err(e) => return Err(e),
     };
