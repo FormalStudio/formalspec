@@ -5,7 +5,8 @@ use std::path::{Path, PathBuf};
 use age::armor::ArmoredReader;
 use anyhow::{Context, Result, bail};
 use fspec_core::paths::Paths;
-use fspec_core::resource::Scope;
+use fspec_core::resource::{Desired, Resource, Scope};
+use fspec_core::state::State;
 
 /// agenix's defaults: the host's SSH keys for a system secret, the user's for a user one, with
 /// fspec's own age key as an extra.
@@ -29,27 +30,64 @@ pub fn load_identities(files: &[PathBuf]) -> Result<Vec<Box<dyn age::Identity>>>
     let mut identities: Vec<Box<dyn age::Identity>> = Vec::new();
     for file in files.iter().filter(|f| f.exists()) {
         let bytes = fs::read(file).with_context(|| format!("reading the identity {}", file.display()))?;
-        if bytes.starts_with(b"-----BEGIN") {
-            let name = Some(file.display().to_string());
-            match age::ssh::Identity::from_buffer(&bytes[..], name)
-                .with_context(|| format!("reading the SSH key {}", file.display()))?
-            {
-                id @ age::ssh::Identity::Unencrypted(_) => identities.push(Box::new(id)),
-                _ => bail!("{} is a passphrase-protected or unsupported SSH key", file.display()),
-            }
-        } else {
-            let found = age::IdentityFile::from_buffer(BufReader::new(&bytes[..]))
-                .with_context(|| format!("reading {}", file.display()))?
-                .into_identities()
-                .with_context(|| format!("loading {}", file.display()))?;
-            identities.extend(found.into_iter().map(|i| i as Box<dyn age::Identity>));
-        }
+        identities.extend(parse_identities(&bytes, &file.display().to_string())?);
     }
     if identities.is_empty() {
         let tried: Vec<_> = files.iter().map(|f| f.display().to_string()).collect();
         bail!("no age identity found (tried {})", tried.join(", "));
     }
     Ok(identities)
+}
+
+/// The identities in one identity file's bytes: an unencrypted SSH private key or an age identity
+/// file. `name` labels errors.
+pub fn parse_identities(bytes: &[u8], name: &str) -> Result<Vec<Box<dyn age::Identity>>> {
+    if bytes.starts_with(b"-----BEGIN") {
+        match age::ssh::Identity::from_buffer(bytes, Some(name.to_string()))
+            .with_context(|| format!("reading the SSH key {name}"))?
+        {
+            id @ age::ssh::Identity::Unencrypted(_) => Ok(vec![Box::new(id)]),
+            _ => bail!("{name} is a passphrase-protected or unsupported SSH key"),
+        }
+    } else {
+        let found = age::IdentityFile::from_buffer(BufReader::new(bytes))
+            .with_context(|| format!("reading {name}"))?
+            .into_identities()
+            .with_context(|| format!("loading {name}"))?;
+        Ok(found.into_iter().map(|i| i as Box<dyn age::Identity>).collect())
+    }
+}
+
+/// Leave out the secrets of `scope` that no identity here decrypts, so the rest of an apply still
+/// runs on a machine that has no key yet. Returns what is left and, for each secret left out, its
+/// path and why. A secret `state` already holds stays in, since leaving it out would remove it.
+pub fn without_undecryptable(
+    paths: &Paths,
+    scope: Scope,
+    spec_dir: &Path,
+    state: &State,
+    desired: Vec<Desired>,
+) -> (Vec<Desired>, Vec<(String, String)>) {
+    let mut skipped = Vec::new();
+    let kept = desired
+        .into_iter()
+        .filter(|d| {
+            let Resource::Secret(s) = &d.resource else { return true };
+            if d.resource.scope() != scope || state.entries.contains_key(&d.resource.key()) {
+                return true;
+            }
+            let opened =
+                identity_paths(paths, scope, &s.identities).and_then(|ids| decrypt_file(&spec_dir.join(&s.src), &ids));
+            match opened {
+                Ok(_) => true,
+                Err(e) => {
+                    skipped.push((s.path.clone(), format!("{e:#}")));
+                    false
+                }
+            }
+        })
+        .collect();
+    (kept, skipped)
 }
 
 /// Decrypt an age file's bytes (binary or armored).

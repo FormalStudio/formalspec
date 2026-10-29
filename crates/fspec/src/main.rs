@@ -83,6 +83,10 @@ enum Command {
         /// then the user scope.
         #[arg(long)]
         scope: Option<ScopeArg>,
+        /// Leave out the new secrets no key on this machine decrypts, with a warning for each,
+        /// instead of failing. The installer's first apply runs with it.
+        #[arg(long)]
+        skip_undecryptable_secrets: bool,
     },
     /// Resolve versions and hashes into fspec.lock, next to the spec.
     Update {
@@ -697,7 +701,7 @@ fn main() -> Result<()> {
             println!("wrote {}", path.display());
             Ok(())
         }
-        Command::Apply { host, all, dirty, local, scope } => {
+        Command::Apply { host, all, dirty, local, scope, skip_undecryptable_secrets } => {
             let spec = fspec_eval::evaluate(&spec_path)?;
             let this = local_hostname();
             let remote = Remote {
@@ -709,8 +713,11 @@ fn main() -> Result<()> {
             };
             let apply_one = |h: &Host| -> Result<()> {
                 match remote_alias(h, &this, &paths, *local) {
+                    Some(_) if *skip_undecryptable_secrets => {
+                        bail!("--skip-undecryptable-secrets applies this machine only, not {}", h.name)
+                    }
                     Some(alias) => remote.apply(h, &alias, scope.map(scope_name)),
-                    None => apply_local(&paths, &spec_path, &spec_dir, h, *scope),
+                    None => apply_local(&paths, &spec_path, &spec_dir, h, *scope, *skip_undecryptable_secrets),
                 }
             };
             if *all {
@@ -1611,21 +1618,47 @@ fn orphans(env: &Env, claim: Option<&[String]>, delete: Option<&str>) -> Result<
     Ok(())
 }
 
-fn apply_local(paths: &Paths, spec_path: &Path, spec_dir: &Path, host: &Host, scope: Option<ScopeArg>) -> Result<()> {
+fn apply_local(
+    paths: &Paths,
+    spec_path: &Path,
+    spec_dir: &Path,
+    host: &Host,
+    scope: Option<ScopeArg>,
+    skip_secrets: bool,
+) -> Result<()> {
     if is_live(paths) {
         check_declared(host)?;
     }
     let env = Env::new(paths, host, spec_dir)?;
     let scopes: Vec<Scope> = scope.map(|s| vec![s.into()]).unwrap_or(SCOPES.to_vec());
+    let mut skipped = Vec::new();
     for scope in scopes {
         if scope == Scope::System && is_live(paths) && !is_root(env.runner.as_ref())? {
-            sudo_system(spec_path, &host.name, paths, &["apply", "--local"])?;
+            let flag: &[&str] = if skip_secrets { &["--skip-undecryptable-secrets"] } else { &[] };
+            sudo_system(spec_path, &host.name, paths, &[&["apply", "--local"], flag].concat())?;
             continue;
         }
         let state = State::load(&state_dir(paths, scope).join("state.json"))?;
-        let plan =
-            apply_scope(&env.cx(scope, &state), &backends::all(), &engine::unless_unlocked(host.desired(), &env.lock))?;
+        let mut desired = engine::unless_unlocked(host.desired(), &env.lock);
+        if skip_secrets {
+            let left_out;
+            (desired, left_out) = fspec_files::secret::without_undecryptable(paths, scope, spec_dir, &state, desired);
+            for (path, why) in &left_out {
+                eprintln!("warning: skipped secret {path}: {why}");
+            }
+            skipped.extend(left_out.into_iter().map(|(path, _)| path));
+        }
+        let plan = apply_scope(&env.cx(scope, &state), &backends::all(), &desired)?;
         println!("{plan}");
+    }
+    if !skipped.is_empty() {
+        eprintln!(
+            "warning: {} secret(s) not installed, since no key here decrypts them: {}\n\
+             Put a key that does at ~/.config/fspec/age.key (or have it added to secrets.star and \
+             `fspec secret rekey` run where a key works), then run `fspec apply` again.",
+            skipped.len(),
+            skipped.join(", ")
+        );
     }
     Ok(())
 }

@@ -68,7 +68,7 @@ Shows what `apply` would change. Never changes anything.
 ### fspec apply
 
 ```
-fspec apply [--host <h> | --all] [--dirty] [--scope system|user]
+fspec apply [--host <h> | --all] [--dirty] [--scope system|user] [--skip-undecryptable-secrets]
 ```
 
 Converges a host. A remote host is reached over ssh.
@@ -79,6 +79,7 @@ Converges a host. A remote host is reached over ssh.
 | `--all` | Apply every remote host in spec order, then this machine. Stops at the first failure |
 | `--dirty` | Allow uncommitted changes when applying remote hosts |
 | `--scope <s>` | Apply only the `system` or the `user` scope. Without it, the system scope runs through `sudo`, then the user scope |
+| `--skip-undecryptable-secrets` | Leave out each new secret no identity on this machine decrypts, with a warning, instead of failing, and name them at the end. A secret an earlier apply installed is never left out. This machine only. The installer's first apply uses it |
 
 ### fspec rollback
 

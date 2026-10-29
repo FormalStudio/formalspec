@@ -167,6 +167,18 @@ secret(
 `fspec secret edit`, `show` and `rekey` use the user-scope defaults. Pass `-i <path>` (or
 `--identity`, repeatable) to use other keys.
 
+## A machine without a key yet
+
+By default an apply stops before changing anything when a secret does not decrypt. On a machine
+that has no key yet, such as a fresh install, `fspec apply --skip-undecryptable-secrets` applies
+everything else, prints `warning: skipped secret <path>: <why>` for each secret it left out, and
+lists them at the end. A secret an earlier apply installed is never left out, since leaving it
+out would remove it. Put a key in place, or have one added to `secrets.star` and
+`fspec secret rekey` run on a machine that already decrypts, then run `fspec apply` again.
+
+The [installer](installer.md#keys-for-your-secrets) can bring a key in, or make one, and runs its
+first apply this way.
+
 ## Owner and permissions
 
 | Argument | Default | Meaning |
@@ -250,7 +262,7 @@ fspec wrote.
 
 | Error | Fix |
 | --- | --- |
-| ``no age identity found (tried /etc/ssh/ssh_host_ed25519_key, /etc/ssh/ssh_host_rsa_key, /root/.config/fspec/age.key)`` | None of the identity files exists on this host. Copy a key there or set `identities` |
+| ``no age identity found (tried /etc/ssh/ssh_host_ed25519_key, /etc/ssh/ssh_host_rsa_key, /root/.config/fspec/age.key)`` | None of the identity files exists on this host. Copy a key there or set `identities`. `--skip-undecryptable-secrets` applies the rest meanwhile |
 | ``/home/alex/.ssh/id_ed25519 is a passphrase-protected or unsupported SSH key`` | fspec cannot ask for a passphrase. Use an age key, or another ssh key without one |
 | ``decrypting`` followed by ``No matching keys found`` | The identities exist, but none is a recipient of this file. Add the host's key to `secrets.star` and run `fspec secret rekey` |
 | ``api-token is not in secrets.star`` | `fspec secret edit` only edits entries listed in `secrets.star` |

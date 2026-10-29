@@ -706,6 +706,39 @@ fn secret_without_the_identity_fails_before_changing_anything() {
     assert!(!w.at("t").exists());
 }
 
+#[test]
+fn secrets_no_key_here_opens_are_left_out_unless_already_installed() {
+    let w = World::new();
+    let src = age_fixture(&w, "x");
+    let stranger = age::x25519::Identity::generate().to_public().to_string();
+    fs::write(w.spec.join("locked.age"), crate::secret::encrypt(b"y", &[stranger]).unwrap()).unwrap();
+    let secret = |path: &str, src: &str| Desired {
+        resource: Resource::Secret(Secret {
+            path: path.into(),
+            src: src.into(),
+            perms: "0400".into(),
+            owner: None,
+            identities: vec![],
+        }),
+        owner: None,
+    };
+    let want = vec![secret("~/open", &src), secret("~/locked", "locked.age"), secret("/etc/system", "locked.age")];
+    let (kept, skipped) =
+        crate::secret::without_undecryptable(&w.paths, Scope::User, &w.spec, &w.state(), want.clone());
+    let paths: Vec<_> = kept.iter().map(|d| d.resource.key().id).collect();
+    assert_eq!(paths, ["~/open", "/etc/system"]);
+    assert_eq!(skipped.len(), 1);
+    assert_eq!(skipped[0].0, "~/locked");
+    assert!(skipped[0].1.contains("No matching keys"), "{}", skipped[0].1);
+    w.apply(&kept[..1]).unwrap();
+    assert_eq!(w.read("open"), "x");
+
+    fs::remove_file(w.at(".config/fspec/age.key")).unwrap();
+    let (kept, skipped) = crate::secret::without_undecryptable(&w.paths, Scope::User, &w.spec, &w.state(), want);
+    assert_eq!(kept.len(), 2, "{skipped:?}");
+    assert_eq!(skipped[0].0, "~/locked");
+}
+
 fn watched(f: File, record: Map<String, Value>) -> Watched {
     Watched { key: "file:x".into(), path: "/x".into(), resource: Resource::File(f), record }
 }
