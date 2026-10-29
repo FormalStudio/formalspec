@@ -87,14 +87,20 @@ bluetoothd starts; there is no controller, the honest no-adapter state), `upower
 `fstestvm-hostapd-wlan1` (`FORMALTEST`, WPA2-PSK-SHA256, password `formaltest-psk`),
 `fstestvm-hostapd-wlan2` (`FORMALTEST-EAP`, PEAP/MSCHAPv2, identity `formaltest`, password
 `formaltest-eap-pw`), `fstestvm-ap-addrs` (10.90.1.1 and 10.90.2.1) and `fstestvm-dhcp`
-(dnsmasq, DHCP only, on the two APs). geoclue2 is installed and D-Bus activated. There is no
-seatd service: Tumbleweed's seatd ships no unit, and libseat goes through logind.
+(dnsmasq, DHCP only, on the two APs), `fstestvm-modules` (loads the modules below on the first
+apply too, before any reboot) and `fstestvm-seatd` (`seatd -g video`: an ssh login holds no logind
+seat, so the smoke rig's Hyprland opens the vkms card through it; the greeter and the desktop set
+`LIBSEAT_BACKEND=logind` and stay on seat0). geoclue2 is installed and D-Bus activated.
 
 Kernel: `kernel-default` with `mac80211_hwsim` (three radios: wlan0 is NetworkManager's station,
 wlan1 and wlan2 the APs, unmanaged), `vkms` and `bluetooth` loaded at boot. `v4l2loopback` is
 installed and configured (`video_nr=10,11`, "Loop Colour" and "Loop IR", `exclusive_caps=1,1`) but
 not loaded, so `--mirror` loads it itself as before. Two DRM cards: vkms for the smoke rig and
-virtio-gpu for the display; both scripts above pick virtio-gpu by its driver.
+virtio-gpu for the display; both scripts above pick virtio-gpu by its driver. On kernel 7.3 vkms
+sits on the faux bus (`card*/device/driver` is `faux_driver`), so it is found by its device path
+`/sys/devices/faux/vkms`, as `dev/smoke.sh`'s `vkms_card_device` already does. Checked by hand:
+`AQ_DRM_DEVICES=/dev/dri/card1 dbus-run-session -- Hyprland` over ssh brings up `Virtual-1`
+1024x768 beside a logged-in desktop.
 
 User session (`kyan`'s lingering manager): `fstestvm-parent.service`, a headless sway on the
 pixman renderer that imports `WAYLAND_DISPLAY` into the user environment, where `dev/smoke.sh`
@@ -141,9 +147,8 @@ A release tarball from `dev/tarball.sh` works the same: unpack it in the guest a
 
 ## What is left for the FormalShell side
 
-- `dev/smoke.sh`'s VM mode: pick `vkms` by driver name as before; the guest has no render node
-  for the sway parent, so the existing VM branch applies unchanged. The virtio-gpu card is a
-  second card it must not take.
+- `dev/smoke.sh`'s VM mode: its vkms branch applies unchanged (the sway parent has no render
+  node, and seatd is up). The virtio-gpu card is a second card it must not take.
 - `dev/vm.sh` and `dev/vm-lock.sh` call `fspec vm start fstestvm<slot>` and
   `ssh fstestvm<slot>` instead of booting a NixOS VM. Slot locking stays FormalShell's.
 - `just check fs-auth|fs-audio|fs-bluez|fs-network|fs-upower` run `cargo test` in the guest
