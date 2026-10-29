@@ -2336,8 +2336,10 @@ and activates it like a project, so the package unpacks into the user store and 
 farm with no privilege. Every run rewrites that `dev.star`; `fspec gc --older-than <age>` deletes
 the ones older than the age, and with them their farms and the user-store packages only they
 used. `--detach` starts the command in a session of its own with no terminal and returns, which is
-how the shell starts a GUI app. Flatpaks and distro packages cannot run without being installed
-and are refused. [shell-install.md](shell-install.md) has the shell's side.
+how the shell starts a GUI app. A Flathub app runs from fspec's own flatpak installation under
+`~/.cache/fspec/dev/flatpak`, and a bare name aqua lacks runs the one app of that name the
+catalogs clearly mean (`firefox` is Flathub's). Distro and Homebrew packages cannot run without
+being installed and are refused. [shell-install.md](shell-install.md) has the shell's side.
 
 ## Search
 

@@ -110,10 +110,11 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
 | `committing` | apply, rollback | Changing the machine, in phase order under the journal |
 | `resolving` | update, run | Asking upstream for each package's newest version (a run only before its first start, or with `--update`) |
 | `writing` | update | Writing `fspec.lock` |
-| `preparing` | run | Unpacking into the user store and linking its commands; the run succeeds when the command starts, not when it exits |
+| `preparing` | run | Unpacking into the user store and linking its commands, or downloading a Flathub app into fspec's flatpak installation; the run succeeds when the command starts, not when it exits |
 
 `progress.unit` is `resources` (apply and rollback: one per resource the plan changes, counted in
-each of `preparing` and `committing`) or `packages` (update and run: one per package declaration).
+each of `preparing` and `committing`), `packages` (update and run: one per package declaration) or
+`percent` (a run of a Flathub app while flatpak downloads it, out of 100).
 Progress starts again at 0 in each phase and each scope. `done` counts finished work, so `item`
 is the work in progress past `done`.
 

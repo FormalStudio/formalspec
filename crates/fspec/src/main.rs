@@ -338,7 +338,8 @@ enum Command {
         args: Vec<String>,
     },
     /// Run a package once without adding it to the spec: `ripgrep`, `github:sharkdp/bat`,
-    /// `npm:cowsay`, `cargo:xh`. Its store path goes at the next `fspec gc` past its last run.
+    /// `npm:cowsay`, `cargo:xh`, `flatpak:org.mozilla.firefox`, or a name aqua lacks that one
+    /// package clearly answers to (`firefox`). It goes at the next `fspec gc` past its last run.
     Run {
         pkg: String,
         /// The command to run, when the package has several.
@@ -945,6 +946,9 @@ fn main() -> Result<()> {
                 println!("{scope:?}: freed {}", fspec_store::gc::human(report.freed));
                 if scope == Scope::User && is_live(&paths) {
                     for path in fspec_dev::gc::run(&paths.home, cutoff)? {
+                        println!("removed {}", paths.to_spec(&path));
+                    }
+                    for path in run::gc(&paths.home, cutoff)? {
                         println!("removed {}", paths.to_spec(&path));
                     }
                 }

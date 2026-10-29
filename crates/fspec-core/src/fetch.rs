@@ -1,9 +1,11 @@
 use std::collections::HashMap;
 use std::fmt;
-use std::io::Read;
+use std::io::{Read, Write};
+use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result, anyhow};
+use sha2::Digest;
 
 /// HTTP reads for resolvers and the store. Tests use [`MapFetch`].
 pub trait Fetch: Sync {
@@ -88,6 +90,36 @@ impl LiveFetch {
                 })
             })
             .as_deref()
+    }
+}
+
+impl LiveFetch {
+    /// Stream `url` into `dest`, calling `progress` with the bytes so far and the length the
+    /// server gave, and return the body's sha256 in hex. Bodies too large to hold in memory (an
+    /// app's disk image) come this way.
+    pub fn download(&self, url: &str, dest: &Path, progress: &mut dyn FnMut(u64, Option<u64>)) -> Result<String> {
+        let resp = self.agent.get(url).header("User-Agent", "fspec").call().with_context(|| format!("GET {url}"))?;
+        let status = resp.status().as_u16();
+        if !(200..300).contains(&status) {
+            return Err(HttpError { url: url.into(), status, rate_limited: None }.into());
+        }
+        let total = resp.headers().get("content-length").and_then(|v| v.to_str().ok()?.parse().ok());
+        let mut reader = resp.into_body().into_reader();
+        let mut file = std::fs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?;
+        let mut sha = sha2::Sha256::new();
+        let mut buf = vec![0u8; 1 << 16];
+        let mut done = 0u64;
+        loop {
+            let n = reader.read(&mut buf).with_context(|| format!("reading {url}"))?;
+            if n == 0 {
+                break;
+            }
+            sha.update(&buf[..n]);
+            file.write_all(&buf[..n]).with_context(|| format!("writing {}", dest.display()))?;
+            done += n as u64;
+            progress(done, total);
+        }
+        Ok(sha.finalize().iter().map(|b| format!("{b:02x}")).collect())
     }
 }
 

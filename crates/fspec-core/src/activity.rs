@@ -71,6 +71,8 @@ pub enum Phase {
 pub enum Unit {
     Resources,
     Packages,
+    /// Of a download that names no sizes, out of 100.
+    Percent,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

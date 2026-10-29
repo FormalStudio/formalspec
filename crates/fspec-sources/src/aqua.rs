@@ -160,6 +160,11 @@ impl Registry {
         serde_yaml::from_slice(yaml).context("parsing the aqua registry")
     }
 
+    /// Whether `query` names a package here; one several entries share does too.
+    pub(crate) fn has(&self, query: &str) -> bool {
+        self.find(query).map_or_else(|e| !e.is::<NotFound>(), |_| true)
+    }
+
     fn find(&self, query: &str) -> Result<&Entry> {
         let by = |f: &dyn Fn(&Entry) -> bool| self.packages.iter().filter(|e| f(e)).collect::<Vec<_>>();
         let exact = by(&|e| e.full_name().as_deref() == Some(query));

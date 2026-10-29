@@ -558,11 +558,15 @@ fn an_unknown_name_lists_close_spellings_and_where_else_it_is() {
     let app = err("firefox");
     let rows: Vec<&str> = app.lines().skip(1).collect();
     assert!(
-        rows[0].contains("flatpak:org.mozilla.firefox")
-            && rows[0].contains("install only: pkg(\"org.mozilla.firefox\", source = flatpak())"),
+        rows[0].contains("flatpak:org.mozilla.firefox") && rows[0].contains("fspec run flatpak:org.mozilla.firefox"),
         "{app}"
     );
-    assert!(rows[1].contains("zypper:MozillaFirefox") && rows[1].contains("Mozilla Firefox Web Browser"), "{app}");
+    assert!(
+        rows[1].contains("zypper:MozillaFirefox")
+            && rows[1].contains("Mozilla Firefox Web Browser")
+            && rows[1].contains("install only: pkg(\"MozillaFirefox\", source = zypper())"),
+        "{app}"
+    );
     assert_eq!(runner.lines()[0], "zypper --no-refresh -x -q search -t package -- rpigrep");
     // The Flathub ids are kept for a day rather than fetched per name.
     assert!(dir.path().join("flathub-ids.json").is_file());

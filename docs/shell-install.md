@@ -12,7 +12,7 @@ once without landing anywhere. This is fspec's half of the launcher's Install mo
 
 On top of those, `fspec run` runs a package once, the way `nix run` did.
 
-Status: `fspec run` for store sources and a first `fspec search` are built; everything else here
+Status: `fspec run` for store sources and Flathub apps and a first `fspec search` are built; everything else here
 is design, for FormalOS plan task 4.1.
 
 ## The rule this keeps
@@ -259,7 +259,23 @@ launcher's old `:nix` route.
   `fspec dev` projects follow, and deletes the run's `dev.star` and lock with them. A package
   later installed for real is a separate system store path and is unaffected.
 
-Flatpaks and distro packages cannot run without being installed, so `fspec run` refuses them
-and search rows from those sources carry `run: false`. A later design can install a Flathub app
-`--user` as a run, recorded in `~/.local/state/fspec/runs.json`, for `fspec gc` to uninstall when
-unused past the cutoff; that is not built.
+- **A Flathub app** (`flatpak:org.mozilla.firefox`) is installed into fspec's own flatpak
+  installation, flatpak's per-user one moved by `FLATPAK_USER_DIR` to
+  `~/.cache/fspec/dev/flatpak/installation` with Flathub added there, and `flatpak run` from it.
+  The user's `flatpak list`, their exported desktop files and the spec never see it. Runtimes the
+  system installation has are used from there; any other is downloaded beside the app. The
+  download is the run's `preparing` phase, its progress in unit `percent` with the app's name as
+  `item`, and a `downloading NN%` line in a terminal. Each run touches `used/<id>`; `fspec gc
+  --older-than` uninstalls the apps not run within the age and the runtimes left unused, and the
+  whole installation once no app remains.
+- **A bare name aqua lacks** runs the one package of that exact name the catalogs offer
+  (`fspec_sources::catalog::pick`): `firefox` prints `firefox: running flatpak:org.mozilla.firefox`
+  and runs it. An app of the name (Flathub, Homebrew, the distro) outranks npm and crates.io,
+  where short names are often squatted, and only a runnable one is picked; with none or two the
+  run fails listing the candidates, runnable rows first. The choice is kept under
+  `~/.cache/fspec/dev/names/` until `--update` or `fspec gc`.
+- **Distro and Homebrew packages** cannot run without being installed: unprivileged zypper
+  resolves no dependencies (`install --dry-run` wants root), and the packages assume their own
+  paths under `/` (Firefox's launcher sets `MOZ_DIST_LIB=/usr/lib64/firefox`). `fspec run` refuses
+  them naming the `pkg(...)` to add to the spec before `fspec apply`, and search rows from those
+  sources carry `run: false`.

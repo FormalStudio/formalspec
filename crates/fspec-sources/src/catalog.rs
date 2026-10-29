@@ -92,9 +92,10 @@ impl Origin {
         }
     }
 
-    /// Whether `fspec run` starts it without installing.
+    /// Whether `fspec run` starts it without installing. A Flathub app is installed into fspec's
+    /// own flatpak installation, never the user's; a cask's app is unpacked into fspec's cache.
     pub fn runs(self) -> bool {
-        matches!(self, Origin::Aqua | Origin::Cargo | Origin::Npm)
+        matches!(self, Origin::Aqua | Origin::Cask | Origin::Flathub | Origin::Cargo | Origin::Npm)
     }
 }
 
@@ -293,13 +294,58 @@ pub fn search(query: &str, cx: &Cx) -> Found {
     found
 }
 
+/// Whether the aqua registry has `name`, read from the daily copy search keeps. A name several
+/// entries share is there too: resolving it says which.
+pub fn aqua_has(name: &str, cx: &Cx) -> Result<bool> {
+    let cat = cx.catalog.as_ref().ok_or_else(|| anyhow!("no catalog to look `{name}` up in"))?;
+    aqua_hits(cx, cat)?;
+    let reg = cx.registry.get().expect("set by aqua_hits");
+    Ok(reg.has(name))
+}
+
+/// The one package a name aqua lacks clearly means, which `fspec run` starts without asking: the
+/// only runnable package of that exact name. An app (Flathub, Homebrew, the distro) of the name
+/// outranks npm and crates.io, where short names are often squatted, so `firefox` is Flathub's
+/// and never npm's `firefox`; with no runnable app among them, or two, nothing is picked.
+pub fn pick<'f>(query: &str, found: &'f Found) -> Option<&'f Hit> {
+    let q = query.to_lowercase();
+    let named: Vec<&Hit> = found
+        .hits
+        .iter()
+        .filter(|(m, h)| match m {
+            Match::Exact => true,
+            // `MozillaFirefox`, whose summary names Firefox.
+            Match::Word(_) => {
+                matches!(h.origin, Origin::Zypper | Origin::Pacman | Origin::Apt)
+                    && h.description.as_deref().is_some_and(|d| words(d).contains(&q))
+            }
+            _ => false,
+        })
+        .map(|(_, h)| h)
+        .collect();
+    let apps: Vec<&Hit> = named.iter().filter(|h| !matches!(h.origin, Origin::Npm | Origin::Cargo)).copied().collect();
+    // With an app catalog unread, an npm or crates.io name may be squatting on an app it holds.
+    if apps.is_empty() && found.skipped.iter().any(|(s, _)| matches!(s.as_str(), "Homebrew" | "Flathub" | "distro")) {
+        return None;
+    }
+    let pool = if apps.is_empty() { named } else { apps };
+    match pool.into_iter().filter(|h| h.origin.runs()).collect::<Vec<_>>().as_slice() {
+        [one] => Some(one),
+        _ => None,
+    }
+}
+
 /// The lines that follow `` `query` is not in the aqua registry ``: the best few matches from
-/// every source, each with what to type.
+/// every source, each with what to type, the ones `fspec run` starts first.
 pub fn suggest(query: &str, cx: &Cx) -> Option<String> {
-    let found = search(query, cx);
+    suggest_from(&search(query, cx))
+}
+
+/// [`suggest`] for a search already made.
+pub fn suggest_from(found: &Found) -> Option<String> {
     let mut per: std::collections::HashMap<Origin, usize> = Default::default();
     // A description that mentions the name is too loose a match to offer as a correction.
-    let hits: Vec<&Hit> = found
+    let mut hits: Vec<&Hit> = found
         .hits
         .iter()
         .filter(|(m, _)| *m != Match::Described)
@@ -311,6 +357,7 @@ pub fn suggest(query: &str, cx: &Cx) -> Option<String> {
         })
         .take(SUGGEST)
         .collect();
+    hits.sort_by_key(|h| !h.origin.runs());
     let mut out = String::new();
     if !hits.is_empty() {
         out.push_str("similar packages:\n");
@@ -607,6 +654,71 @@ mod tests {
         );
     }
 
+    fn found(query: &str, hits: Vec<Hit>) -> Found {
+        Found { hits: rank(query, hits), skipped: vec![] }
+    }
+
+    #[test]
+    fn a_bare_name_runs_the_one_app_of_that_name_over_npm_and_cargo_squats() {
+        let firefox = found(
+            "firefox",
+            vec![
+                hit(Origin::Npm, "firefox", &[]),
+                hit(Origin::Cargo, "firefox", &[]),
+                Hit::new(Origin::Zypper, "MozillaFirefox", Some("Mozilla Firefox Web Browser")),
+                hit(Origin::Flathub, "org.mozilla.firefox", &["firefox"]),
+                hit(Origin::Flathub, "org.mozilla.Thunderbird", &["Thunderbird"]),
+            ],
+        );
+        assert_eq!(pick("firefox", &firefox).map(Hit::id).as_deref(), Some("flatpak:org.mozilla.firefox"));
+        assert_eq!(pick("FireFox", &firefox).map(Hit::id).as_deref(), Some("flatpak:org.mozilla.firefox"));
+        let mac = found(
+            "firefox",
+            vec![hit(Origin::Npm, "firefox", &[]), hit(Origin::Cask, "firefox", &["Mozilla Firefox"])],
+        );
+        assert_eq!(pick("firefox", &mac).map(Hit::id).as_deref(), Some("brew:firefox"));
+        // A tool only npm has is npm's.
+        let cowsay = found("cowsay", vec![hit(Origin::Npm, "cowsay", &[]), hit(Origin::Npm, "cowsay2", &[])]);
+        assert_eq!(pick("cowsay", &cowsay).map(Hit::id).as_deref(), Some("npm:cowsay"));
+        // Unless an app catalog could not be read, which might hold the app.
+        let blind = Found {
+            skipped: vec![("Homebrew".into(), "no cache".into())],
+            ..found("firefox", vec![hit(Origin::Npm, "firefox", &[])])
+        };
+        assert_eq!(pick("firefox", &blind), None);
+    }
+
+    #[test]
+    fn an_unclear_name_picks_nothing() {
+        // The distro's htop cannot run uninstalled, and npm's is likely a squat.
+        let htop = found("htop", vec![hit(Origin::Zypper, "htop", &[]), hit(Origin::Npm, "htop", &[])]);
+        assert_eq!(pick("htop", &htop), None);
+        // Two Flathub apps of one name.
+        let two = found(
+            "notes",
+            vec![hit(Origin::Flathub, "a.b.notes", &["notes"]), hit(Origin::Flathub, "c.d.Notes", &["Notes"])],
+        );
+        assert_eq!(pick("notes", &two), None);
+        // npm and crates.io both, with no app.
+        let xh = found("xh", vec![hit(Origin::Npm, "xh", &[]), hit(Origin::Cargo, "xh", &[])]);
+        assert_eq!(pick("xh", &xh), None);
+        // A near name is not the name.
+        let close = found("firefox", vec![hit(Origin::Flathub, "org.mozilla.firefox-esr", &["firefox-esr"])]);
+        assert_eq!(pick("firefox", &close), None);
+    }
+
+    #[test]
+    fn suggestions_list_what_runs_first() {
+        let f = found(
+            "htop",
+            vec![hit(Origin::Zypper, "htop", &[]), hit(Origin::Npm, "htop", &[]), hit(Origin::Brew, "htop", &[])],
+        );
+        let s = suggest_from(&f).unwrap();
+        let rows: Vec<&str> = s.lines().skip(1).map(|l| l.split_whitespace().next().unwrap()).collect();
+        assert_eq!(rows, ["npm:htop", "brew:htop", "zypper:htop"], "{s}");
+        assert!(s.contains("install only: pkg(\"htop\", source = zypper())"), "{s}");
+    }
+
     #[test]
     fn a_swapped_pair_of_letters_is_one_edit() {
         assert_eq!(distance("rpigrep", "ripgrep"), 1);
@@ -636,16 +748,18 @@ mod tests {
     #[test]
     fn what_cannot_run_says_how_to_install_it() {
         let cask = hit(Origin::Cask, "firefox", &[]);
-        assert_eq!(cask.run_arg(), None);
+        assert_eq!(cask.run_arg().as_deref(), Some("brew:firefox"));
         assert_eq!(cask.spec(), r#"pkg("firefox", source = brew(cask = True))"#);
         assert_eq!(
-            hit(Origin::Flathub, "org.mozilla.firefox", &[]).spec(),
-            r#"pkg("org.mozilla.firefox", source = flatpak())"#
+            hit(Origin::Flathub, "org.mozilla.firefox", &[]).run_arg().as_deref(),
+            Some("flatpak:org.mozilla.firefox")
         );
+        let formula = hit(Origin::Brew, "htop", &[]);
+        assert_eq!(formula.run_arg(), None);
         assert_eq!(hit(Origin::Aqua, "ripgrep", &[]).run_arg().as_deref(), Some("ripgrep"));
         assert_eq!(hit(Origin::Npm, "@scope/tool", &[]).run_arg().as_deref(), Some("npm:@scope/tool"));
-        let t = table(&[&cask, &hit(Origin::Aqua, "ripgrep", &[])]);
-        assert!(t.contains("install only: pkg(\"firefox\", source = brew(cask = True))"), "{t}");
+        let t = table(&[&formula, &hit(Origin::Aqua, "ripgrep", &[])]);
+        assert!(t.contains("install only: pkg(\"htop\", source = brew())"), "{t}");
         assert!(t.contains("fspec run ripgrep"), "{t}");
     }
 
