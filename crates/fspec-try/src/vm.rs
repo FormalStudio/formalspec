@@ -109,31 +109,47 @@ pub fn seed(g: &Guest, vm: &Vm) -> (String, String) {
     (format!("#cloud-config\n{data}\n"), format!("{meta}\n"))
 }
 
-/// The qemu command, run from inside the VM's directory. `$code`, `$dcache` and `$aio` are the
-/// script's. No window: the kernel's console goes to `serial.log`, the virtio-vga display is read
-/// over `rec.sock` and typed into over `qmp.sock`, ssh is forwarded to `vm.port` on the loopback
-/// of the VM's host only, and qemu daemonizes once the guest is started, or paused at power-on
-/// when `paused`, for a recording to start first.
-pub fn qemu(name: &str, vm: &Vm, paused: bool) -> Cmd {
+/// How qemu starts the guest.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Boot {
+    /// From power-on.
+    Cold,
+    /// Paused at power-on, for a recording to take its first frame.
+    Paused,
+    /// Paused in the machine `save` wrote to `$abs/ready.state`, until a `cont`.
+    Saved,
+}
+
+/// The qemu command, run from inside the VM's directory. `$code`, `$disk`, `$nvram`, `$dcache`
+/// and `$aio` are the script's, `$abs` too for [`Boot::Saved`]. No window: the kernel's console
+/// goes to `serial.log`, the virtio-vga display is read over `rec.sock` and typed into over
+/// `qmp.sock`, the guest agent answers on `qga.sock`, ssh is forwarded to `vm.port` on the
+/// loopback of the VM's host only, and qemu daemonizes once the guest is started or paused. A save
+/// restores only into the same device list, so every boot takes this one.
+pub fn qemu(name: &str, vm: &Vm, boot: Boot) -> Cmd {
     let cmd = Cmd::new("qemu-system-x86_64").args([
         "-name",
         &format!("fspec-vm-{name}"),
         "-machine",
-        "q35,accel=kvm",
+        "q35,accel=kvm,pflash0=code,pflash1=vars",
         "-cpu",
         "host",
         "-smp",
         &vm.cpus.to_string(),
         "-m",
         &format!("{}G", vm.memory_gib),
-        "-drive",
-        "if=pflash,format=raw,readonly=on,file=$code",
-        "-drive",
-        "if=pflash,format=raw,file=vars.fd",
+        // Block devices a save writes past go in as -blockdev: qemu 11.1 cannot inactivate a
+        // -drive one at the switchover, and every save fails.
+        "-blockdev",
+        "node-name=code,driver=file,filename=$code,read-only=on",
+        "-blockdev",
+        "node-name=vars,driver=file,filename=$nvram",
         "-object",
         "iothread,id=io0",
-        "-drive",
-        "if=none,id=disk,format=qcow2,discard=unmap,cache=$dcache,aio=$aio,file=disk.qcow2",
+        "-blockdev",
+        "node-name=disk-file,driver=file,filename=$disk,cache.direct=$direct,aio=$aio,discard=unmap",
+        "-blockdev",
+        "node-name=disk,driver=qcow2,file=disk-file,discard=unmap",
         "-device",
         "virtio-blk-pci,drive=disk,iothread=io0,bootindex=0",
         "-drive",
@@ -142,6 +158,15 @@ pub fn qemu(name: &str, vm: &Vm, paused: bool) -> Cmd {
         &format!("user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:{}-:22", vm.port),
         "-device",
         "virtio-rng-pci",
+        // A guest hands back the memory it frees, so idle VMs side by side stay small.
+        "-device",
+        "virtio-balloon-pci,free-page-reporting=on",
+        "-device",
+        "virtio-serial-pci",
+        "-chardev",
+        "socket,id=qga0,path=qga.sock,server=on,wait=off",
+        "-device",
+        "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
         "-device",
         "virtio-vga",
         "-display",
@@ -156,7 +181,31 @@ pub fn qemu(name: &str, vm: &Vm, paused: bool) -> Cmd {
         "pid",
         "-daemonize",
     ]);
-    if paused { cmd.arg("-S") } else { cmd }
+    match boot {
+        Boot::Cold => cmd,
+        Boot::Paused => cmd.arg("-S"),
+        // qemu has left the VM's directory by the time it reads the state.
+        Boot::Saved => cmd.args(["-S", "-incoming", "exec:zstd -dc $abs/ready.state"]),
+    }
+}
+
+/// Starts qemu from inside the VM's directory, in a user scope at the CPU weight the g815's rig
+/// slots run at, so a VM yields to the desktop. qemu daemonizes inside the scope and keeps it.
+fn launch(name: &str, vm: &Vm, boot: Boot) -> String {
+    let qemu = qemu(name, vm, boot);
+    let mut s = String::from(
+        "case $dcache in none) direct=on ;; *) direct=off ;; esac\n\
+         cd \"$dir\"\nrm -f pid qmp.sock rec.sock qga.sock\n: > serial.log\nscope=()\n\
+         if systemd-run --user --scope --quiet true >/dev/null 2>&1; then\n  \
+         scope=(systemd-run --user --scope --quiet --collect -p CPUWeight=20 --unit=\"fspec-vm-$name-$$\" --)\nfi\n",
+    );
+    s += &format!("${{scope[@]+\"${{scope[@]}}\"}} {} \\\n", qemu.program);
+    let args: Vec<String> = qemu.args.iter().map(|a| word(a)).collect();
+    for pair in args.chunks(2) {
+        s += &format!("  {} \\\n", pair.join(" "));
+    }
+    s += "  || die \"qemu did not start; is port $port of $(hostname) taken?\"\n";
+    s
 }
 
 const PRELUDE: &str = r#"say() { printf 'fspec vm: %s\n' "$*" >&2; }
@@ -165,7 +214,22 @@ running() { [ -f "$dir/pid" ] && kill -0 "$(cat "$dir/pid")" 2>/dev/null; }
 recording() { [ -f "$dir/rec.pid" ] && kill -0 "$(cat "$dir/rec.pid")" 2>/dev/null; }
 qmp() {
   command -v socat >/dev/null || die "socat is not installed on $(hostname)"
-  { printf '%s\n' '{"execute":"qmp_capabilities"}'; cat; } | socat -t 2 - "UNIX-CONNECT:$dir/qmp.sock"
+  { printf '%s\n' '{"execute":"qmp_capabilities"}'; cat; } | socat -t 0.5 - "UNIX-CONNECT:$dir/qmp.sock"
+}
+# The last "status" a QMP reply on stdin carries.
+qmp_status() { sed -n 's/.*"status": *"\([a-z-]*\)".*/\1/p' | tail -n 1; }
+# One command to the guest agent and its one-line answer. The agent writes an answer even once the
+# asker has gone, and the next connection reads it, so a guest-sync goes first.
+qga() {
+  command -v socat >/dev/null || die "socat is not installed on $(hostname)"
+  local id=$RANDOM$RANDOM line=
+  coproc QGA { socat - "UNIX-CONNECT:$dir/qga.sock" 2>/dev/null; }
+  printf '{"execute":"guest-sync","arguments":{"id":%s}}\n' "$id" >&"${QGA[1]}"
+  while read -r -t 10 line <&"${QGA[0]}"; do [ "$line" = "{\"return\": $id}" ] && break; done
+  [ "$line" = "{\"return\": $id}" ] && printf '%s\n' "$1" >&"${QGA[1]}" && read -r -t 10 line <&"${QGA[0]}" || line=
+  kill "$QGA_PID" 2>/dev/null || true
+  wait "$QGA_PID" 2>/dev/null || true
+  printf '%s\n' "$line"
 }
 "#;
 
@@ -291,15 +355,12 @@ pub fn start(g: &Guest, vm: &Vm, image: &Iso, record: Option<&Record>) -> Result
     s += "  mcopy -i \"$dir/seed.img.part\" \"$dir/user-data\" \"$dir/meta-data\" ::\n";
     s += "  mv \"$dir/seed.img.part\" \"$dir/seed.img\"\n  mv \"$dir/disk.qcow2.part\" \"$dir/disk.qcow2\"\n";
     s += "  new=1\n  say \"created $dir/disk.qcow2 from $(basename \"$image\")\"\nfi\n";
+    // The disk is about to move on from the machine a save holds.
+    s += "if [ -f \"$dir/ready.state\" ]; then rm -f \"$dir/ready.state\"; say \"dropped $name's saved state; fspec vm save takes a new one\"; fi\n";
+    s +=
+        "if [ -f \"$dir/run\" ]; then rm -rf \"$(cat \"$dir/run\")\" \"$dir/run\"; fi\ndisk=disk.qcow2 nvram=vars.fd\n";
     s += &crate::disk_probe("$dir/disk.qcow2", true);
-    let qemu = qemu(&g.name, vm, record.is_some());
-    s += "cd \"$dir\"\nrm -f pid qmp.sock rec.sock\n: > serial.log\n";
-    s += &format!("{} \\\n", qemu.program);
-    let args: Vec<String> = qemu.args.iter().map(|a| word(a)).collect();
-    for pair in args.chunks(2) {
-        s += &format!("  {} \\\n", pair.join(" "));
-    }
-    s += "  || die \"qemu did not start; is port $port of $(hostname) taken?\"\n";
+    s += &launch(&g.name, vm, if record.is_some() { Boot::Paused } else { Boot::Cold });
     if let Some(r) = record {
         s += &record_start(r);
         s += "echo '{\"execute\":\"cont\"}' | qmp >/dev/null\n";
@@ -329,8 +390,113 @@ say "$name is up ({} CPUs, {} GiB), ssh on 127.0.0.1:$port of $(hostname)"
     Ok(s)
 }
 
+/// Saves the running VM's whole machine (RAM and device state) to `ready.state` once its boot has
+/// settled, and stops it. The disk stays the one that machine was running on: a cold start drops
+/// the save, and [`resume`] runs each time on a throwaway overlay of it.
+pub fn save(name: &str) -> Result<String> {
+    if !crate::valid_name(name) {
+        bail!("`{name}` is not a VM name");
+    }
+    let mut s = format!("#!/usr/bin/env bash\nset -eu\numask 077\nname={}\ndir={}\n", q(name), dir(name));
+    s += PRELUDE;
+    s += r#"running || die "$name is not running; fspec vm start boots it"
+[ ! -f "$dir/run" ] || die "$name runs from its saved state; fspec vm stop it, then start and save it"
+recording && die "$name is being recorded; fspec vm frames waits for it"
+command -v zstd >/dev/null || die "zstd is not installed on $(hostname)"
+abs=$(cd "$dir" && pwd)
+pid=$(cat "$dir/pid")
+# A settled guest with an empty page cache resumes into the same moment every time, from a
+# smaller state.
+say "waiting for $name to finish booting"
+settle='systemctl is-system-running --wait >/dev/null; sync; echo 3 >/proc/sys/vm/drop_caches'
+r=$(qga "{\"execute\":\"guest-exec\",\"arguments\":{\"path\":\"/bin/sh\",\"arg\":[\"-c\",\"$settle\"]}}")
+[ -n "$r" ] || die "$name's guest agent did not answer on qga.sock"
+gpid=$(printf %s "$r" | sed -n 's/.*"pid": *\([0-9]*\).*/\1/p')
+[ -n "$gpid" ] || die "$name's guest agent did not run the settle: $r"
+for _ in $(seq 300); do
+  qga "{\"execute\":\"guest-exec-status\",\"arguments\":{\"pid\":$gpid}}" | grep -q '"exited": *true' && break
+  sleep 1
+done
+rm -f "$abs/ready.state.part"
+echo '{"execute":"stop"}' | qmp >/dev/null
+printf '{"execute":"migrate","arguments":{"uri":"exec:zstd -1 -T0 > %s/ready.state.part"}}\n' "$abs" | qmp >/dev/null
+st=
+for _ in $(seq 1200); do
+  st=$(echo '{"execute":"query-migrate"}' | qmp | qmp_status)
+  case $st in completed) break ;; failed | cancelled) die "saving $name failed ($st)" ;; esac
+  sleep 0.5
+done
+[ "$st" = completed ] || die "saving $name did not finish"
+echo '{"execute":"quit"}' | qmp >/dev/null 2>&1 || true
+while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+rm -f "$dir/pid"
+mv "$abs/ready.state.part" "$abs/ready.state"
+say "saved $name ($(du -h "$abs/ready.state" | cut -f1)); fspec vm resume starts it from there"
+"#;
+    Ok(s)
+}
+
+/// Starts the VM from its saved machine on a new overlay of its disk and a copy of its UEFI
+/// variables, both in `$TMPDIR` (tmpfs on most hosts), so nothing a run does reaches the next one.
+/// Sets the guest's clock, which is the save's, and returns once its sshd answers.
+pub fn resume(name: &str, vm: &Vm) -> Result<String> {
+    if !crate::valid_name(name) {
+        bail!("`{name}` is not a VM name");
+    }
+    let mut s =
+        format!("#!/usr/bin/env bash\nset -eu\numask 077\nname={}\nport={}\ndir={}\n", q(name), vm.port, dir(name));
+    s += PRELUDE;
+    s += r#"if running; then say "$name is already running, ssh on 127.0.0.1:$port of $(hostname)"; exit 0; fi
+[ -f "$dir/ready.state" ] || die "$name has no saved state; fspec vm start it, then fspec vm save it"
+command -v zstd >/dev/null || die "zstd is not installed on $(hostname)"
+t0=$(date +%s%N)
+abs=$(cd "$dir" && pwd)
+run="${TMPDIR:-/tmp}/fspec-vm-$(id -u)-$name"
+rm -rf "$run"
+mkdir -p "$run"
+qemu-img create -q -f qcow2 -b "$abs/disk.qcow2" -F qcow2 "$run/disk.qcow2"
+cp "$abs/vars.fd" "$run/vars.fd"
+printf '%s\n' "$run" >"$dir/run"
+disk=$run/disk.qcow2 nvram=$run/vars.fd
+"#;
+    s += &crate::disk_probe("$run/disk.qcow2", true);
+    s += "code=\n";
+    for (c, v) in OVMF {
+        s += &format!("[ -n \"$code\" ] || {{ [ -f {c} ] && [ -f {v} ] && code={c}; }} || true\n");
+    }
+    s += "[ -n \"$code\" ] || die \"no OVMF firmware on $(hostname); install ovmf or edk2-ovmf\"\n";
+    s += &launch(name, vm, Boot::Saved);
+    s += &format!(
+        r#"st=
+for _ in $(seq 1200); do
+  st=$(echo '{{"execute":"query-status"}}' | qmp | qmp_status)
+  [ "$st" = paused ] && break
+  running || die "$name stopped while its saved state loaded"
+  sleep 0.1
+done
+[ "$st" = paused ] || die "$name's saved state did not load"
+echo '{{"execute":"cont"}}' | qmp >/dev/null
+# The agent sets the system clock, then the RTC through hwclock, which SELinux keeps from
+# /etc/adjtime on Tumbleweed; that second step failing leaves the clock set.
+qga "{{\"execute\":\"guest-set-time\",\"arguments\":{{\"time\":$(date +%s%N)}}}}" | grep -qE '"return"|hardware clock' ||
+  say "$name's guest agent did not set its clock; it reads the time of the save"
+for _ in $(seq {SSH_WAIT}); do
+  banner=$(timeout 3 bash -c "exec 3<>/dev/tcp/127.0.0.1/$port && head -c 4 <&3" 2>/dev/null || true)
+  [ "$banner" = SSH- ] && break
+  running || die "$name stopped after it resumed"
+  sleep 0.1
+done
+[ "$banner" = SSH- ] || die "$name resumed but its sshd did not answer"
+ms=$((($(date +%s%N) - t0) / 1000000))
+say "$name resumed from its saved state in $((ms / 1000)).$(printf %03d $((ms % 1000))) s, ssh on 127.0.0.1:$port of $(hostname)"
+"#
+    );
+    Ok(s)
+}
+
 /// Powers the VM off through ACPI, as its power button would, and stops qemu after
-/// [`POWEROFF_WAIT`] seconds if the guest has not.
+/// [`POWEROFF_WAIT`] seconds if the guest has not. A VM resumed from its save is stopped outright
+/// and its overlay deleted: nothing on it is kept.
 pub fn stop(name: &str) -> Result<String> {
     if !crate::valid_name(name) {
         bail!("`{name}` is not a VM name");
@@ -340,6 +506,13 @@ pub fn stop(name: &str) -> Result<String> {
     s += &format!(
         r#"running || {{ say "$name is not running"; exit 0; }}
 pid=$(cat "$dir/pid")
+if [ -f "$dir/run" ]; then
+  echo '{{"execute":"quit"}}' | qmp >/dev/null 2>&1 || kill "$pid"
+  while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+  rm -rf "$(cat "$dir/run")" "$dir/run" "$dir/pid"
+  say "$name stopped; its run is gone, its saved state stays"
+  exit 0
+fi
 if command -v socat >/dev/null; then
   echo '{{"execute":"system_powerdown"}}' | qmp >/dev/null 2>&1 || true
 else
@@ -358,7 +531,7 @@ say "$name stopped"
     Ok(s)
 }
 
-/// One line per VM: `<name> running|stopped|absent <port>`.
+/// One line per VM: `<name> running|resumed|saved|stopped|absent <port>`.
 pub fn status(vms: &[(&str, u16)]) -> Result<String> {
     let mut s = String::from("set -eu\n");
     s += PRELUDE;
@@ -367,7 +540,9 @@ pub fn status(vms: &[(&str, u16)]) -> Result<String> {
             bail!("`{name}` is not a VM name");
         }
         s += &format!(
-            "dir={}\nif running; then state=running; elif [ -f \"$dir/disk.qcow2\" ]; then state=stopped; else state=absent; fi\nprintf '%s\\t%s\\t%s\\n' {} \"$state\" {port}\n",
+            "dir={}\nif running; then state=running; [ -f \"$dir/run\" ] && state=resumed; \
+             elif [ -f \"$dir/ready.state\" ]; then state=saved; elif [ -f \"$dir/disk.qcow2\" ]; then state=stopped; \
+             else state=absent; fi\nprintf '%s\\t%s\\t%s\\n' {} \"$state\" {port}\n",
             dir(name),
             q(name)
         );

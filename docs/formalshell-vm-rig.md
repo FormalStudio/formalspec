@@ -1,7 +1,7 @@
 # FormalShell VM rig
 
-Replaces FormalShell's `nix/testvm.nix` and `dev/vm.sh`. Two openSUSE Tumbleweed guests on the
-g815, one per slot, declared in the owner's spec as hosts `fstestvm0` and `fstestvm1`
+Replaces FormalShell's `nix/testvm.nix` and `dev/vm.sh`. Four openSUSE Tumbleweed guests on the
+g815, one per slot, declared in the owner's spec as hosts `fstestvm0` to `fstestvm3`
 (`hosts/fstestvm/host.star` and its `rootfs/` in FormalSnake/dotfiles) and kept current by
 `fspec apply` like any host. Each one has a display nobody looks at directly: it boots the real
 hosts' chain on it (Limine, the FormalOS splash, the FormalShell greeter, a desktop), and fspec
@@ -15,8 +15,10 @@ Run from the macbook, with the spec checkout as the current directory or `--spec
 | Command | Does |
 | --- | --- |
 | `fspec vm start fstestvm<n>` | Boots slot n on the g815 and returns once its sshd answers. A running VM is left alone (exit 0). The first start downloads the cloud image, creates the disk and waits for its first-boot setup (about 3 minutes) |
-| `fspec vm stop fstestvm<n>` | ACPI power-off, qemu killed after 120 s if the guest hangs |
-| `fspec vm status` | `running`, `stopped` or `absent` for both slots |
+| `fspec vm stop fstestvm<n>` | ACPI power-off, qemu killed after 120 s if the guest hangs. A resumed slot is stopped outright and its overlay deleted |
+| `fspec vm save fstestvm<n>` | Waits for the running slot's boot to settle, saves its machine to `ready.state` (about 170 MB, 18 s) and stops it |
+| `fspec vm resume fstestvm<n>` | Runs the slot from its save on a throwaway overlay in `/tmp`, in about 1.5 s |
+| `fspec vm status` | `running`, `resumed`, `saved`, `stopped` or `absent` for every slot |
 | `fspec vm ssh fstestvm<n> [-- cmd]` | `ssh fstestvm<n> cmd` |
 | `fspec vm record fstestvm<n> --boot [--seconds 120] [--every-ms 100]` | With the VM off: powers it on paused, takes frame 0, then lets the firmware run, recording in the background for `--seconds`. Without `--boot`, records a running VM. Returns once the guest's sshd answers |
 | `fspec vm frames fstestvm<n> <dir>` | Waits for the recording to end, then copies it into `<dir>/frames/000000.png`... |
@@ -28,8 +30,11 @@ Run from the macbook, with the spec checkout as the current directory or `--spec
 | --- | --- | --- | --- |
 | 0 | `fstestvm0` | `127.0.0.1:2222` | `~kyandesutter/.local/share/fspec/vm/fstestvm0/` |
 | 1 | `fstestvm1` | `127.0.0.1:2223` | `~kyandesutter/.local/share/fspec/vm/fstestvm1/` |
+| 2 | `fstestvm2` | `127.0.0.1:2224` | `~kyandesutter/.local/share/fspec/vm/fstestvm2/` |
+| 3 | `fstestvm3` | `127.0.0.1:2225` | `~kyandesutter/.local/share/fspec/vm/fstestvm3/` |
 
-Each guest: 6 CPUs, 8 GiB, a 40 GiB sparse disk, a `virtio-vga` display (1280x800 at the
+Each guest: 4 CPUs, 3 GiB (a leg's session holds about 550 MB), qemu at `CPUWeight=20` with a
+free-page-reporting balloon, KSM on the g815 merging what the four share, a 40 GiB sparse disk, a `virtio-vga` display (1280x800 at the
 greeter), user-mode networking (outbound works, nothing inbound but the ssh forward). The
 kernel's console log is `serial.log` in its directory, the last recording `frames/`. To start a
 slot over from the image: `fspec vm stop`, `rm -rf` its directory on the g815, `fspec vm start`,
@@ -38,6 +43,26 @@ slot over from the image: `fspec vm stop`, `rm -rf` its directory on the g815, `
 The macbook's `~/.ssh/config` carries the aliases (`ProxyJump g815`, the slot's port, user `kyan`,
 agent forwarding, no host key check since a new disk is a new key); it lands with the macbook's
 next `fspec apply`. From the g815 itself, `ssh -p 2222 kyan@127.0.0.1`.
+
+## A run per slot
+
+A run starts from the slot's save, never from a cold boot, and every run gets the same clean
+machine:
+
+```sh
+fspec vm resume fstestvm2        # about 1.5 s, the clock set to now
+ssh fstestvm2 ...                # sync the result, run the leg
+fspec vm stop fstestvm2          # the overlay and all the leg wrote are gone; the save stays
+```
+
+The four slots resume and run side by side, like the g815's eight rig slots, so `just smoke-all`
+can take a free VM slot per `vm_only` leg the way it takes a free rig slot per run. Nothing about
+the slot has to be reset between legs.
+
+The save goes stale when an apply changes the disk. After `fspec apply --host fstestvm<n>`:
+`fspec vm stop`, `fspec vm start` (a cold boot, which drops the old save), `fspec vm save`. A
+fresh disk's first apply starts greetd and the sway parent only on the next boot, so a new slot
+is start, apply, stop, start, save.
 
 ## Watching a boot
 
@@ -173,8 +198,10 @@ A release tarball from `dev/tarball.sh` works the same: unpack it in the guest a
 
 - `dev/smoke.sh`'s VM mode: its vkms branch applies unchanged (the sway parent has no render
   node, and seatd is up). The virtio-gpu card is a second card it must not take.
-- `dev/vm.sh` and `dev/vm-lock.sh` call `fspec vm start fstestvm<slot>` and
-  `ssh fstestvm<slot>` instead of booting a NixOS VM. Slot locking stays FormalShell's.
+- `dev/vm.sh` and `dev/vm-lock.sh` call `fspec vm resume fstestvm<slot>`, `ssh fstestvm<slot>`
+  and `fspec vm stop fstestvm<slot>` instead of booting a NixOS VM. Slot locking stays
+  FormalShell's: a mac-side flock per slot, as `FS_G815_SLOTS` does for the rig slots, over
+  `fstestvm0` to `fstestvm3`.
 - `just check fs-auth|fs-audio|fs-bluez|fs-network|fs-upower` run `cargo test` in the guest
   against its real daemons; the guest has no Rust toolchain, so build the test binaries on the
   g815 (`cargo test --no-run`) and copy them in.

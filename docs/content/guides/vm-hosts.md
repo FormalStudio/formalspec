@@ -66,10 +66,29 @@ and services. A spec that installs a kernel needs a `fspec vm stop` and `start` 
 
 Each VM is a directory on the VM's machine, `~/.local/share/fspec/vm/<host>/`: the disk, its
 UEFI variables, the cloud-init seed, the serial console log (`serial.log`), the pid file, two QMP
-sockets and the last recording's `frames/`. The VM keeps running after the ssh session that started it ends. To start over from the
-image, stop it and delete the directory.
+sockets, the guest agent's `qga.sock`, the last recording's `frames/` and a save's
+`ready.state`. qemu runs in a user scope at `CPUWeight=20`, so a busy VM yields to the desktop. The
+VM keeps running after the ssh session that started it ends. To start over from the image, stop it
+and delete the directory.
 
 Hosts with their own `port` run at the same time; declare one per slot of a test rig.
+
+## Start in seconds from a save
+
+```sh
+fspec vm start fstestvm0     # a cold boot of the applied disk
+fspec vm save fstestvm0      # waits for the boot to settle, saves the machine, stops it
+fspec vm resume fstestvm0    # about 1.5 s to a guest whose sshd answers
+fspec vm stop fstestvm0      # the run and everything it wrote are gone
+```
+
+`save` asks the guest agent to wait for `systemctl is-system-running`, sync and drop its page
+cache, then writes RAM and device state through zstd (about 170 MB for an idle 3 GiB guest).
+`resume` restores it onto a new qcow2 overlay of the disk and a copy of the UEFI variables in
+`$TMPDIR` (tmpfs on most hosts), so every run starts on the same clean machine, and sets the
+guest's clock, which is the save's otherwise. A cold `start` drops the save, since the disk moves
+on from it: apply, then `stop`, `start` and `save` again. `status` reports `resumed` for a VM
+running from its save and `saved` for a stopped one that has one.
 
 ## Watch it and type into it
 

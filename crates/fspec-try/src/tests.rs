@@ -264,7 +264,7 @@ mod vm {
 
     #[test]
     fn qemu_is_headless_and_forwards_ssh_on_the_loopback() {
-        let line = qemu("fstestvm0", &decl(), false).to_string();
+        let line = qemu("fstestvm0", &decl(), Boot::Cold).to_string();
         for want in [
             "-smp 6",
             "-m 8G",
@@ -275,12 +275,49 @@ mod vm {
             "file=seed.img",
             "-device virtio-vga",
             "unix:rec.sock",
+            "path=qga.sock",
+            "virtio-balloon-pci,free-page-reporting=on",
+            "filename=$disk,cache.direct=$direct",
+            "filename=$nvram",
+            "pflash0=code,pflash1=vars",
         ] {
             assert!(line.contains(want), "{want} in {line}");
         }
         assert!(!line.contains("-vnc"), "{line}");
         assert!(!line.contains(" -S"), "{line}");
-        assert!(qemu("fstestvm0", &decl(), true).to_string().ends_with(" -S"));
+        assert!(qemu("fstestvm0", &decl(), Boot::Paused).to_string().ends_with(" -S"));
+        // A save only restores into the same machine, so the saved boot only adds to it.
+        let saved = qemu("fstestvm0", &decl(), Boot::Saved).to_string();
+        assert!(saved.starts_with(&line), "{saved}");
+        assert!(saved.ends_with(" -S -incoming 'exec:zstd -dc $abs/ready.state'"), "{saved}");
+    }
+
+    #[test]
+    fn a_save_settles_the_guest_and_a_resume_runs_on_a_throwaway_overlay() {
+        let save = save("fstestvm0").unwrap();
+        let settle = save.find("systemctl is-system-running --wait").unwrap();
+        let paused = save.find(r#"{"execute":"stop"}"#).unwrap();
+        assert!(settle < paused && paused < save.find("\"execute\":\"migrate\"").unwrap(), "{save}");
+        assert!(save.contains("mv \"$abs/ready.state.part\" \"$abs/ready.state\""), "{save}");
+        let resume = resume("fstestvm0", &decl()).unwrap();
+        assert!(resume.contains("qemu-img create -q -f qcow2 -b \"$abs/disk.qcow2\""), "{resume}");
+        assert!(resume.contains("disk=$run/disk.qcow2 nvram=$run/vars.fd"), "{resume}");
+        assert!(resume.contains("-incoming \"exec:zstd -dc $abs/ready.state\""), "{resume}");
+        assert!(resume.find(r#"{"execute":"cont"}"#).unwrap() < resume.find("guest-set-time").unwrap());
+        assert!(resume.contains("-p CPUWeight=20"), "{resume}");
+        // A cold start moves the disk on, so the save goes with it.
+        let cold = start(&guest(), &decl(), &image(Some(H)), None).unwrap();
+        assert!(cold.contains("rm -f \"$dir/ready.state\""), "{cold}");
+        assert!(cold.contains("disk=disk.qcow2 nvram=vars.fd"), "{cold}");
+        let off = stop("fstestvm0").unwrap();
+        assert!(off.find("if [ -f \"$dir/run\" ]").unwrap() < off.find("system_powerdown").unwrap());
+        assert!(save_and_resume_parse());
+    }
+
+    fn save_and_resume_parse() -> bool {
+        [save("fstestvm0").unwrap(), resume("fstestvm0", &decl()).unwrap()]
+            .iter()
+            .all(|s| std::process::Command::new("bash").args(["-n", "-c", s]).status().unwrap().success())
     }
 
     #[test]
@@ -373,7 +410,7 @@ mod vm {
     fn stop_powers_off_then_stops_qemu() {
         let s = stop("fstestvm0").unwrap();
         assert!(s.contains("system_powerdown"));
-        assert!(s.find("system_powerdown").unwrap() < s.find("kill \"$pid\"").unwrap());
+        assert!(s.find("system_powerdown").unwrap() < s.rfind("kill \"$pid\"").unwrap());
         assert!(stop("../x").is_err());
     }
 
@@ -381,6 +418,7 @@ mod vm {
     fn status_reports_each_vm() {
         let s = status(&[("fstestvm0", 2222), ("fstestvm1", 2223)]).unwrap();
         assert!(s.contains("fstestvm1 \"$state\" 2223"), "{s}");
+        assert!(s.contains("state=resumed") && s.contains("state=saved"), "{s}");
         assert!(status(&[("a b", 1)]).is_err());
     }
 

@@ -215,8 +215,10 @@ For hosts declared with `vm(...)`. See [VM hosts](../guides/vm-hosts.md).
 | Command | Does |
 | --- | --- |
 | `fspec vm start <host>` | Boots the host's VM on the machine its `vm(on = ...)` names and waits until its sshd answers on the forwarded port. The first start creates the disk from the cloud image and waits for its first-boot setup. Does nothing for a running VM |
-| `fspec vm stop <host>` | Powers the VM off through ACPI, and stops qemu if the guest has not after 120 seconds. The disk stays |
-| `fspec vm status [<host>...]` | Prints `running`, `stopped` or `absent` for each VM host, or the ones named |
+| `fspec vm stop <host>` | Powers the VM off through ACPI, and stops qemu if the guest has not after 120 seconds. The disk stays. A VM resumed from its save is stopped outright and its overlay deleted |
+| `fspec vm save <host>` | Waits for the running VM's boot to settle, saves its whole machine to `ready.state` and stops it. A cold `start` drops the save |
+| `fspec vm resume <host>` | Starts the VM from its save on a throwaway overlay of its disk and sets its clock; about 1.5 seconds |
+| `fspec vm status [<host>...]` | Prints `running`, `resumed`, `saved`, `stopped` or `absent` for each VM host, or the ones named |
 | `fspec vm ssh <host> [-- <command>]` | `ssh` to the host's alias, or runs the command there |
 | `fspec vm record <host> [--boot] [--seconds N] [--every-ms N]` | Records the VM's display as PNG frames on its machine, in the background, one every `--every-ms` (100) for `--seconds` (120) or until the VM powers off; a reboot keeps it going. With `--boot` the VM must be off: it powers on paused and runs once the first frame is taken |
 | `fspec vm frames <host> <dir>` | Waits for the recording to end and copies its frames into `<dir>/frames` |

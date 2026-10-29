@@ -2085,7 +2085,9 @@ fn a_tumbleweed_vm_boots_through_systemd_boot_and_the_esp_sync() {
     assert!(paths.contains(&"/etc/fspec/esp-sync.sh"), "{paths:?}");
     let (_, plugin, exec) = files.iter().find(|(p, _, _)| p.ends_with("commit/fspec-esp-sync")).unwrap();
     assert!(*exec && plugin.contains("/boot/efi fstestvm0"), "{plugin}");
-    assert!(script.contains("install --no-recommends systemd-boot\nbootctl install\n"), "{script}");
+    assert!(script.contains("install --no-recommends systemd-boot qemu-guest-agent\nbootctl install\n"), "{script}");
+    let (_, ga, _) = files.iter().find(|(p, _, _)| p == "/etc/sysconfig/qemu-ga").unwrap();
+    assert_eq!(ga, "FILTER_RPC_ARGS=\"\"\n");
     assert!(script.contains("quiet\nsplash\nFSPEC_ARGS"), "{script}");
     assert!(script.ends_with("sh /etc/fspec/esp-sync.sh / /boot/efi fstestvm0\n"), "{script}");
     let out = std::process::Command::new("bash").args(["-n", "-c", &script]).output().unwrap();

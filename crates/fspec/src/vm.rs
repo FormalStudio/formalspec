@@ -22,6 +22,12 @@ pub enum VmCommand {
     Start { host: String },
     /// Power the host's VM off; its disk stays.
     Stop { host: String },
+    /// Save the running VM's whole machine once its boot has settled, then stop it. A cold start
+    /// drops the save, since the disk moves on from it.
+    Save { host: String },
+    /// Start the VM from its save in about two seconds, on a throwaway overlay of its disk that
+    /// `fspec vm stop` deletes.
+    Resume { host: String },
     /// Record the VM's display as numbered PNG frames on the machine it runs on, in the
     /// background; `fspec vm frames` fetches them. With --boot the VM has to be off: it is
     /// powered on paused and runs once the first frame is taken.
@@ -112,6 +118,16 @@ pub fn run(spec: &fspec_eval::Spec, cmd: &VmCommand) -> Result<()> {
         VmCommand::Key { host, keys: combos } => {
             let presses = combos.iter().map(|c| fspec_try::vm::combo_keys(c)).collect::<Result<Vec<_>>>()?;
             keys(&runner, spec, host, &presses)
+        }
+        VmCommand::Save { host } => {
+            let (host, vm) = declared(spec, host)?;
+            let script = fspec_try::vm::save(&host.name)?;
+            run_script(&runner, machine(spec, &vm.on).as_deref(), &format!("save-{}", host.name), &script)
+        }
+        VmCommand::Resume { host } => {
+            let (host, vm) = declared(spec, host)?;
+            let script = fspec_try::vm::resume(&host.name, vm)?;
+            run_script(&runner, machine(spec, &vm.on).as_deref(), &format!("resume-{}", host.name), &script)
         }
         VmCommand::Stop { host } => {
             let (host, vm) = declared(spec, host)?;

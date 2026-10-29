@@ -1,8 +1,12 @@
 # FormalShell VM rig: making a run start in seconds
 
 Proposals for the VM rig in [formalshell-vm-rig.md](formalshell-vm-rig.md), measured on the
-g815 on 2026-10-29 while `fstestvm0` was up. Nothing here is implemented yet; each item names
-what it costs and what it buys, biggest first.
+g815 on 2026-10-29 while `fstestvm0` was up. Each item names what it costs and what it buys,
+biggest first.
+
+Landed: 1 as a save per slot (`fspec vm save`, `fspec vm resume`) rather than one shared base,
+since each slot is its own spec host with its own disk; 2 as four slots of 4 CPUs and 3 GiB with
+KSM and a balloon; 5's tmpfs overlay and `CPUWeight=20`. 3 and 4 stand as proposed.
 
 ## Where the time goes today
 
