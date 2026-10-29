@@ -291,7 +291,12 @@ mod vm {
         assert_eq!(v["write_files"][0]["permissions"], "0755");
         assert_eq!(v["write_files"][1]["content"], "bootctl install\n");
         let run = v["runcmd"][0][2].as_str().unwrap();
-        assert!(run.contains(&format!("then touch /etc/cloud/cloud-init.disabled; echo '{FIRST_BOOT_DONE}' >/dev/ttyS0; else")), "{run}");
+        assert!(
+            run.contains(&format!(
+                "then touch /etc/cloud/cloud-init.disabled; echo '{FIRST_BOOT_DONE}' >/dev/ttyS0; else"
+            )),
+            "{run}"
+        );
         assert!(run.contains(FIRST_BOOT_FAILED), "{run}");
         let s = start(&guest(), &decl(), &image(Some(H)), None).unwrap();
         // Only a new disk waits for it: a later start's serial.log is truncated and never says it.
