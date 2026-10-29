@@ -92,7 +92,8 @@ running from its save and `saved` for a stopped one that has one.
 
 ## Watch it and type into it
 
-The VM has a display, `virtio-vga`, with no window on it: the firmware, the kernel, a boot
+The VM has a display, standard VGA with no render node for a guest compositor to take, and no
+window on it: the firmware, the kernel, a boot
 splash and a compositor all draw there, and fspec reads it back as PNG frames.
 
 ```sh

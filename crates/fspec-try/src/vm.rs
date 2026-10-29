@@ -122,7 +122,7 @@ pub enum Boot {
 
 /// The qemu command, run from inside the VM's directory. `$code`, `$disk`, `$nvram`, `$dcache`
 /// and `$aio` are the script's, `$abs` too for [`Boot::Saved`]. No window: the kernel's console
-/// goes to `serial.log`, the virtio-vga display is read over `rec.sock` and typed into over
+/// goes to `serial.log`, the VGA display is read over `rec.sock` and typed into over
 /// `qmp.sock`, the guest agent answers on `qga.sock`, ssh is forwarded to `vm.port` on the
 /// loopback of the VM's host only, and qemu daemonizes once the guest is started or paused. A save
 /// restores only into the same device list, so every boot takes this one.
@@ -167,8 +167,11 @@ pub fn qemu(name: &str, vm: &Vm, boot: Boot) -> Cmd {
         "socket,id=qga0,path=qga.sock,server=on,wait=off",
         "-device",
         "virtserialport,chardev=qga0,name=org.qemu.guest_agent.0",
+        // Standard VGA (bochs-drm), not virtio-vga: a guest compositor's allocator takes any render
+        // node it finds, and virtio-gpu's has no 3D behind it, so Hyprland on a guest's vkms card
+        // could not draw a frame. bochs-drm has none.
         "-device",
-        "virtio-vga",
+        "VGA",
         "-display",
         "none",
         "-serial",

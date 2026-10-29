@@ -273,7 +273,7 @@ mod vm {
             "-serial file:serial.log",
             "-daemonize",
             "file=seed.img",
-            "-device virtio-vga",
+            "-device VGA",
             "unix:rec.sock",
             "path=qga.sock",
             "virtio-balloon-pci,free-page-reporting=on",

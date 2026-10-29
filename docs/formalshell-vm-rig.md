@@ -34,8 +34,8 @@ Run from the macbook, with the spec checkout as the current directory or `--spec
 | 3 | `fstestvm3` | `127.0.0.1:2225` | `~kyandesutter/.local/share/fspec/vm/fstestvm3/` |
 
 Each guest: 4 CPUs, 3 GiB (a leg's session holds about 550 MB), qemu at `CPUWeight=20` with a
-free-page-reporting balloon, KSM on the g815 merging what the four share, a 40 GiB sparse disk, a `virtio-vga` display (1280x800 at the
-greeter), user-mode networking (outbound works, nothing inbound but the ssh forward). The
+free-page-reporting balloon, KSM on the g815 merging what the four share, a 40 GiB sparse disk, a standard VGA display (bochs-drm in the
+guest, no render node), user-mode networking (outbound works, nothing inbound but the ssh forward). The
 kernel's console log is `serial.log` in its directory, the last recording `frames/`. To start a
 slot over from the image: `fspec vm stop`, `rm -rf` its directory on the g815, `fspec vm start`,
 `fspec apply`.
@@ -82,7 +82,7 @@ show, in order:
    order once it has booted the machine, exactly as on the real hosts.
 3. systemd-boot (no menu, `timeout 0`) starting the `tumbleweed-<kernel>` entry that
    fspec-esp-sync wrote, which counts three tries like a real host's.
-4. The FormalOS plymouth splash, from the initrd, on the virtio-gpu card.
+4. The FormalOS plymouth splash, from the initrd, on the VGA card.
 5. greetd's FormalShell greeter on sway in software (`/etc/greetd/formalshell-session.sh`).
 6. After the password, `/etc/fstestvm/desktop.sh`: Hyprland in software on the same card,
    started as the real hosts start it (`uwsm start`, `start-hyprland`), running `formalshell`
@@ -142,10 +142,12 @@ seat, so the smoke rig's Hyprland opens the vkms card through it; the greeter an
 Kernel: `kernel-default` with `mac80211_hwsim` (three radios: wlan0 is NetworkManager's station,
 wlan1 and wlan2 the APs, unmanaged) and `bluetooth` loaded at boot. `vkms` is loaded by
 `fstestvm-vkms` once the boot splash has quit and unloaded before the shutdown splash starts:
-plymouth draws on every DRM card and, with vkms beside virtio-gpu, put its splash off centre. `v4l2loopback` is
+plymouth draws on every DRM card and, with vkms beside the VGA card, put its splash off centre. `v4l2loopback` is
 installed and configured (`video_nr=10,11`, "Loop Colour" and "Loop IR", `exclusive_caps=1,1`) but
 not loaded, so `--mirror` loads it itself as before. Two DRM cards: vkms for the smoke rig and
-virtio-gpu for the display; both scripts above pick virtio-gpu by its driver. On kernel 7.3 vkms
+bochs-drm for the display; both scripts above take the card that is not vkms. Not virtio-vga: its
+render node, with no 3D behind it, is the one a smoke run's Hyprland allocates on, and it never
+draws a frame. On kernel 7.3 vkms
 sits on the faux bus (`card*/device/driver` is `faux_driver`), so it is found by its device path
 `/sys/devices/faux/vkms`, as `dev/smoke.sh`'s `vkms_card_device` already does. Checked by hand:
 `AQ_DRM_DEVICES=<the vkms card> dbus-run-session -- Hyprland` over ssh brings up `Virtual-1`
@@ -196,8 +198,8 @@ A release tarball from `dev/tarball.sh` works the same: unpack it in the guest a
 
 ## What is left for the FormalShell side
 
-- `dev/smoke.sh`'s VM mode: its vkms branch applies unchanged (the sway parent has no render
-  node, and seatd is up). The virtio-gpu card is a second card it must not take.
+- `dev/smoke.sh` takes its vkms branch whenever a vkms card is there, ahead of nesting in the
+  sway parent.
 - `dev/vm.sh` and `dev/vm-lock.sh` call `fspec vm resume fstestvm<slot>`, `ssh fstestvm<slot>`
   and `fspec vm stop fstestvm<slot>` instead of booting a NixOS VM. Slot locking stays
   FormalShell's: a mac-side flock per slot, as `FS_G815_SLOTS` does for the rig slots, over

@@ -1938,7 +1938,8 @@ host's do.
 `fspec_try::vm` holds the scripts, one per command, built on the same qemu
 pieces as `fspec try`: q35 with `-cpu host`, OVMF from the same list, the
 virtio disk on its own iothread with the kept-disk cache and aio probes. There
-is no window: a `virtio-vga` display that firmware, kernel, splash and
+is no window: a standard VGA display (no render node, so a guest compositor
+never allocates on it) that firmware, kernel, splash and
 compositor draw on, read only over QMP; the serial console in `serial.log`;
 user-mode networking with only `hostfwd=tcp:127.0.0.1:<port>-:22`; and qemu
 daemonized with a pid file, so the VM outlives the ssh session that started it.
