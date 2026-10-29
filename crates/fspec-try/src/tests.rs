@@ -207,3 +207,118 @@ fn unused_isos_expire() {
     assert!(s.contains("readlink -f \"$d/cdrom.iso\""), "{s}");
     assert!(s.find("touch \"$iso\"") < s.find("-mmin +10080"), "{s}");
 }
+
+mod vm {
+    use fspec_core::resource::Vm;
+
+    use super::H;
+    use crate::Iso;
+    use crate::vm::*;
+
+    fn decl() -> Vm {
+        serde_json::from_value(serde_json::json!({
+            "on": "g815", "port": 2222, "cpus": 6, "authorized_keys": ["ssh-ed25519 AAAA mac's key"],
+        }))
+        .unwrap()
+    }
+
+    fn guest() -> Guest {
+        Guest { name: "fstestvm0".into(), user: "kyan".into(), uid: Some(1000) }
+    }
+
+    fn image(sha256: Option<&str>) -> Iso {
+        let url = image_url("opensuse-tumbleweed", &decl()).unwrap();
+        Iso { sha256: sha256.map(String::from), ..Iso::from_url(&url).unwrap() }
+    }
+
+    #[test]
+    fn tumbleweed_has_a_default_image_and_others_need_one() {
+        assert!(image(None).file.ends_with("Minimal-VM.x86_64-Cloud.qcow2"));
+        let err = image_url("fedora", &decl()).unwrap_err().to_string();
+        assert!(err.contains("set vm(image = ...)"), "{err}");
+        let own = Vm { image: Some("https://x.org/a.qcow2".into()), ..decl() };
+        assert_eq!(image_url("fedora", &own).unwrap(), "https://x.org/a.qcow2");
+        let list = format!("{H}  openSUSE-Tumbleweed-Minimal-VM.x86_64-Cloud.qcow2\n");
+        assert_eq!(image_sum(&list, &image(None)).as_deref(), Some(H));
+    }
+
+    #[test]
+    fn the_seed_gives_the_first_user_its_keys_and_sudo() {
+        let (data, meta) = seed(&guest(), &decl());
+        assert!(data.starts_with("#cloud-config\n"));
+        let v: serde_json::Value = serde_json::from_str(data.lines().nth(1).unwrap()).unwrap();
+        assert_eq!(v["hostname"], "fstestvm0");
+        assert_eq!(v["users"][0]["name"], "kyan");
+        assert_eq!(v["users"][0]["uid"], 1000);
+        assert_eq!(v["users"][0]["sudo"], "ALL=(ALL) NOPASSWD:ALL");
+        assert_eq!(v["users"][0]["ssh_authorized_keys"][0], "ssh-ed25519 AAAA mac's key");
+        let m: serde_json::Value = serde_json::from_str(&meta).unwrap();
+        assert_eq!(m["instance-id"], "fstestvm0");
+    }
+
+    #[test]
+    fn qemu_is_headless_and_forwards_ssh_on_the_loopback() {
+        let line = qemu("fstestvm0", &decl()).to_string();
+        for want in [
+            "-smp 6",
+            "-m 8G",
+            "hostfwd=tcp:127.0.0.1:2222-:22",
+            "-display none",
+            "-serial file:serial.log",
+            "-daemonize",
+            "file=seed.img",
+        ] {
+            assert!(line.contains(want), "{want} in {line}");
+        }
+        assert!(!line.contains("-vnc"), "{line}");
+    }
+
+    #[test]
+    fn start_creates_the_disk_once_and_waits_for_sshd() {
+        let s = start(&guest(), &decl(), &image(Some(H))).unwrap();
+        assert!(s.contains("if running; then"), "{s}");
+        assert!(s.contains("if [ ! -f \"$dir/disk.qcow2\" ]; then"));
+        assert!(s.contains(&format!("echo \"{H}  $image.part\" | sha256sum -c")));
+        assert!(s.contains("qemu-img resize -q \"$dir/disk.qcow2.part\" 40G"));
+        assert!(s.contains("mkfs.vfat -n CIDATA"));
+        // The disk appears last, so a start that died half way creates it again.
+        assert!(s.find("mv \"$dir/seed.img.part\"").unwrap() < s.find("mv \"$dir/disk.qcow2.part\"").unwrap());
+        assert!(s.contains("dcache=none"), "{s}");
+        assert!(s.contains("/dev/tcp/127.0.0.1/$port"));
+        assert!(s.contains("ssh on 127.0.0.1:$port"));
+    }
+
+    #[test]
+    fn start_refuses_to_download_an_image_it_cannot_check() {
+        let s = start(&guest(), &decl(), &image(None)).unwrap();
+        assert!(s.contains("no published checksum for"), "{s}");
+    }
+
+    #[test]
+    fn stop_powers_off_then_stops_qemu() {
+        let s = stop("fstestvm0").unwrap();
+        assert!(s.contains("system_powerdown"));
+        assert!(s.find("system_powerdown").unwrap() < s.find("kill \"$pid\"").unwrap());
+        assert!(stop("../x").is_err());
+    }
+
+    #[test]
+    fn status_reports_each_vm() {
+        let s = status(&[("fstestvm0", 2222), ("fstestvm1", 2223)]).unwrap();
+        assert!(s.contains("fstestvm1 \"$state\" 2223"), "{s}");
+        assert!(status(&[("a b", 1)]).is_err());
+    }
+
+    #[test]
+    fn scripts_parse() {
+        let scripts = [
+            start(&guest(), &decl(), &image(Some(H))).unwrap(),
+            stop("fstestvm0").unwrap(),
+            status(&[("a", 1)]).unwrap(),
+        ];
+        for s in scripts {
+            let out = std::process::Command::new("bash").args(["-n", "-c", &s]).output().unwrap();
+            assert!(out.status.success(), "{}\n{s}", String::from_utf8_lossy(&out.stderr));
+        }
+    }
+}

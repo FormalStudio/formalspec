@@ -211,6 +211,33 @@ fn dev_star_must_call_dev_once_and_dev_stays_out_of_specs() {
 }
 
 #[test]
+fn a_vm_host_says_where_it_runs() {
+    let spec = eval_str(
+        r#"
+hosts = [host(
+    name = "fstestvm0",
+    platform = "x86_64-linux",
+    system = tumbleweed(),
+    vm = vm("g815", port = 2222, cpus = 6, authorized_keys = ["ssh-ed25519 AAAA mac"]),
+)]
+"#,
+        &[],
+    )
+    .unwrap();
+    let vm = spec.host("fstestvm0").unwrap().vm.clone().unwrap();
+    assert_eq!((vm.on.as_str(), vm.port, vm.cpus, vm.memory_gib, vm.disk_gib), ("g815", 2222, 6, 8, 40));
+    assert_eq!(vm.authorized_keys, ["ssh-ed25519 AAAA mac"]);
+    let err = eval_str(
+        "hosts = [host(name = \"a\", platform = \"x86_64-linux\", system = tumbleweed(), vm = builder(\"g815\"))]",
+        &[],
+    )
+    .unwrap_err();
+    assert!(format!("{err:#}").contains("takes a vm(...) value"), "{err:#}");
+    let err = eval_str("x = vm(\"g815\", port = 1, gpu = True)\nhosts = []", &[]).unwrap_err();
+    assert!(format!("{err:#}").contains("unknown field `gpu`"), "{err:#}");
+}
+
+#[test]
 fn tumbleweed_declares_zypper_packages_and_repos() {
     let spec = eval_str(
         r#"

@@ -47,6 +47,9 @@ pub struct Host {
     /// A zoneinfo name such as `Europe/Madrid`.
     #[serde(default)]
     pub timezone: Option<String>,
+    /// This host is a VM another machine runs, booted with `fspec vm start`.
+    #[serde(default)]
+    pub vm: Option<Vm>,
 }
 
 /// `sync(...)`: app data that moves between the user's hosts with `fspec sync`.
@@ -175,6 +178,42 @@ impl Builder {
     pub fn routes(&self) -> Vec<&str> {
         if self.routes.is_empty() { vec![self.name.as_str()] } else { self.routes.iter().map(String::as_str).collect() }
     }
+}
+
+/// `vm(...)`: where and how `fspec vm` runs a host that is a virtual machine. The guest starts
+/// from the distro's cloud image and takes the rest from `fspec apply` like any other host.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Vm {
+    /// The machine that runs it, as ssh reaches it (or this machine's host name).
+    pub on: String,
+    /// The port on `on`'s loopback that forwards to the guest's ssh.
+    pub port: u16,
+    #[serde(default = "vm_cpus")]
+    pub cpus: u32,
+    #[serde(default = "vm_memory")]
+    pub memory_gib: u32,
+    /// The size the disk grows to on first boot. It is sparse, so it takes what the guest writes.
+    #[serde(default = "vm_disk")]
+    pub disk_gib: u32,
+    /// A qcow2 cloud image with cloud-init, default the distro's own.
+    #[serde(default)]
+    pub image: Option<String>,
+    /// Keys the first user accepts over ssh from the first boot on.
+    #[serde(default)]
+    pub authorized_keys: Vec<String>,
+}
+
+fn vm_cpus() -> u32 {
+    4
+}
+
+fn vm_memory() -> u32 {
+    8
+}
+
+fn vm_disk() -> u32 {
+    40
 }
 
 /// A resource as `plan` and the state file see it: flat, with the package that owns it.

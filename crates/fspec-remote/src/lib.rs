@@ -17,7 +17,7 @@ pub use cmd::{Target, target};
 /// What this fspec can read, compared against the remote's before shipping it a spec. Bump it
 /// with every builtin, builtin argument, resource field or lock key a spec can use, since an
 /// older fspec fails on them, or worse, ignores an unknown lock key.
-pub const ENGINE: u32 = 11;
+pub const ENGINE: u32 = 12;
 
 /// What `fspec facts --json` prints: the machine as it is, to compare against its declaration.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -105,40 +105,61 @@ pub struct Remote<'a> {
 
 /// Runs `fspec facts --json` on `alias`.
 pub fn probe(runner: &dyn Runner, alias: &str) -> Result<Reach> {
+    found(runner, alias)?.with_context(|| {
+        format!(
+            "fspec is not installed on {alias} (not on PATH for a non-interactive ssh shell); install it there first, e.g. `cargo install --git https://github.com/FormalStudio/formalspec fspec`"
+        )
+    })
+}
+
+/// [`probe`], with `None` for a remote that has no fspec at all.
+fn found(runner: &dyn Runner, alias: &str) -> Result<Option<Reach>> {
     let out = runner.run(&cmd::probe(alias))?;
     match out.status {
-        0 => Ok(Reach::Reachable(
+        0 => Ok(Some(Reach::Reachable(
             serde_json::from_str(&out.stdout)
                 .with_context(|| format!("`fspec facts --json` on {alias} printed: {}", out.stdout.trim()))?,
-        )),
-        255 => Ok(Reach::Unreachable(out.stderr.trim().to_string())),
-        127 => bail!(
-            "fspec is not installed on {alias} (not on PATH for a non-interactive ssh shell); install it there first, e.g. `cargo install --git https://github.com/FormalStudio/formalspec fspec`"
-        ),
-        _ => bail!("`fspec facts --json` failed on {alias}: {}", failure(&out)),
+        ))),
+        255 => Ok(Some(Reach::Unreachable(out.stderr.trim().to_string()))),
+        127 => Ok(None),
+        _ => bail!("`fspec facts --json` on {alias} failed: {}", failure(&out)),
+    }
+}
+
+/// How a remote's fspec is described in the messages of an engine install.
+fn runs(engine: Option<u32>) -> String {
+    match engine {
+        Some(n) => format!("runs engine {n}"),
+        None => "has no fspec".into(),
     }
 }
 
 impl Remote<'_> {
     /// Probes `alias` and checks it is the machine `host` declares, running an fspec that reads
-    /// what this one does.
+    /// what this one does. A remote with no fspec at all gets the locked one first, for the
+    /// platform the host declares, and is checked once it can answer.
     fn reach(&self, host: &Host, alias: &str) -> Result<Reach> {
-        let reach = probe(self.runner, alias)?;
-        let Reach::Reachable(found) = &reach else { return Ok(reach) };
-        verify(host, found)?;
-        if found.engine >= ENGINE {
-            return Ok(reach);
-        }
+        let (platform, engine) = match found(self.runner, alias)? {
+            Some(Reach::Reachable(found)) => {
+                verify(host, &found)?;
+                if found.engine >= ENGINE {
+                    return Ok(Reach::Reachable(found));
+                }
+                (found.platform, Some(found.engine))
+            }
+            Some(unreachable) => return Ok(unreachable),
+            None => (Facts::declared(&host.name, &host.platform, host.system.as_ref())?.platform(), None),
+        };
         let lock = Lock::load(&self.spec_dir.join("fspec.lock"))?;
         let tmp = tempfile::tempdir()?;
         let dest = tmp.path().join("pkg");
-        match locked_engine(&lock, &found.platform) {
+        match locked_engine(&lock, &platform) {
             Some(reference) => {
-                eprintln!("fspec: {alias} runs engine {}, installing the locked fspec there first", found.engine);
+                eprintln!("fspec: {alias} {}, installing the locked fspec there first", runs(engine));
                 fspec_store::pull_built(self.runner, reference, &tmp.path().join("oci"), &dest, engine::NAME)
                     .context("pulling the locked fspec, which needs oras on this machine's PATH")?;
             }
-            None => self.build_engine(host, alias, found, &lock, tmp.path(), &dest)?,
+            None => self.build_engine(host, alias, &platform, engine, &lock, tmp.path(), &dest)?,
         }
         // A build recipe installs into $FSPEC_OUT/bin, a detected one packs at the top.
         let exe = [dest.join("bin").join(engine::NAME), dest.join(engine::NAME)]
@@ -152,6 +173,7 @@ impl Remote<'_> {
         }
         let reach = probe(self.runner, alias)?;
         if let Reach::Reachable(found) = &reach {
+            verify(host, found)?;
             current(alias, found)?;
         }
         Ok(reach)
@@ -160,20 +182,25 @@ impl Remote<'_> {
     /// Has an older fspec build the locked engine, for a lock CI has not recorded a build in yet,
     /// and unpacks it into `dest`: the host's builders' own fspec in their order, or the host's
     /// when it names none, since a host that names builders is one that should not compile.
+    #[allow(clippy::too_many_arguments)]
     fn build_engine(
         &self,
         host: &Host,
         alias: &str,
-        found: &Probe,
+        platform: &str,
+        engine: Option<u32>,
         lock: &Lock,
         tmp: &Path,
         dest: &Path,
     ) -> Result<()> {
         let pkg = engine::pkg();
         let rev = lock.pkg(engine::NAME, &pkg.source.to_string()).and_then(|p| p.rev.clone()).with_context(|| {
+            let has = match engine {
+                Some(n) => format!("is older than this one (engine {n} < {ENGINE})"),
+                None => "is not installed".into(),
+            };
             format!(
-                "fspec on {alias} is older than this one (engine {} < {ENGINE}) and fspec.lock pins no fspec; run `fspec update fspec`, or install a current fspec there first",
-                found.engine
+                "fspec on {alias} {has} and fspec.lock pins no fspec; run `fspec update fspec`, or install a current fspec there first"
             )
         })?;
         let job = tmp.join("job.json");
@@ -187,14 +214,14 @@ impl Remote<'_> {
         let mut why = Vec::new();
         for route in routes {
             eprintln!(
-                "fspec: {alias} runs engine {}, and fspec.lock has no CI build of fspec for {}, so {route} builds the locked one first",
-                found.engine, found.platform
+                "fspec: {alias} {}, and fspec.lock has no CI build of fspec for {platform}, so {route} builds the locked one first",
+                runs(engine)
             );
             let built = self
                 .runner
                 .check(&cmd::upload_engine_job(route, &job))
-                .and_then(|_| self.runner.check(&cmd::build_engine(route, &found.platform)))
-                .and_then(|_| self.runner.check(&cmd::fetch_engine_build(route, &found.platform, &archive)));
+                .and_then(|_| self.runner.check(&cmd::build_engine(route, platform)))
+                .and_then(|_| self.runner.check(&cmd::fetch_engine_build(route, platform, &archive)));
             let _ = self.runner.run(&cmd::clean_engine_job(route));
             match built {
                 Ok(_) => return fspec_store::unpack_built(&archive, dest, engine::NAME),

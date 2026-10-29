@@ -2,6 +2,7 @@ mod backends;
 mod dev;
 mod secret;
 mod try_vm;
+mod vm;
 
 use std::path::{Path, PathBuf};
 
@@ -280,6 +281,11 @@ enum Command {
         /// Delete the kept VM NAME.
         #[arg(long, value_name = "NAME", conflicts_with_all = ["target", "keep"])]
         delete: Option<String>,
+    },
+    /// Run the hosts declared with vm(...) as headless VMs on the machine each names.
+    Vm {
+        #[command(subcommand)]
+        cmd: vm::VmCommand,
     },
     /// Open a shell in the project environment of the nearest dev.star, or run `-- <command>` in it.
     Dev {
@@ -850,6 +856,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Dev { dir, cmd, args } => dev::run(&paths, dir.as_deref(), cmd.as_ref(), args),
+        Command::Vm { cmd } => vm::run(&fspec_eval::evaluate(&spec_path)?, cmd),
         Command::Try { target, host, keep, cpus, memory, disk, headless, print, list, delete } => {
             try_vm::run(&try_vm::Args {
                 target: target.as_deref(),

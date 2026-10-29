@@ -507,6 +507,12 @@ fn host_<'v>(
     if let Some(sync) = map.get_mut("sync") {
         untag(&what, "sync", "sync", sync)?;
     }
+    if let Some(vm) = map.get_mut("vm") {
+        match vm.as_object_mut().and_then(|o| o.remove("kind")) {
+            Some(Json::String(k)) if k == "vm" => {}
+            _ => bail!("{what}(vm = ...) takes a vm(...) value"),
+        }
+    }
 
     let facts_value = facts_struct(heap, &facts);
     let mut resources = Vec::new();
@@ -727,6 +733,13 @@ fn builtins(builder: &mut GlobalsBuilder) {
         #[starlark(kwargs)] kwargs: Value<'v>,
     ) -> anyhow::Result<Resource_> {
         make_untagged::<fspec_core::resource::Builder>("builder", &["name"], args, kwargs)
+    }
+
+    fn vm<'v>(
+        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(kwargs)] kwargs: Value<'v>,
+    ) -> anyhow::Result<Resource_> {
+        make_untagged::<fspec_core::resource::Vm>("vm", &["on"], args, kwargs)
     }
 
     fn sync<'v>(

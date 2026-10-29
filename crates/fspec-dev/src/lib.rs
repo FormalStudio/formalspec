@@ -121,6 +121,7 @@ pub fn update(project: &Project, only: &[String], cx: &fspec_sources::Cx, paths:
             locale: None,
             keymap: None,
             timezone: None,
+            vm: None,
         })
         .collect();
     let old = Lock::load(&project.lock_path())?;

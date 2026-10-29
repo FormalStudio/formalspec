@@ -143,12 +143,12 @@ fn an_older_fspec_on_the_remote_fails_before_shipping() {
 }
 
 #[test]
-fn missing_fspec_on_the_remote_gives_an_install_hint() {
+fn missing_fspec_with_no_locked_engine_says_how_to_get_one() {
     let (dir, runner) = fixture("");
     runner.respond(PROBE, Output { status: 127, stdout: String::new(), stderr: "fspec: not found".into() });
     let h = host("g815", "x86_64-linux", "bazzite");
     let err = remote(dir.path(), &runner, false).apply(&h, "g815", None).unwrap_err();
-    assert!(err.to_string().contains("fspec is not installed on g815"), "{err}");
+    assert!(err.to_string().contains("fspec on g815 is not installed and fspec.lock pins no fspec"), "{err}");
 }
 
 #[test]
@@ -241,11 +241,14 @@ fn ship_carries_the_cached_gh_load_files() {
     assert_eq!(calls.last().unwrap().to_string(), format!("{PROBE} 'mkdir -p {into} && tar -xf - -C {into}'"));
 }
 
-/// An older remote, then the current one once `sudo install` ran; `oras` serves `body`.
+/// An older remote (one with no fspec when `missing`), then the current one once `sudo install`
+/// ran; `oras` serves `body`.
+#[derive(Default)]
 struct Bootstrap {
     calls: std::sync::Mutex<Vec<String>>,
     body: Vec<u8>,
     installed: std::sync::atomic::AtomicBool,
+    missing: bool,
 }
 
 impl fspec_core::runner::Runner for Bootstrap {
@@ -255,6 +258,9 @@ impl fspec_core::runner::Runner for Bootstrap {
         let line = cmd.to_string();
         self.calls.lock().unwrap().push(line.clone());
         if line.contains("fspec facts --json") {
+            if self.missing && !self.installed.load(Ordering::SeqCst) {
+                return Ok(Output { status: 127, stdout: String::new(), stderr: "fspec: not found".into() });
+            }
             let engine = if self.installed.load(Ordering::SeqCst) { ENGINE } else { 3 };
             return Ok(ok(
                 &json!({"hostname": "g815", "platform": "x86_64-linux", "distro": "bazzite", "engine": engine})
@@ -314,7 +320,7 @@ fn an_older_remote_gets_the_locked_engine_before_the_spec() {
         ),
     )
     .unwrap();
-    let runner = Bootstrap { calls: Default::default(), body: engine_tar(), installed: Default::default() };
+    let runner = Bootstrap { body: engine_tar(), ..Default::default() };
     let h = host("g815", "x86_64-linux", "bazzite");
     let r = Remote {
         runner: &runner,
@@ -339,6 +345,38 @@ fn an_older_remote_gets_the_locked_engine_before_the_spec() {
 }
 
 #[test]
+fn a_remote_with_no_fspec_gets_the_locked_engine_for_its_declared_platform() {
+    let dir = tempfile::tempdir().unwrap();
+    let source = fspec_core::engine::pkg().source.to_string();
+    let oci = "ghcr.io/o/fspec-cache/fspec@sha256:0123";
+    fs::write(
+        dir.path().join("fspec.lock"),
+        format!(
+            "[[pkg]]\nname = \"fspec\"\nsource = \"{source}\"\nrev = \"abc\"\n\n[pkg.x86_64-linux]\noci = \"{oci}\"\n"
+        ),
+    )
+    .unwrap();
+    let runner = Bootstrap { body: engine_tar(), missing: true, ..Default::default() };
+    let h = host("g815", "x86_64-linux", "bazzite");
+    let r = Remote {
+        runner: &runner,
+        spec_dir: dir.path().into(),
+        spec_file: "spec.star".into(),
+        dirty: false,
+        loads_cache: None,
+    };
+    r.plan(&h, "g815").unwrap();
+
+    let calls = runner.calls.lock().unwrap();
+    let at = |needle: &str| {
+        calls.iter().position(|c| c.contains(needle)).unwrap_or_else(|| panic!("no {needle}: {calls:#?}"))
+    };
+    assert!(calls[at("oras pull")].contains(oci));
+    assert!(at("sudo install") < at("tar"), "{calls:#?}");
+    assert_eq!(calls.iter().filter(|c| c.contains("fspec facts --json")).count(), 2, "{calls:#?}");
+}
+
+#[test]
 fn an_older_remote_with_no_locked_engine_build_says_how_to_get_one() {
     let (dir, runner) = fixture("");
     runner.respond(
@@ -359,7 +397,7 @@ fn an_older_remote_builds_the_locked_engine_when_ci_has_not() {
         format!("[[pkg]]\nname = \"fspec\"\nsource = \"{source}\"\nrev = \"abc\"\n"),
     )
     .unwrap();
-    let runner = Bootstrap { calls: Default::default(), body: engine_tar(), installed: Default::default() };
+    let runner = Bootstrap { body: engine_tar(), ..Default::default() };
     let h = host("g815", "x86_64-linux", "bazzite");
     let r = Remote {
         runner: &runner,
@@ -397,7 +435,7 @@ fn a_host_with_builders_has_them_build_the_locked_engine() {
         format!("[[pkg]]\nname = \"fspec\"\nsource = \"{source}\"\nrev = \"abc\"\n"),
     )
     .unwrap();
-    let runner = Bootstrap { calls: Default::default(), body: engine_tar(), installed: Default::default() };
+    let runner = Bootstrap { body: engine_tar(), ..Default::default() };
     let mut h = host("g815", "x86_64-linux", "bazzite");
     h.builders = vec![serde_json::from_value(json!({"name": "big", "routes": ["big.ts"]})).unwrap()];
     let r = Remote {

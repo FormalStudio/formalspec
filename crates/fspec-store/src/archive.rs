@@ -92,6 +92,10 @@ pub fn undmg(runner: &dyn Runner, body: &[u8], dest: &Path) -> Result<()> {
     }
     let image = dest.with_extension("dmg");
     let mount = dest.with_extension("mnt");
+    // The image sits beside `dest`, whose parent no other package may have made yet.
+    if let Some(parent) = dest.parent() {
+        fs::create_dir_all(parent)?;
+    }
     fs::write(&image, body)?;
     fs::create_dir_all(&mount)?;
     let attach = Cmd::new("hdiutil")
@@ -296,7 +300,7 @@ mod tests {
     #[test]
     fn a_dmg_is_mounted_copied_out_and_pruned() {
         let dir = tempfile::tempdir().unwrap();
-        let dest = dir.path().join("out");
+        let dest = dir.path().join("store/out");
         // Stands in for what ditto copied out of the mounted image.
         fs::create_dir_all(dest.join("Tool.app/Contents")).unwrap();
         fs::create_dir_all(dest.join(".background")).unwrap();

@@ -188,6 +188,7 @@ mod tests {
             locale: None,
             keymap: None,
             timezone: None,
+            vm: None,
         }
     }
 

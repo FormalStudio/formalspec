@@ -10,6 +10,7 @@ use fspec_core::runner::Cmd;
 
 #[cfg(test)]
 mod tests;
+pub mod vm;
 
 /// The distros `fspec try` knows by name, with what their default ISO boots into.
 pub const DISTROS: [(&str, &str); 8] = [
@@ -163,7 +164,7 @@ fn pick(text: &str, prefix: &str, suffix: &str) -> Option<String> {
 }
 
 /// The SHA-256 a checksum list gives `file`, in either `hash  file` or `SHA256 (file) = hash` form.
-fn sum(text: &str, file: &str) -> Option<String> {
+pub(crate) fn sum(text: &str, file: &str) -> Option<String> {
     text.lines().filter(|l| tokens(l).any(|t| t == file)).find_map(|l| {
         tokens(l).find(|t| t.len() == 64 && t.chars().all(|c| c.is_ascii_hexdigit())).map(str::to_lowercase)
     })
@@ -248,7 +249,7 @@ pub fn vnc_socket(id: &str) -> String {
 
 /// Firmware pairs (code, variables) as distros ship them: openSUSE, Arch, Debian and Ubuntu,
 /// Fedora, then older Debian. Each code file needs the variables file of its own size.
-const OVMF: [(&str, &str); 5] = [
+pub(crate) const OVMF: [(&str, &str); 5] = [
     ("/usr/share/qemu/ovmf-x86_64-4m-code.bin", "/usr/share/qemu/ovmf-x86_64-4m-vars.bin"),
     ("/usr/share/edk2/x64/OVMF_CODE.4m.fd", "/usr/share/edk2/x64/OVMF_VARS.4m.fd"),
     ("/usr/share/OVMF/OVMF_CODE_4M.fd", "/usr/share/OVMF/OVMF_VARS_4M.fd"),
@@ -319,11 +320,11 @@ pub fn qemu(vm: &Vm) -> Cmd {
 }
 
 /// A word for bash: quoted, except that one referring to a script variable expands.
-fn word(a: &str) -> String {
+pub(crate) fn word(a: &str) -> String {
     if a.contains('$') { format!("\"{a}\"") } else { shell_words::quote(a).into_owned() }
 }
 
-fn q(a: &str) -> String {
+pub(crate) fn q(a: &str) -> String {
     shell_words::quote(a).into_owned()
 }
 
@@ -430,15 +431,7 @@ done
             s += "cp \"$vars\" \"$run/vars.fd\"\n";
         }
     }
-    // A throwaway disk is deleted on exit, so it can skip the guest's flushes; a kept one bypasses
-    // the host page cache where the filesystem takes O_DIRECT.
-    s += match vm.keep {
-        Some(_) => {
-            "dcache=none\nqemu-img bench -c 1 -t none -f qcow2 \"$run/disk.qcow2\" >/dev/null 2>&1 || dcache=writeback\n"
-        }
-        None => "dcache=unsafe\n",
-    };
-    s += "aio=io_uring\nqemu-img bench -c 1 -t \"$dcache\" -i io_uring -f qcow2 \"$run/disk.qcow2\" >/dev/null 2>&1 || aio=threads\n";
+    s += &disk_probe("$run/disk.qcow2", vm.keep.is_some());
     s += &match vm.cpus {
         Some(n) => format!("cpus={n}\n"),
         None => "cpus=$(( $(nproc) / 2 ))\n[ \"$cpus\" -le 16 ] || cpus=16\n[ \"$cpus\" -ge 2 ] || cpus=2\n".into(),
@@ -467,6 +460,21 @@ done
         vm.label
     );
     s += "wait \"$q\" || true\nq=\n";
+    s
+}
+
+/// Sets `$dcache` and `$aio` for the disk at `disk`. A throwaway disk is deleted on exit, so it can
+/// skip the guest's flushes; a kept one bypasses the host page cache where the filesystem takes
+/// O_DIRECT.
+pub(crate) fn disk_probe(disk: &str, kept: bool) -> String {
+    let mut s = if kept {
+        format!("dcache=none\nqemu-img bench -c 1 -t none -f qcow2 \"{disk}\" >/dev/null 2>&1 || dcache=writeback\n")
+    } else {
+        "dcache=unsafe\n".into()
+    };
+    s += &format!(
+        "aio=io_uring\nqemu-img bench -c 1 -t \"$dcache\" -i io_uring -f qcow2 \"{disk}\" >/dev/null 2>&1 || aio=threads\n"
+    );
     s
 }
 
