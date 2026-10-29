@@ -30,7 +30,7 @@ pub enum VmCommand {
         /// Power the VM on and record from the firmware's first frame.
         #[arg(long)]
         boot: bool,
-        /// How long to record.
+        /// How long to record at most: a recording also ends when the VM powers off.
         #[arg(long, default_value_t = 120)]
         seconds: u32,
         /// Milliseconds between frames; frame n is taken n times this after the start.

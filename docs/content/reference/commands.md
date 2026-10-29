@@ -218,7 +218,7 @@ For hosts declared with `vm(...)`. See [VM hosts](../guides/vm-hosts.md).
 | `fspec vm stop <host>` | Powers the VM off through ACPI, and stops qemu if the guest has not after 120 seconds. The disk stays |
 | `fspec vm status [<host>...]` | Prints `running`, `stopped` or `absent` for each VM host, or the ones named |
 | `fspec vm ssh <host> [-- <command>]` | `ssh` to the host's alias, or runs the command there |
-| `fspec vm record <host> [--boot] [--seconds N] [--every-ms N]` | Records the VM's display as PNG frames on its machine, in the background, one every `--every-ms` (100) for `--seconds` (120). With `--boot` the VM must be off: it powers on paused and runs once the first frame is taken |
+| `fspec vm record <host> [--boot] [--seconds N] [--every-ms N]` | Records the VM's display as PNG frames on its machine, in the background, one every `--every-ms` (100) for `--seconds` (120) or until the VM powers off; a reboot keeps it going. With `--boot` the VM must be off: it powers on paused and runs once the first frame is taken |
 | `fspec vm frames <host> <dir>` | Waits for the recording to end and copies its frames into `<dir>/frames` |
 | `fspec vm type <host> <text> [--enter]` | Types the text on the VM's keyboard through a US layout, then Return with `--enter` |
 | `fspec vm key <host> <combo>...` | Presses each combination in turn, named as QEMU's qcodes: `ret`, `shift-tab`, `ctrl-alt-f2` |

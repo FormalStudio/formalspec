@@ -85,6 +85,7 @@ fspec vm frames fstestvm0 ./boot                # waits for the 90 s, then ./boo
 
 Frames are 100 ms apart unless `--every-ms` says otherwise; frame n was asked for n × that after
 the recording started, so the numbering is the timeline. `fspec vm record` without `--boot`
-records a VM that is already running. `fspec vm type` goes through a US layout, so give the guest
+records a VM that is already running. A recording goes on through a reboot and ends when qemu
+exits, so a shutdown is recorded to its last frame. `fspec vm type` goes through a US layout, so give the guest
 a `us` keymap where it reads typed text; anything a US keyboard cannot type, and keys like Return
 or a VT switch, go through `fspec vm key fstestvm0 ret ctrl-alt-f2`.

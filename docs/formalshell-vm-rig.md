@@ -60,8 +60,30 @@ show, in order:
 4. The FormalOS plymouth splash, from the initrd, on the virtio-gpu card.
 5. greetd's FormalShell greeter on sway in software (`/etc/greetd/formalshell-session.sh`).
 6. After the password, `/etc/fstestvm/desktop.sh`: Hyprland in software on the same card,
-   running `formalshell` with the default settings. `SUPER+Return` opens foot, `SUPER+Space`
+   started as the real hosts start it (`uwsm start`, `start-hyprland`), running `formalshell`
+   with the default settings. `SUPER+Return` opens foot, `SUPER+Space`
    the launcher, `SUPER+SHIFT+E` logs out.
+
+## Watching the way out
+
+A recording runs through a reboot (qemu stays up) and ends by itself when qemu exits, so a
+shutdown is recorded to the last frame before power-off. Drive the session from its own keys:
+
+```sh
+fspec vm record fstestvm0 --seconds 120             # a logged-in VM
+fspec vm key fstestvm0 meta_l-shift-e               # log out: Hyprland exits, the greeter returns
+fspec vm type fstestvm0 formalshell-test --enter    # log back in
+fspec vm key fstestvm0 meta_l-spc                   # the launcher
+fspec vm type fstestvm0 shutdown                    # or reboot
+fspec vm key fstestvm0 ret                          # arms the row
+fspec vm key fstestvm0 ret                          # runs it
+fspec vm frames fstestvm0 ./artifacts/vm-shutdown   # returns once qemu has exited
+```
+
+A shutdown ends: the desktop, a few frames of QEMU's "Display output is not active" (the guest
+has turned the scanout off; real hardware shows black), then the FormalOS shutdown splash until
+the last frame. A frame of tty1 in between is the VT showing through, and it is the real hosts'
+too: their greetd runs the same way, on vt 1.
 
 The boot chain is the real hosts' own: `modules/boot/boot.star`'s `formalos_boot` with the chime
 left out (the VM has no sound card, and the chime waits for one before the greeter), and the
@@ -93,13 +115,15 @@ seat, so the smoke rig's Hyprland opens the vkms card through it; the greeter an
 `LIBSEAT_BACKEND=logind` and stay on seat0). geoclue2 is installed and D-Bus activated.
 
 Kernel: `kernel-default` with `mac80211_hwsim` (three radios: wlan0 is NetworkManager's station,
-wlan1 and wlan2 the APs, unmanaged), `vkms` and `bluetooth` loaded at boot. `v4l2loopback` is
+wlan1 and wlan2 the APs, unmanaged) and `bluetooth` loaded at boot. `vkms` is loaded by
+`fstestvm-vkms` once the boot splash has quit and unloaded before the shutdown splash starts:
+plymouth draws on every DRM card and, with vkms beside virtio-gpu, put its splash off centre. `v4l2loopback` is
 installed and configured (`video_nr=10,11`, "Loop Colour" and "Loop IR", `exclusive_caps=1,1`) but
 not loaded, so `--mirror` loads it itself as before. Two DRM cards: vkms for the smoke rig and
 virtio-gpu for the display; both scripts above pick virtio-gpu by its driver. On kernel 7.3 vkms
 sits on the faux bus (`card*/device/driver` is `faux_driver`), so it is found by its device path
 `/sys/devices/faux/vkms`, as `dev/smoke.sh`'s `vkms_card_device` already does. Checked by hand:
-`AQ_DRM_DEVICES=/dev/dri/card1 dbus-run-session -- Hyprland` over ssh brings up `Virtual-1`
+`AQ_DRM_DEVICES=<the vkms card> dbus-run-session -- Hyprland` over ssh brings up `Virtual-1`
 1024x768 beside a logged-in desktop.
 
 User session (`kyan`'s lingering manager): `fstestvm-parent.service`, a headless sway on the
