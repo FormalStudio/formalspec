@@ -66,7 +66,8 @@ show, in order:
 The boot chain is the real hosts' own: `modules/boot/boot.star`'s `formalos_boot` with the chime
 left out (the VM has no sound card, and the chime waits for one before the greeter), and the
 same kernel options as the g815 and e1504g (`quiet splash loglevel=3 udev.log_level=3`, on top of
-the image's console and SELinux options). The guest's keymap is `us`, the layout `fspec vm type`
+the image's console and SELinux options, and `plymouth.ignore-serial-consoles`: the serial console
+that feeds `serial.log` would otherwise force plymouth's text splash). The guest's keymap is `us`, the layout `fspec vm type`
 types through; the real hosts' greeter uses `es`.
 
 ## Users
