@@ -97,6 +97,123 @@ pub fn parse(xml: &str, icons: &Path) -> Vec<App> {
     out
 }
 
+/// What `fspec info` shows of one app off its own component, each field
+/// absent where the catalog does not say.
+#[derive(Serialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Detail {
+    pub name: Option<String>,
+    pub summary: Option<String>,
+    /// The description's paragraphs and list items as plain text, one per line.
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub license: Option<String>,
+    pub developer: Option<String>,
+    /// The first screenshot's thumbnail closest under 752px wide, else its source image.
+    pub screenshot: Option<String>,
+    pub icon: Option<String>,
+}
+
+/// The component of the catalog in `active` whose id is `id`, read whole: the index keeps only
+/// what a search needs.
+pub fn detail(active: &Path, id: &str) -> Result<Option<Detail>> {
+    let source = active.join("appstream.xml.gz");
+    let mut xml = String::new();
+    flate2::read::GzDecoder::new(std::fs::File::open(&source).with_context(|| format!("reading {}", source.display()))?)
+        .read_to_string(&mut xml)
+        .with_context(|| format!("reading {}", source.display()))?;
+    Ok(detail_of(&xml, id, &active.join("icons/128x128")))
+}
+
+pub fn detail_of(xml: &str, id: &str, icons: &Path) -> Option<Detail> {
+    let (plain, desktop) = (format!("<id>{id}</id>"), format!("<id>{id}.desktop</id>"));
+    let at = xml.find(&plain).or_else(|| xml.find(&desktop))?;
+    let start = xml[..at].rfind("<component ")?;
+    let end = xml[at..].find("</component>")? + at;
+    let block = &xml[start..end];
+    let developer = text(block, "developer_name").or_else(|| {
+        let dev = &block[block.find("<developer")?..];
+        text(&dev[..dev.find("</developer>")?], "name")
+    });
+    Some(Detail {
+        name: text(block, "name"),
+        summary: text(block, "summary"),
+        description: raw(block, "description").map(|d| plain_text(&d)).filter(|d| !d.is_empty()),
+        version: attr_of(block, "<release ", "version"),
+        license: text(block, "project_license"),
+        developer,
+        screenshot: screenshot(block),
+        icon: cached_icon(block).map(|f| icons.join(f)).filter(|p| p.is_file()).map(|p| p.display().to_string()),
+    })
+}
+
+/// The inner XML of the first `<tag>` with no attributes.
+fn raw(block: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let start = block.find(&open)? + open.len();
+    let end = block[start..].find(&format!("</{tag}>"))? + start;
+    Some(block[start..end].to_string())
+}
+
+/// AppStream's description markup (`<p>`, `<ul>`, `<ol>`, `<li>`, `<em>`, `<code>`) as text: a
+/// line per paragraph, a `• ` line per item, runs of whitespace folded.
+fn plain_text(markup: &str) -> String {
+    let mut lines = vec![];
+    let mut rest = markup;
+    while let Some(i) = rest.find('<') {
+        let close = rest[i..].find('>').map_or(rest.len(), |c| i + c + 1);
+        let tag = &rest[i..close];
+        let name = tag.trim_start_matches(['<', '/']).split([' ', '>']).next().unwrap_or("");
+        if !tag.starts_with("</") && matches!(name, "p" | "li") {
+            let end = rest[close..].find(&format!("</{name}>")).map_or(rest.len(), |e| close + e);
+            let inner = strip_tags(&rest[close..end]);
+            let folded = unescape(&inner).split_whitespace().collect::<Vec<_>>().join(" ");
+            if !folded.is_empty() {
+                lines.push(if name == "li" { format!("\u{2022} {folded}") } else { folded });
+            }
+            rest = &rest[(end + name.len() + 3).min(rest.len())..];
+        } else {
+            rest = &rest[close..];
+        }
+    }
+    lines.join("\n")
+}
+
+fn strip_tags(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let mut inside = false;
+    for c in s.chars() {
+        match c {
+            '<' => inside = true,
+            '>' => inside = false,
+            c if !inside => out.push(c),
+            _ => {}
+        }
+    }
+    out
+}
+
+fn screenshot(block: &str) -> Option<String> {
+    let shots = &block[block.find("<screenshot")?..];
+    let first = &shots[..shots.find("</screenshot>")?];
+    let mut thumbs: Vec<(u32, String)> = vec![];
+    let mut source = None;
+    let mut rest = first;
+    while let Some(i) = rest.find("<image") {
+        let tail = &rest[i..];
+        let (Some(close), Some(end)) = (tail.find('>'), tail.find("</image>")) else { break };
+        let (attrs, url) = (&tail[..=close], unescape(tail[close + 1..end].trim()));
+        if attrs.contains("type=\"thumbnail\"") {
+            let width = attr_of(attrs, "<image", "width").and_then(|w| w.parse().ok()).unwrap_or(0);
+            thumbs.push((width, url));
+        } else if source.is_none() {
+            source = Some(url);
+        }
+        rest = &tail[end..];
+    }
+    let under = thumbs.iter().filter(|(w, _)| *w <= 752).max_by_key(|(w, _)| *w);
+    under.or_else(|| thumbs.iter().min_by_key(|(w, _)| *w)).map(|(_, u)| u.clone()).or(source)
+}
+
 /// The text of the first `<tag>` with no attributes, which is the untranslated one; nested
 /// components (`<provides>`, `<releases>`) come after the fields read here.
 fn text(block: &str, tag: &str) -> Option<String> {
@@ -185,6 +302,33 @@ mod tests {
         );
         assert_eq!(apps[1].id, "org.gnome.Old");
         assert_eq!(apps[1].icon, None);
+    }
+
+    #[test]
+    fn one_apps_detail_reads_its_description_license_developer_and_first_screenshot() {
+        let xml = XML.replace(
+            "<releases>",
+            r#"<description><p>Firefox is a <em>fast</em>
+      browser.</p><ul><li>Private</li><li>Safe &amp; free</li></ul></description>
+    <description xml:lang="de"><p>Schnell</p></description>
+    <project_license>MPL-2.0</project_license>
+    <developer id="org.mozilla"><name>Mozilla</name></developer>
+    <screenshots>
+      <screenshot type="default"><image type="source">https://x/source.png</image><image type="thumbnail" width="224" height="126">https://x/224.png</image><image type="thumbnail" width="624" height="351">https://x/624.png</image><image type="thumbnail" width="1248" height="702">https://x/1248.png</image></screenshot>
+      <screenshot><image type="source">https://x/second.png</image></screenshot>
+    </screenshots>
+    <releases>"#,
+        );
+        let d = detail_of(&xml, "org.mozilla.firefox", Path::new("/nowhere")).unwrap();
+        assert_eq!(d.description.as_deref(), Some("Firefox is a fast browser.\n\u{2022} Private\n\u{2022} Safe & free"));
+        assert_eq!(d.license.as_deref(), Some("MPL-2.0"));
+        assert_eq!(d.developer.as_deref(), Some("Mozilla"));
+        assert_eq!(d.screenshot.as_deref(), Some("https://x/624.png"));
+        assert_eq!(d.version.as_deref(), Some("144.0.2"));
+        assert_eq!(d.name.as_deref(), Some("Firefox"));
+        let old = detail_of(XML, "org.gnome.Old", Path::new("/nowhere")).unwrap();
+        assert_eq!((old.name.as_deref(), old.description, old.screenshot), (Some("Old"), None, None));
+        assert!(detail_of(XML, "org.absent", Path::new("/nowhere")).is_none());
     }
 
     #[test]

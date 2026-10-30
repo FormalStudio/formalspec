@@ -3,6 +3,7 @@ mod app;
 mod backends;
 mod dev;
 mod run;
+mod info;
 mod search;
 mod secret;
 mod try_vm;
@@ -368,6 +369,14 @@ enum Command {
         /// Leave out the sources asked over the network per query (crates.io, npm).
         #[arg(long)]
         offline: bool,
+    },
+    /// One search hit's details, as its catalog keeps them: the launcher's Install pane.
+    Info {
+        /// A search id, `<source>:<name>`.
+        id: String,
+        /// One JSON object.
+        #[arg(long)]
+        json: bool,
     },
     /// Install and uninstall apps through the spec: an edit of its apps.star, committed, applied
     /// for the host and pushed (see docs/shell-install.md).
@@ -970,6 +979,7 @@ fn main() -> Result<()> {
             run::run(&paths, pkg, bin.as_deref(), *update, *detach, args)
         }
         Command::Search { query, json, limit, offline } => search::run(&paths, query, *json, *limit, *offline),
+        Command::Info { id, json } => info::run(&paths, id, *json),
         Command::App { cmd } => app::run(&paths, &spec_path, cmd),
         Command::Activity { json, once } => activity::print(&fspec_core::activity::dir(), *json, *once),
         Command::Vm { cmd } => vm::run(&fspec_eval::evaluate(&spec_path)?, cmd),

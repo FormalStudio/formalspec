@@ -166,6 +166,27 @@ The newest of that copy, the user's and the system installation's is read, throu
 `installed` costs one `flatpak list` and one `rpm -q` (`pacman -Qq`, `dpkg-query -W`) per search
 for the rows shown, so it is right for distro base apps too.
 
+## Info
+
+```
+fspec info <id> [--json]
+```
+
+One search hit's details for the launcher's Install pane, read where the catalog keeps them; a
+field the catalog does not carry is `null`, never guessed:
+
+```json
+{"id":"flatpak:org.mozilla.firefox","source":"flatpak","name":"Firefox","version":"159.0","summary":"Fast, Private & Safe Web Browser","description":"When it comes to your life online ...","license":"MPL-2.0","developer":"Mozilla","download":"129.5 MB","installed":"345.2 MB","screenshot":"https://dl.flathub.org/repo/screenshots/org.mozilla.firefox-stable/752x423/...png","icon":"/home/kyan/.cache/fspec/dev/flatpak/installation/appstream/flathub/x86_64/active/icons/128x128/org.mozilla.firefox.png"}
+```
+
+A Flathub app's fields come off its own AppStream component in the same catalog search reads
+(the description's paragraphs and list items as lines, the first screenshot's thumbnail closest
+under 752px wide), and its two sizes off fspec's flatpak installation's cached summary
+(`flatpak remote-ls --cached`), so nothing is fetched. A zypper package's come off `zypper
+--no-refresh info`: name, version, summary, description and installed size; zypper has no
+licence, developer, download size or screenshot to give. Any other source answers its id and
+source. Reading the catalog whole costs about 1.5s, so the launcher asks once per row it shows.
+
 ## Install and uninstall
 
 ```
