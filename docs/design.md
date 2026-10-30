@@ -2353,7 +2353,10 @@ applied for that host and package's scope, then pushed. `fspec app uninstall` ta
 the same way; a package declared anywhere else is refused. `fspec app owner` says which package put
 a desktop file there and whether `uninstall` can take it out. A machine records what `fspec app`
 last pushed from it, and an apply of it from a checkout that lacks that commit is refused. The
-system scope goes through `sudo` when it needs no password or has a terminal, else `pkexec`.
+system scope goes through `sudo` when it needs no password or has a terminal, else `pkexec`
+(as `/usr/libexec/fspec/fspec` when a spec declares that file, which its polkit action can
+name). `fspec app undo` runs
+the inverse of the newest `fspec app` commit.
 [shell-install.md](shell-install.md) is the contract the shell reads.
 
 ## Search

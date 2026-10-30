@@ -2058,8 +2058,11 @@ fn is_root(runner: &dyn Runner) -> Result<bool> {
 /// there is a terminal to ask in, else through `pkexec`, so a run started by the desktop shell
 /// gets its polkit agent's prompt and fspec never handles a password.
 fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str], checkout: Option<&Path>) -> Result<Vec<u8>> {
-    let exe = std::env::current_exe()?;
     let how = app::escalate();
+    let exe = match how {
+        app::Escalate::Sudo => std::env::current_exe()?,
+        app::Escalate::Pkexec => app::stable_exe(std::env::current_exe()?),
+    };
     let mut sudo = match how {
         app::Escalate::Sudo => std::process::Command::new("sudo"),
         app::Escalate::Pkexec => std::process::Command::new("pkexec"),

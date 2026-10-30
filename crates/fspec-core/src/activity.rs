@@ -44,6 +44,7 @@ pub enum Kind {
     Run,
     Install,
     Uninstall,
+    Undo,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -135,6 +136,7 @@ impl Operation {
             Kind::Run => "run",
             Kind::Install => "install",
             Kind::Uninstall => "uninstall",
+            Kind::Undo => "undo",
         };
         Operation {
             id: format!("{started:x}-{pid}"),
@@ -273,6 +275,17 @@ impl Shared {
             g.seq += 1;
             self.changed.notify_all();
         }
+    }
+
+    fn retitle(&self, title: String) {
+        let mut g = self.lock();
+        if g.closed || g.op.title == title {
+            return;
+        }
+        g.op.title = title;
+        g.op.updated = now_ms();
+        g.seq += 1;
+        self.changed.notify_all();
     }
 
     fn drop_client(&self, id: u64) {
@@ -594,6 +607,13 @@ pub fn step(f: impl FnOnce(&mut Step)) {
             }
         }
         Some(Sink::Off) | None => {}
+    }
+}
+
+/// Give the operation this process publishes a new title, once it knows what it is doing.
+pub fn retitle(title: String) {
+    if let Some(Sink::Publisher(p)) = &*sink() {
+        p.shared.retitle(title);
     }
 }
 

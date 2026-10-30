@@ -12,7 +12,7 @@ once without landing anywhere. This is fspec's half of the launcher's Install mo
 
 On top of those, `fspec run` runs a package once, the way `nix run` did.
 
-Status: all of it is built except `fspec app undo` and the polkit action file (see Privileges).
+Status: built.
 
 ## The rule this keeps
 
@@ -74,7 +74,14 @@ the spec`. The search row reads it as installed by `spec`.
 directory, then `$FSPEC_SPEC`, as plan and apply pick it). The shell's environment carries
 `FSPEC_SPEC`. The checkout's branch needs an upstream (`origin/main`), which installs are pushed
 to. A host applied only over ssh has no checkout of its own: the spec declares a clone for it and
-points `FSPEC_SPEC` there.
+points `FSPEC_SPEC` there: Kyan's spec clones FormalSnake/dotfiles to `~/.config/formalspec` with a
+user oneshot and sets `FSPEC_SPEC` in `environment.d`.
+
+Before each change fspec brings that checkout to the upstream tip it fetched (`git merge
+--ff-only`), so the machine's copy is never older than what it applies. A checkout whose branch
+has commits the upstream lacks is refused (`main in ~/.config/formalspec has commits origin/main
+does not; push them ...`), as is one whose fast-forward an uncommitted edit blocks. A checkout on
+another branch is left alone.
 
 An install runs under the host's apply queue lock (`~/.local/state/fspec/queue/<host>.lock`), so
 two installs and an apply take turns, the second showing `queued`:
@@ -204,15 +211,17 @@ fspec app owner <path or desktop id> [--json]
 
 A target with no `/` is a desktop file id (`org.mozilla.firefox`, with or without `.desktop`),
 looked up in `$XDG_DATA_HOME`, the user's and the system's Flatpak exports and `$XDG_DATA_DIRS`.
-The native package behind the file is found from where it is:
+The package behind the file is found from where it is:
 
+- inside a store package once its links are followed (`/usr/local/share/applications` links into
+  `/opt/fspec/store/<dir>`, the user store's into `~/.local/share/fspec/store/<dir>`): the package
+  whose state record keeps that `store/<dir>`, always `spec`;
 - under a Flatpak `exports/share/applications`: the file's stem is the app id;
 - anywhere else: the package manager's owner query (`rpm -qf`, `pacman -Qoq`, `dpkg -S`).
 
 `owner` is `spec` when a package in this machine's state installs that, else `flatpak` or
 `distro`; with no package behind the file every field but `path` is `null`. `removable` is true
-only for a `spec` package in this host's `apps.star`. A desktop file a store package links under
-`/usr/local/share/applications` reads as owned by no package.
+only for a `spec` package in this host's `apps.star`, and then `id` is that entry's.
 
 ## Privileges
 
@@ -230,25 +239,32 @@ only for a `spec` package in this host's `apps.star`. A desktop file a store pac
   `system scope apply: authorisation cancelled; nothing in the system scope changed`, its 127
   `not authorised to change system software (no polkit agent answered, or the password was
   refused)`. The user scope and the commit are not touched.
-- Not built yet: a polkit action for fspec itself, which would name the prompt and keep the
+- pkexec matches a polkit action's `exec.path` after resolving links, and
+  `/opt/fspec/current/bin/fspec` resolves into the store, so a spec that wants a named prompt
+  declares a real file for pkexec to run, `/usr/libexec/fspec/fspec` (mode 0755, `exec
+  /opt/fspec/current/bin/fspec "$@"`). fspec runs that file when it exists and
+  `/opt/fspec/current` is the running binary. The action beside it, at
+  `/usr/share/polkit-1/actions/dev.formalsnake.fspec.policy`, names the prompt and keeps the
   authorisation five minutes (`auth_admin_keep`) so an install and its undo prompt once:
 
   ```xml
   <action id="dev.formalsnake.fspec.system-scope">
     <description>Change system software</description>
     <defaults><allow_active>auth_admin_keep</allow_active></defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/opt/fspec/current/bin/fspec</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/usr/libexec/fspec/fspec</annotate>
   </action>
   ```
 
-  Without it pkexec asks under its generic `org.freedesktop.policykit.exec` action, every time.
+  Without it pkexec asks under its generic `org.freedesktop.policykit.exec` action, every time;
+  an fspec run from anywhere else (a build, `~/.cargo/bin`) is asked for under that action too.
 
 ## Rollback
 
-- **Undo an install or removal**: `fspec app uninstall` or `install` of the same id is the
-  inverse commit, through the same steps. Not built yet: `fspec app undo [<id>]`, which would make
-  that inverse commit for the last `fspec app` change, and bring a removed app's data back from
-  the trash.
+- **Undo an install or removal**: `fspec app undo [<id>] [--host <h>] [--detach]` finds the
+  newest `feat(apps): install|uninstall <name> on <host>` commit touching `apps.star` on the
+  upstream branch (of `<id>`'s package when given), reads the entry as that commit listed it, and
+  runs the inverse (`fspec app uninstall` or `install` of that id) through the same steps. A
+  reinstall before `fspec gc` brings the app's data back from the trash, as any reinstall does.
 - **Roll the machine back**: `fspec rollback` repoints the previous generation as it always has.
   The spec still holds the app, so `plan` reports it as drift until the spec is reverted; the
   shell offers the inverse `fspec app` call instead of `rollback` for anything `fspec app` did.

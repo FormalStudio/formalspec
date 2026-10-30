@@ -83,9 +83,9 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
 | Field | Meaning |
 | --- | --- |
 | `id` | Opaque and unique, stable for the operation's life; the socket's file name |
-| `kind` | `apply`, `update`, `rollback`, `run`, `install` or `uninstall` |
-| `source` | Opaque. Operations with equal sources are one row: applies of one host, updates of one spec. `fspec:<kind>:<host>`, `fspec:update:<spec dir>`, `fspec:apply:all`, `fspec:run:<package>`, `fspec:install:<search id>`, `fspec:uninstall:<search id>` |
-| `title` | A sentence for people: `Applying g815`, `Updating fspec.lock`, `Rolling back e1504g`, `Running ripgrep`, `Installing Firefox`, `Uninstalling Firefox` |
+| `kind` | `apply`, `update`, `rollback`, `run`, `install`, `uninstall` or `undo` |
+| `source` | Opaque. Operations with equal sources are one row: applies of one host, updates of one spec. `fspec:<kind>:<host>`, `fspec:update:<spec dir>`, `fspec:apply:all`, `fspec:run:<package>`, `fspec:install:<search id>`, `fspec:uninstall:<search id>`, `fspec:undo:<host>` |
+| `title` | A sentence for people: `Applying g815`, `Updating fspec.lock`, `Rolling back e1504g`, `Running ripgrep`, `Installing Firefox`, `Uninstalling Firefox`; an undo starts as `Undoing the last change on g815` and takes the install's or uninstall's title once it has found the change |
 | `host` | The host being changed (an install's included), `null` for an update, a run and `apply --all` |
 | `pid` | The fspec process |
 | `started`, `updated` | Milliseconds since the epoch: when it started and when the step last changed |
@@ -110,8 +110,8 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
 | `committing` | apply, rollback | Changing the machine, in phase order under the journal |
 | `resolving` | update, run | Asking upstream for each package's newest version (a run only before its first start, or with `--update`) |
 | `writing` | update | Writing `fspec.lock` |
-| `resolving` | install, uninstall | Reading `apps.star` at the upstream tip and resolving the new package into `fspec.lock`; then `committing` (item `spec`) while the commit is written, then an apply's own phases |
-| `pushing` | install, uninstall | Pushing the commit it applied to the spec's upstream branch |
+| `resolving` | install, uninstall, undo | An undo first finds the newest `fspec app` commit to invert, then the same as an install's: reading `apps.star` at the upstream tip and resolving the new package into `fspec.lock`; then `committing` (item `spec`) while the commit is written, then an apply's own phases |
+| `pushing` | install, uninstall, undo | Pushing the commit it applied to the spec's upstream branch |
 | `preparing` | run | Unpacking into the user store and linking its commands, or downloading a Flathub app into fspec's flatpak installation; the run succeeds when the command starts, not when it exits |
 
 `progress.unit` is `resources` (apply and rollback: one per resource the plan changes, counted in

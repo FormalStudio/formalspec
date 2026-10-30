@@ -54,6 +54,17 @@ pub enum AppCommand {
         #[arg(long, hide = true)]
         op: Option<String>,
     },
+    /// Make the inverse of the last `fspec app` change on the host, or the last one of ID: an
+    /// install is uninstalled, an uninstall installed again.
+    Undo {
+        id: Option<String>,
+        #[arg(long)]
+        host: Option<String>,
+        #[arg(long)]
+        detach: bool,
+        #[arg(long, hide = true)]
+        op: Option<String>,
+    },
     /// Which package put an installed file there (a path, or a desktop file id such as
     /// `org.mozilla.firefox`), and whether `fspec app uninstall` can take it out.
     Owner {
@@ -440,6 +451,31 @@ impl Repo {
         })
     }
 
+    /// Before a change, bring the checkout to `base` (the upstream tip, or this host's unpushed
+    /// commit on it), so the machine's own copy of the spec is never older than what it applies.
+    /// A checkout with commits of its own, or an edit in a file the fast-forward changes, is
+    /// refused rather than merged.
+    fn sync(&self, base: &str) -> Result<()> {
+        let head = LiveRunner.run(&git(&self.top).args(["symbolic-ref", "--short", "-q", "HEAD"]))?;
+        if head.status != 0 || head.stdout.trim() != self.branch {
+            return Ok(());
+        }
+        if !self.contains("HEAD", base) {
+            bail!(
+                "{} in {} has commits {}/{} does not; push them (or take them off the branch) before `fspec app`",
+                self.branch,
+                self.top.display(),
+                self.remote,
+                self.branch
+            );
+        }
+        let out = LiveRunner.run(&git(&self.top).args(["merge", "--ff-only", "--quiet", base]))?;
+        if out.status != 0 {
+            bail!("fast-forwarding {} in {} failed: {}", self.branch, self.top.display(), out.stderr.trim());
+        }
+        Ok(())
+    }
+
     /// Fast-forward the checked-out branch onto `commit` when it tracks the pushed branch and has
     /// nothing of its own; git refuses where an uncommitted edit would be overwritten, and that
     /// edit is left as it is.
@@ -474,6 +510,32 @@ pub fn run(paths: &Paths, spec_path: &Path, cmd: &AppCommand) -> Result<()> {
         }
         AppCommand::Uninstall { id, host, detach, op } => {
             change(paths, spec_path, id, host.as_deref(), Edit::Uninstall, *detach, op.clone())
+        }
+        AppCommand::Undo { id, host, detach, op } => {
+            let host = host.clone().unwrap_or_else(local_hostname);
+            // Detached before the inverse is looked up, since that fetches.
+            if *detach {
+                return self::detach(spec_path, &["undo"], id.as_deref(), &host);
+            }
+            // Published before the inverse is looked up, since that fetches; the change runs
+            // inside this operation.
+            let mut undo = Operation::new(
+                Kind::Undo,
+                &format!("fspec:undo:{host}"),
+                format!("Undoing the last change on {host}"),
+                Some(&host),
+            );
+            if let Some(given) = op {
+                undo.id = given.clone();
+            }
+            let op_id = undo.id.clone();
+            activity::run(undo, || {
+                activity::phase(Phase::Resolving, None);
+                let (edit, id) = last_change(spec_dir, &host, id.as_deref())?;
+                eprintln!("fspec: undoing with `fspec app {} {id}`", edit.verb());
+                activity::retitle(title(edit, &entry(&id, &today())?, paths));
+                change(paths, spec_path, &id, Some(&host), edit, false, Some(op_id))
+            })
         }
         AppCommand::Owner { target, json } => {
             let o = owner(paths, spec_path, target)?;
@@ -551,7 +613,7 @@ fn change(
     let wanted = entry(id, &today())?;
     let host = host.map(str::to_string).unwrap_or_else(local_hostname);
     if detach {
-        return self::detach(spec_path, id, &host, edit);
+        return self::detach(spec_path, &[edit.verb()], Some(id), &host);
     }
     let kind = match edit {
         Edit::Install => Kind::Install,
@@ -595,6 +657,9 @@ fn change(
                 tries += 1;
                 activity::phase(Phase::Resolving, None);
                 let base = repo.base(&host)?;
+                if tries == 1 {
+                    repo.sync(&base)?;
+                }
                 let scratch = tempfile::tempdir()?;
                 let spec_name = spec_path.file_name().context("spec has no file name")?;
                 let made = prepare(paths, &repo, spec_name, &base, &host, &wanted, edit, scratch.path())?;
@@ -644,6 +709,61 @@ fn change(
         })
         .map(drop)
     })
+}
+
+/// What a `feat(apps): <verb> <name> on <host>` subject says.
+pub fn subject(s: &str) -> Option<(Edit, &str, &str)> {
+    let rest = s.strip_prefix("feat(apps): ")?;
+    let (verb, rest) = rest.split_once(' ')?;
+    let (name, host) = rest.rsplit_once(" on ")?;
+    let edit = match verb {
+        "install" => Edit::Install,
+        "uninstall" => Edit::Uninstall,
+        _ => return None,
+    };
+    Some((edit, name, host))
+}
+
+/// The inverse of the newest `fspec app` commit for `host` on the upstream branch, of the package
+/// `id` names when given: the edit and the search id to run it with.
+fn last_change(spec_dir: &Path, host: &str, id: Option<&str>) -> Result<(Edit, String)> {
+    let repo = Repo::find(spec_dir)?;
+    let base = repo.base(host)?;
+    let want = id.map(|i| entry(i, "")).transpose()?;
+    let log =
+        LiveRunner.check(&git(&repo.top).args(["log", "--format=%H %s", &base, "--"]).arg(repo.path(APPS)))?.stdout;
+    for line in log.lines() {
+        let Some((commit, s)) = line.split_once(' ') else { continue };
+        let Some((edit, name, on)) = subject(s) else { continue };
+        if on != host || want.as_ref().is_some_and(|w| w.name != name) {
+            continue;
+        }
+        // The entry as it stood where it was listed: after an install, before an uninstall.
+        let at = match edit {
+            Edit::Install => commit.to_string(),
+            Edit::Uninstall => format!("{commit}^"),
+        };
+        let text = repo.show(&at, APPS)?.with_context(|| format!("{} has no {APPS}", &commit[..12]))?;
+        let e = parse(&text)?
+            .remove(host)
+            .unwrap_or_default()
+            .into_iter()
+            .find(|e| e.name == name)
+            .with_context(|| format!("{} names {name}, which its {APPS} does not list", &commit[..12]))?;
+        // A name can move between sources; an id given names one of them.
+        if want.as_ref().is_some_and(|w| w.id() != e.id()) {
+            continue;
+        }
+        let inverse = match edit {
+            Edit::Install => Edit::Uninstall,
+            Edit::Uninstall => Edit::Install,
+        };
+        return Ok((inverse, e.id()));
+    }
+    match id {
+        Some(id) => bail!("no `fspec app` change of {id} on {host} to undo"),
+        None => bail!("no `fspec app` change on {host} to undo"),
+    }
 }
 
 struct Made {
@@ -731,13 +851,14 @@ fn resolve(paths: &Paths, dir: &Path, spec_file: &Path, name: &str) -> Result<()
 /// Start the change in a session of its own and return once it is on the operation stream. The
 /// child stays in this process's cgroup, and so in its login session, which is where polkit
 /// looks for the agent that answers a pkexec prompt.
-fn detach(spec_path: &Path, id: &str, host: &str, edit: Edit) -> Result<()> {
+fn detach(spec_path: &Path, verb: &[&str], id: Option<&str>, host: &str) -> Result<()> {
     use std::os::unix::process::CommandExt;
     let started = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_millis() as u64;
     let op = format!("{started:x}-{}", std::process::id());
     let log_dir = fspec_core::activity::dir();
     let mut c = std::process::Command::new(std::env::current_exe()?);
-    c.arg("--spec").arg(spec_path).args(["app", edit.verb(), id, "--host", host, "--op", &op]);
+    c.arg("--spec").arg(spec_path).arg("app").args(verb).args(id).args(["--host", host, "--op", &op]);
+    let what = [verb, id.as_slice()].concat().join(" ");
     c.stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
     // SAFETY: setsid is async-signal-safe and touches no memory of the parent.
     unsafe {
@@ -755,11 +876,11 @@ fn detach(spec_path: &Path, id: &str, host: &str, edit: Edit) -> Result<()> {
             return Ok(());
         }
         if let Some(status) = child.try_wait()? {
-            bail!("fspec app {} {id} exited {status} before it published on the operation stream", edit.verb());
+            bail!("fspec app {what} exited {status} before it published on the operation stream");
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
-    bail!("fspec app {} {id} did not publish on the operation stream within 20s", edit.verb())
+    bail!("fspec app {what} did not publish on the operation stream within 20s")
 }
 
 #[derive(Serialize, Debug, PartialEq, Eq)]
@@ -808,6 +929,16 @@ fn native(runner: &dyn Runner, path: &Path, distro: &str) -> Result<Option<(Stri
     Ok((out.status == 0 && !name.is_empty()).then(|| (manager.to_string(), name.to_string())))
 }
 
+/// `store/<dir>` for a file inside a store package under `root` (`/opt/fspec`, or the user store
+/// `~/.local/share/fspec`), however many links lead there: the key a package's state record
+/// keeps its store path under.
+pub fn store_dir(target: &Path, root: &Path) -> Option<String> {
+    let real = std::fs::canonicalize(target).ok()?;
+    let root = std::fs::canonicalize(root).ok()?;
+    let dir = real.strip_prefix(root.join("store")).ok()?.components().next()?;
+    Some(format!("store/{}", dir.as_os_str().to_string_lossy()))
+}
+
 pub fn owner(paths: &Paths, spec_path: &Path, target: &str) -> Result<Owner> {
     let path = match target.contains('/') {
         true => PathBuf::from(target),
@@ -815,32 +946,57 @@ pub fn owner(paths: &Paths, spec_path: &Path, target: &str) -> Result<Owner> {
             desktop_file(paths, target).with_context(|| format!("no desktop file {target} in the data directories"))?
         }
     };
-    let (_, distro) = fspec_core::facts::Facts::probe_local();
+    let host = local_hostname();
+    let entries: Vec<Entry> = spec_path
+        .parent()
+        .and_then(|d| std::fs::read_to_string(d.join(APPS)).ok())
+        .and_then(|t| parse(&t).ok())
+        .and_then(|mut apps| apps.remove(&host))
+        .unwrap_or_default();
     let mut o =
         Owner { path: path.display().to_string(), id: None, pkg: None, source: None, owner: None, removable: false };
+    let states: Vec<(Scope, State)> = [Scope::System, Scope::User]
+        .into_iter()
+        .map(|scope| (scope, State::load(&state_dir(paths, scope).join("state.json")).unwrap_or_default()))
+        .collect();
+    let spec_pkg = |p: &Pkg, o: &mut Owner| {
+        o.pkg = Some(p.name.clone());
+        o.owner = Some("spec");
+        if let Some(e) = entries.iter().find(|e| e.name == p.name && same(p, &e.source, &e.reference)) {
+            o.id = Some(e.id());
+            o.source = Some(e.source.clone());
+            o.removable = true;
+        }
+    };
+    let roots = [(Scope::System, paths.system("/opt/fspec")), (Scope::User, paths.home.join(".local/share/fspec"))];
+    for (scope, root) in &roots {
+        let Some(dir) = store_dir(&path, root) else { continue };
+        let state = &states.iter().find(|(s, _)| s == scope).expect("both scopes loaded").1;
+        let found = state.entries.values().find_map(|e| match &e.resource {
+            Resource::Pkg(p) if e.record.get("store").and_then(|v| v.as_str()) == Some(dir.as_str()) => Some(p),
+            _ => None,
+        });
+        if let Some(p) = found {
+            o.id = Some(p.source.to_string());
+            o.source = p.source.to_string().split(':').next().map(str::to_string);
+            spec_pkg(p, &mut o);
+        }
+        return Ok(o);
+    }
+    let (_, distro) = fspec_core::facts::Facts::probe_local();
     let Some((source, reference)) = native(&LiveRunner, &path, &distro)? else { return Ok(o) };
     o.id = Some(format!("{source}:{reference}"));
     o.source = Some(source.clone());
     o.owner = Some(if source == "flatpak" { "flatpak" } else { "distro" });
-    for scope in [Scope::System, Scope::User] {
-        let state = State::load(&state_dir(paths, scope).join("state.json")).unwrap_or_default();
-        if let Some(p) = state.entries.values().find_map(|e| match &e.resource {
+    let declared = states.iter().find_map(|(_, state)| {
+        state.entries.values().find_map(|e| match &e.resource {
             Resource::Pkg(p) if same(p, &source, &reference) => Some(p),
             _ => None,
-        }) {
-            o.pkg = Some(p.name.clone());
-            o.owner = Some("spec");
-        }
+        })
+    });
+    if let Some(p) = declared {
+        spec_pkg(p, &mut o);
     }
-    let host = local_hostname();
-    let listed = spec_path
-        .parent()
-        .and_then(|d| std::fs::read_to_string(d.join(APPS)).ok())
-        .and_then(|t| parse(&t).ok())
-        .is_some_and(|apps| {
-            apps.get(&host).into_iter().flatten().any(|e| e.source == source && e.reference == reference)
-        });
-    o.removable = listed && o.owner == Some("spec");
     Ok(o)
 }
 
@@ -874,6 +1030,20 @@ pub fn escalate() -> Escalate {
         std::env::split_paths(&std::env::var_os("PATH").unwrap_or_default()).any(|d| d.join("pkexec").is_file());
     escalation(sudo, std::io::stdin().is_terminal(), pkexec)
 }
+
+/// `/usr/libexec/fspec/fspec` when a spec declares it and `/opt/fspec/current/bin/fspec` is the
+/// running binary: the file the polkit action `dev.formalsnake.fspec.system-scope` names. pkexec
+/// matches that path after resolving links, so neither the link nor the store path it reaches
+/// could be named.
+pub fn stable_exe(exe: PathBuf) -> PathBuf {
+    match (std::fs::canonicalize(CURRENT_EXE), std::fs::canonicalize(&exe)) {
+        (Ok(a), Ok(b)) if a == b && Path::new(PKEXEC_EXE).is_file() => PKEXEC_EXE.into(),
+        _ => exe,
+    }
+}
+
+const CURRENT_EXE: &str = "/opt/fspec/current/bin/fspec";
+pub const PKEXEC_EXE: &str = "/usr/libexec/fspec/fspec";
 
 /// What a pkexec exit status means, by pkexec(1).
 pub fn pkexec_failure(status: i32) -> Option<&'static str> {
@@ -976,6 +1146,32 @@ mod tests {
     }
 
     #[test]
+    fn an_app_commit_subject_names_its_change() {
+        assert_eq!(
+            subject("feat(apps): install org.mozilla.firefox on e1504g"),
+            Some((Edit::Install, "org.mozilla.firefox", "e1504g"))
+        );
+        assert_eq!(subject("feat(apps): uninstall figlet on g815"), Some((Edit::Uninstall, "figlet", "g815")));
+        assert_eq!(subject("feat(apps): the apps module installs from the shell write"), None);
+        assert_eq!(subject("fix(hypr): on g815"), None);
+    }
+
+    #[test]
+    fn a_file_reached_through_links_into_the_store_names_its_store_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("opt/fspec");
+        let app = root.join("store/f28c64f0-thing-1.0/share/applications");
+        std::fs::create_dir_all(&app).unwrap();
+        std::fs::write(app.join("thing.desktop"), "").unwrap();
+        let link = dir.path().join("thing.desktop");
+        std::os::unix::fs::symlink(app.join("thing.desktop"), &link).unwrap();
+        assert_eq!(store_dir(&link, &root).as_deref(), Some("store/f28c64f0-thing-1.0"));
+        assert_eq!(store_dir(&dir.path().join("missing"), &root), None);
+        std::fs::write(dir.path().join("plain.desktop"), "").unwrap();
+        assert_eq!(store_dir(&dir.path().join("plain.desktop"), &root), None);
+    }
+
+    #[test]
     fn days_are_civil_dates() {
         assert_eq!(day(0), "1970-01-01");
         assert_eq!(day(1_793_318_400), "2026-10-30");
@@ -1050,5 +1246,12 @@ mod tests {
 
         let stale = repo.commit(&base, &[(APPS, &new)], "again", scratch.path()).unwrap();
         assert!(matches!(repo.push(&stale).unwrap(), Pushed::Rejected));
+
+        sh(&work, &["reset", "-q", "--keep", &base]);
+        repo.sync(&commit).unwrap();
+        assert_eq!(sh(&work, &["rev-parse", "HEAD"]), commit, "a checkout behind is fast-forwarded");
+        sh(&work, &["commit", "-q", "-am", "local only"]);
+        let err = repo.sync(&commit).unwrap_err().to_string();
+        assert!(err.contains("has commits origin/main does not"), "{err}");
     }
 }

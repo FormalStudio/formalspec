@@ -269,7 +269,7 @@ mod tests {
             assert_eq!(declare("brew:firefox").unwrap(), Target::Cask("firefox".into()));
             assert_eq!(declare("cask:firefox").unwrap(), Target::Cask("firefox".into()));
         } else {
-            assert!(declare("brew:htop").unwrap_err().to_string().contains("source = brew()"));
+            assert!(declare("brew:htop").unwrap_err().to_string().contains("`fspec app install brew:htop`"));
         }
         assert!(declare(r#"rip"grep"#).is_err());
         assert!(declare("github:bat").is_err());
