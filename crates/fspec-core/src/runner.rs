@@ -1,7 +1,9 @@
 use std::fmt;
-use std::io::Write;
+use std::io::{Read, Write};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
+use std::sync::mpsc::RecvTimeoutError;
+use std::time::Duration;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -89,19 +91,38 @@ pub trait Runner: Sync {
 
     /// `check`, taking any of the `ok` exit codes as success.
     fn check_ok(&self, cmd: &Cmd, ok: &[i32]) -> Result<Output> {
+        checked(cmd, self.run(cmd)?, ok)
+    }
+
+    /// `run`, handing `watch` each output line as it arrives (`Some`, split on `\n` and `\r`, so
+    /// a progress bar redrawn in place is a line per redraw) and `None` about once a second while
+    /// the command is quiet. A runner that cannot stream hands over the lines when it is done.
+    fn run_watched(&self, cmd: &Cmd, watch: &mut dyn FnMut(Option<&str>)) -> Result<Output> {
         let out = self.run(cmd)?;
-        if !ok.contains(&out.status) {
-            let why = match out.stderr.trim() {
-                "" => {
-                    let lines: Vec<&str> = out.stdout.trim().lines().collect();
-                    lines[lines.len().saturating_sub(5)..].join("\n")
-                }
-                e => e.to_string(),
-            };
-            bail!("`{cmd}` exited {}: {why}", out.status);
+        for line in out.stdout.split(['\n', '\r']).chain(out.stderr.split(['\n', '\r'])) {
+            watch(Some(line));
         }
         Ok(out)
     }
+
+    /// `check` through [`Runner::run_watched`].
+    fn check_watched(&self, cmd: &Cmd, watch: &mut dyn FnMut(Option<&str>)) -> Result<Output> {
+        checked(cmd, self.run_watched(cmd, watch)?, &[0])
+    }
+}
+
+fn checked(cmd: &Cmd, out: Output, ok: &[i32]) -> Result<Output> {
+    if !ok.contains(&out.status) {
+        let why = match out.stderr.trim() {
+            "" => {
+                let lines: Vec<&str> = out.stdout.trim().lines().collect();
+                lines[lines.len().saturating_sub(5)..].join("\n")
+            }
+            e => e.to_string(),
+        };
+        bail!("`{cmd}` exited {}: {why}", out.status);
+    }
+    Ok(out)
 }
 
 pub struct LiveRunner;
@@ -149,6 +170,104 @@ impl Runner for LiveRunner {
             stderr: String::from_utf8_lossy(&out.stderr).into(),
         })
     }
+
+    fn run_watched(&self, cmd: &Cmd, watch: &mut dyn FnMut(Option<&str>)) -> Result<Output> {
+        if cmd.interactive || cmd.stdin.is_some() || cmd.stdin_file.is_some() {
+            let out = self.run(cmd)?;
+            for line in out.stdout.split(['\n', '\r']).chain(out.stderr.split(['\n', '\r'])) {
+                watch(Some(line));
+            }
+            return Ok(out);
+        }
+        let mut child = Command::new(&cmd.program)
+            .args(&cmd.args)
+            .envs(cmd.env.iter().map(|(k, v)| (k, v)))
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .with_context(|| format!("running `{cmd}`"))?;
+        let (tx, rx) = std::sync::mpsc::channel::<(usize, Vec<u8>)>();
+        let pipes: [Box<dyn Read + Send>; 2] =
+            [Box::new(child.stdout.take().context("stdout")?), Box::new(child.stderr.take().context("stderr")?)];
+        let readers: Vec<_> = pipes
+            .into_iter()
+            .enumerate()
+            .map(|(i, mut pipe)| {
+                let tx = tx.clone();
+                std::thread::spawn(move || {
+                    let mut buf = [0u8; 8192];
+                    while let Ok(n) = pipe.read(&mut buf) {
+                        if n == 0 || tx.send((i, buf[..n].to_vec())).is_err() {
+                            break;
+                        }
+                    }
+                })
+            })
+            .collect();
+        drop(tx);
+        let mut streams = [Lines::default(), Lines::default()];
+        loop {
+            match rx.recv_timeout(Duration::from_secs(1)) {
+                Ok((i, chunk)) => streams[i].push(&chunk, watch),
+                Err(RecvTimeoutError::Timeout) => watch(None),
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+        }
+        for r in readers {
+            let _ = r.join();
+        }
+        let status = child.wait()?.code().unwrap_or(-1);
+        let [stdout, stderr] = streams.map(|s| s.finish(watch));
+        Ok(Output { status, stdout, stderr })
+    }
+}
+
+/// One pipe's bytes cut into lines for a watch. What it keeps is what a terminal would end up
+/// showing: a segment ended by a lone `\r` is redrawn over, so a progress bar redrawn ten
+/// thousand times does not end up ten thousand times in an error message.
+#[derive(Default)]
+struct Lines {
+    pending: Vec<u8>,
+    kept: Vec<u8>,
+}
+
+impl Lines {
+    fn push(&mut self, chunk: &[u8], watch: &mut dyn FnMut(Option<&str>)) {
+        self.pending.extend_from_slice(chunk);
+        let mut start = 0;
+        while let Some(at) = self.pending[start..].iter().position(|b| matches!(b, b'\n' | b'\r')) {
+            let end = start + at;
+            let crlf = match self.pending[end] {
+                b'\r' => match self.pending.get(end + 1) {
+                    // Whether this `\r` starts a `\r\n` is up to the next chunk.
+                    None => break,
+                    Some(b'\n') => true,
+                    Some(_) => false,
+                },
+                _ => true,
+            };
+            let line = &self.pending[start..end];
+            watch(Some(&String::from_utf8_lossy(line)));
+            if crlf {
+                self.kept.extend_from_slice(line);
+                self.kept.push(b'\n');
+            }
+            start = end + if crlf && self.pending[end] == b'\r' { 2 } else { 1 };
+        }
+        self.pending.drain(..start);
+    }
+
+    fn finish(mut self, watch: &mut dyn FnMut(Option<&str>)) -> String {
+        if self.pending.last() == Some(&b'\r') {
+            self.pending.pop();
+            watch(Some(&String::from_utf8_lossy(&self.pending)));
+        } else if !self.pending.is_empty() {
+            watch(Some(&String::from_utf8_lossy(&self.pending)));
+            self.kept.extend_from_slice(&self.pending);
+        }
+        String::from_utf8_lossy(&self.kept).into()
+    }
 }
 
 /// Appends each command to a log file instead of running it, answering `status 0`. The CLI uses
@@ -195,5 +314,23 @@ impl Runner for RecordingRunner {
         let line = cmd.to_string();
         let responses = self.responses.lock().unwrap();
         Ok(responses.iter().find(|(p, _)| line.starts_with(p.as_str())).map(|(_, o)| o.clone()).unwrap_or_default())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_watched_run_streams_every_redraw_and_keeps_what_a_terminal_shows() {
+        let cmd = Cmd::new("sh").args(["-c", r#"printf 'bar 1\rbar 2\rdone\r\nnext\n'; printf 'oops' >&2; exit 3"#]);
+        let mut seen = Vec::new();
+        let out = LiveRunner.run_watched(&cmd, &mut |l| seen.extend(l.map(str::to_string))).unwrap();
+        assert_eq!(out.status, 3);
+        assert_eq!(out.stdout, "done\nnext\n");
+        assert_eq!(out.stderr, "oops");
+        for want in ["bar 1", "bar 2", "done", "next", "oops"] {
+            assert!(seen.iter().any(|l| l == want), "{want} in {seen:?}");
+        }
     }
 }

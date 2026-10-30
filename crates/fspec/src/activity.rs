@@ -117,6 +117,15 @@ pub fn describe(op: &Operation) -> String {
             if let Some(item) = &op.step.item {
                 s += &format!(", {item}");
             }
+            if let Some(inner) = &op.step.inner {
+                s += &format!(": {}", inner.name);
+                if let Some(p) = &inner.progress {
+                    s += &format!(" {}/{} {}", p.done, p.total, name(&p.unit));
+                }
+                if inner.stalled {
+                    s += " (no output for a minute)";
+                }
+            }
             s
         }
     }
@@ -129,7 +138,7 @@ fn name(v: &impl serde::Serialize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use fspec_core::activity::{Kind, Outcome, Phase, Progress, Step, Unit};
+    use fspec_core::activity::{InnerStep, Kind, Outcome, Phase, Progress, Step, Unit};
     use fspec_core::resource::Scope;
 
     use super::*;
@@ -159,8 +168,19 @@ mod tests {
             progress: Some(Progress { done: 3, total: 12, unit: Unit::Resources }),
             item: Some("zypper: firefox and git".into()),
             keys: vec![],
+            inner: None,
         };
         assert_eq!(describe(&op), "Applying g815: committing system, 3/12 resources, zypper: firefox and git");
+        op.step.inner = Some(InnerStep {
+            name: "compiling".into(),
+            progress: Some(Progress { done: 120, total: 450, unit: Unit::Units }),
+            stalled: true,
+        });
+        assert_eq!(
+            describe(&op),
+            "Applying g815: committing system, 3/12 resources, zypper: firefox and git: compiling 120/450 units \
+             (no output for a minute)"
+        );
         op.state = State::Succeeded;
         op.result = Some(Outcome { changes: 12, summary: "12 changes".into() });
         assert_eq!(describe(&op), "Applying g815: done, 12 changes");

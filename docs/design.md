@@ -2320,7 +2320,8 @@ hosts at once. Nothing about that needs waiting loops, worktrees or care:
 ## Operation stream
 
 `apply`, `update`, `rollback` and `run` publish what they are doing (phase, progress in typed units,
-the current item, then the result or error) on a socket of their own under
+the current item and, inside a source build, the build's own step read off its output, then the
+result or error) on a socket of their own under
 `$XDG_RUNTIME_DIR/fspec/activity/`, for a desktop shell to show as live activity. Every line
 carries the whole operation, the first one on each connection being where it is now, so a reader
 that joins or rejoins mid-apply needs no history. A thread writes the lines without blocking and

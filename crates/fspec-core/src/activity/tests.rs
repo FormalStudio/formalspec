@@ -39,6 +39,7 @@ fn a_client_joining_mid_operation_reads_where_it_is() {
             progress: Some(Progress { done: 3, total: 12, unit: Unit::Resources }),
             item: Some("zypper: firefox".into()),
             keys: vec!["pkg:firefox".into()],
+            inner: None,
         }
     });
     let first = client(p.path()).next().unwrap();

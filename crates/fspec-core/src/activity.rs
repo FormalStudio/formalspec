@@ -26,6 +26,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::resource::Scope;
 
+pub mod output;
+
 /// The protocol version every line carries in `v`.
 pub const VERSION: u32 = 1;
 /// The shortest gap between two updates a client is sent.
@@ -78,6 +80,8 @@ pub enum Unit {
     Packages,
     /// Of a download that names no sizes, out of 100.
     Percent,
+    /// Cargo's compilation units, inside one build.
+    Units,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -96,6 +100,19 @@ pub struct Step {
     pub progress: Option<Progress>,
     pub item: Option<String>,
     pub keys: Vec<String>,
+    /// What the work in `item` is doing inside itself, for one that runs for minutes: a source
+    /// build. Sent as `step`.
+    #[serde(rename = "step", default)]
+    pub inner: Option<InnerStep>,
+}
+
+/// One long resource's own phase, read off its command's output.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
+pub struct InnerStep {
+    pub name: String,
+    pub progress: Option<Progress>,
+    /// No output line for [`output::STALL`].
+    pub stalled: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -627,7 +644,13 @@ pub fn progress(done: u64, total: u64, unit: Unit, item: Option<String>, keys: V
         s.progress = Some(Progress { done, total, unit });
         s.item = item;
         s.keys = keys;
+        s.inner = None;
     });
+}
+
+/// Set or clear the inner step of the work in `item`.
+pub fn inner(inner: Option<InnerStep>) {
+    step(|s| s.inner = inner);
 }
 
 /// Count `n` more changes in the operation's result.

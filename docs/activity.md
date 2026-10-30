@@ -75,6 +75,7 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
   "progress": {"done": 3, "total": 12, "unit": "resources"},
   "item": "zypper: firefox and git",
   "keys": ["pkg:firefox", "pkg:git"],
+  "step": null,
   "result": null,
   "error": null
 }
@@ -95,6 +96,7 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
 | `progress` | `{done, total, unit}`, or `null` while the phase cannot say how far it is |
 | `item` | What the step works on now, for people: a backend and its batch (`zypper: firefox, git and 3 more`), a package name, `g815 over ssh` |
 | `keys` | The resource keys of the current step (`pkg:firefox`, `file:~/.config/x`), at most 32 |
+| `step` | What the work in `item` is doing inside itself, for one that runs for minutes (a source build), else `null`: `{name, progress, stalled}`, below |
 | `result` | On success: `{changes, summary}`, the number of changes made and a sentence (`12 changes`, `no changes`, `3 lock entries changed`; a run's is `started`, with 0) |
 | `error` | On failure: the error as fspec prints it |
 
@@ -115,10 +117,29 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
 | `preparing` | run | Unpacking into the user store and linking its commands, or downloading a Flathub app into fspec's flatpak installation; the run succeeds when the command starts, not when it exits |
 
 `progress.unit` is `resources` (apply and rollback: one per resource the plan changes, counted in
-each of `preparing` and `committing`), `packages` (update and run: one per package declaration) or
-`percent` (a run of a Flathub app while flatpak downloads it, out of 100).
+each of `preparing` and `committing`), `packages` (update and run: one per package declaration),
+`percent` (a run of a Flathub app while flatpak downloads it, out of 100) or `units` (cargo's
+compilation units, in `step.progress` only).
 Progress starts again at 0 in each phase and each scope. `done` counts finished work, so `item`
 is the work in progress past `done`.
+
+`step` is read off the build's own output lines, so a one-resource build of fifteen minutes is
+not a frozen `0/1`:
+
+```json
+"step": {"name": "compiling", "progress": {"done": 120, "total": 450, "unit": "units"}, "stalled": false}
+```
+
+- `name` is the build's phase: `building` until a line says more, then `fetching dependencies`
+  (apt, cargo or git downloading), `installing dependencies` (dpkg unpacking), `compiling`, and
+  `packaging` once the build commands are done and fspec packs what they made.
+- `progress` is cargo's own `n/total` (`unit` `units`), forced on through
+  `CARGO_TERM_PROGRESS_WHEN=always`. `null` where the tool names no total, apt's `Get:n` among them.
+- `stalled` is true once no line has arrived for 60 s and false again on the next; the flip is
+  sent as an update of its own.
+- Updates to `step.progress` are coalesced to at most one per 250 ms.
+- `step` goes back to `null` when the resource ends, and with every change of `progress` or
+  `item`.
 
 ## Versioning
 
@@ -149,3 +170,4 @@ live-activity standards it already reads:
   hand only the system scope to sudo, and that relays.
 - Progress is per backend batch, not per byte: a package manager installing twenty packages in
   one transaction is one step from 0 to 20.
+- `step` comes from a build run on this host. A build sent to a builder over ssh keeps it `null`.

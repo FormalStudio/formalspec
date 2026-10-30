@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
+use fspec_core::activity::{self, output, output::Watch};
 use fspec_core::patches::patch_path;
 use fspec_core::resource::{Pkg, Source};
 use fspec_core::runner::{Cmd, Runner};
@@ -116,7 +118,11 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     }
 
     let recipe = recipe::select(&dirs.src, &job.pkg.build)?;
-    let commands = recipe.commands(&dirs, &job.pkg.build_flags, &job.pkg.build);
+    let commands: Vec<Cmd> = recipe
+        .commands(&dirs, &job.pkg.build_flags, &job.pkg.build)
+        .into_iter()
+        .map(|c| output::CARGO_ENV.iter().fold(c, |c, (k, v)| c.env(*k, *v)))
+        .collect();
     let commands = match &job.pkg.source {
         Source::Git { image: Some(image), deps, .. } => {
             let pkgs = cache.join("pkgs");
@@ -131,8 +137,23 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
         }
         _ => commands,
     };
+    let mut watch = Watch::new("building", Instant::now());
+    let _clear = Clear;
+    let mut tap = |line: Option<&str>| {
+        let now = Instant::now();
+        let step = match line {
+            Some(l) => watch.line(l, now),
+            None => watch.tick(now),
+        };
+        if step.is_some() {
+            activity::inner(step);
+        }
+    };
     for cmd in commands {
-        runner.check(&cmd).with_context(|| format!("building {}", job.pkg.name))?;
+        runner.check_watched(&cmd, &mut tap).with_context(|| format!("building {}", job.pkg.name))?;
+    }
+    if let Some(step) = watch.enter(output::PACKAGING, Instant::now()) {
+        activity::inner(Some(step));
     }
 
     let executables = pack::executables(&recipe.bin_dirs(&dirs), &job.pkg.bins);
@@ -187,6 +208,22 @@ impl Runner for AsUser<'_> {
             Some(u) => self.inner.run(&as_user(cmd, u)),
             None => self.inner.run(cmd),
         }
+    }
+
+    fn run_watched(&self, cmd: &Cmd, watch: &mut dyn FnMut(Option<&str>)) -> Result<fspec_core::runner::Output> {
+        match self.user {
+            Some(u) => self.inner.run_watched(&as_user(cmd, u), watch),
+            None => self.inner.run_watched(cmd, watch),
+        }
+    }
+}
+
+/// A build's inner step ends with it, failed or not.
+struct Clear;
+
+impl Drop for Clear {
+    fn drop(&mut self) {
+        activity::inner(None);
     }
 }
 
