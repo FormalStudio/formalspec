@@ -426,9 +426,43 @@ impl Repo {
                 .arg(format!("100644,{sha},{path}"))))?;
         }
         let tree = LiveRunner.check(&ix(git(&self.top).arg("write-tree")))?.stdout.trim().to_string();
-        let out = LiveRunner.check(&git(&self.top).args(["commit-tree", &tree, "-p", base, "-m", message]))?;
+        let mut cmd = git(&self.top).args(["commit-tree", &tree, "-p", base, "-m", message]);
+        for (k, v) in fallback_identity(&|| git(&self.top), &local_hostname()) {
+            cmd = cmd.env(k, v);
+        }
+        let out = LiveRunner.check(&cmd)?;
         Ok(out.stdout.trim().to_string())
     }
+}
+
+/// The identity a commit to the user's spec takes where git config names none: `fspec` for a
+/// missing name and `fspec@host` for a missing email, as env on that one commit, per role and per
+/// field. Whatever git would read itself (`GIT_<ROLE>_*`, `<role>.*` and `user.*` config, `EMAIL`
+/// for an email) is left to it, and git config is never written. `git var` is no test here: it
+/// passes an empty email that `commit-tree` then refuses.
+fn fallback_identity(git: &dyn Fn() -> Cmd, host: &str) -> Vec<(String, String)> {
+    let configured = |key: &str| {
+        LiveRunner
+            .run(&git().args(["config", "--get", key]))
+            .is_ok_and(|o| o.status == 0 && !o.stdout.trim().is_empty())
+    };
+    let set = |var: &str| std::env::var_os(var).is_some();
+    let mut env = vec![];
+    for (role, var) in [("author", "AUTHOR"), ("committer", "COMMITTER")] {
+        let name = format!("GIT_{var}_NAME");
+        if !set(&name) && !configured(&format!("{role}.name")) && !configured("user.name") {
+            env.push((name, "fspec".to_string()));
+        }
+        let email = format!("GIT_{var}_EMAIL");
+        if !set(&email)
+            && std::env::var_os("EMAIL").is_none_or(|v| v.is_empty())
+            && !configured(&format!("{role}.email"))
+            && !configured("user.email")
+        {
+            env.push((email, format!("fspec@{host}")));
+        }
+    }
+    env
 }
 
 enum Pushed {
@@ -1253,5 +1287,66 @@ mod tests {
         sh(&work, &["commit", "-q", "-am", "local only"]);
         let err = repo.sync(&commit).unwrap_err().to_string();
         assert!(err.contains("has commits origin/main does not"), "{err}");
+    }
+
+    /// No HOME config, no system config, no identity anywhere: the commit is fspec's own, and
+    /// nothing is written to any git config. A name given on the command line is kept.
+    #[test]
+    fn a_machine_with_no_identity_commits_as_fspec() {
+        let home = tempfile::tempdir().unwrap();
+        let repo = tempfile::tempdir().unwrap();
+        let bare = |c: Cmd| {
+            c.env("HOME", home.path().display().to_string())
+                .env("XDG_CONFIG_HOME", home.path().join(".config").display().to_string())
+                .env("GIT_CONFIG_NOSYSTEM", "1")
+                .env("GIT_CONFIG_GLOBAL", "/dev/null")
+                .env("EMAIL", "")
+                // git otherwise makes one up from the login and the hostname where it can.
+                .env("GIT_CONFIG_COUNT", "1")
+                .env("GIT_CONFIG_KEY_0", "user.useConfigOnly")
+                .env("GIT_CONFIG_VALUE_0", "true")
+        };
+        let top = repo.path().to_path_buf();
+        let g = || bare(git(&top));
+        LiveRunner.check(&g().args(["init", "-q"])).unwrap();
+        if ["GIT_AUTHOR_NAME", "GIT_AUTHOR_EMAIL", "GIT_COMMITTER_NAME", "GIT_COMMITTER_EMAIL", "EMAIL"]
+            .iter()
+            .any(|k| std::env::var_os(k).is_some())
+        {
+            eprintln!("skipped: the test's own environment carries a GIT_* identity or EMAIL");
+            return;
+        }
+        assert!(LiveRunner.check(&g().args(["var", "GIT_COMMITTER_IDENT"])).is_err(), "no identity to start with");
+        let env = fallback_identity(&g, "h1");
+        assert_eq!(env.len(), 4);
+        let tree = LiveRunner.check(&g().arg("write-tree")).unwrap().stdout.trim().to_string();
+        let mut cmd = g().args(["commit-tree", &tree, "-m", "x"]);
+        for (k, v) in env {
+            cmd = cmd.env(k, v);
+        }
+        let commit = LiveRunner.check(&cmd).unwrap().stdout.trim().to_string();
+        let who = LiveRunner.check(&g().args(["log", "-1", "--format=%an <%ae>|%cn <%ce>", &commit])).unwrap().stdout;
+        assert_eq!(who.trim(), "fspec <fspec@h1>|fspec <fspec@h1>");
+        assert!(!home.path().join(".gitconfig").exists() && !home.path().join(".config/git").exists());
+        assert!(!std::fs::read_to_string(top.join(".git/config")).unwrap().contains("[user]"));
+
+        let named = || {
+            g().env("GIT_CONFIG_COUNT", "2").env("GIT_CONFIG_KEY_1", "user.name").env("GIT_CONFIG_VALUE_1", "Someone")
+        };
+        let env = fallback_identity(&named, "h1");
+        assert!(!env.iter().any(|(k, _)| k.ends_with("_NAME")), "a configured name is kept: {env:?}");
+        assert!(env.contains(&("GIT_AUTHOR_EMAIL".into(), "fspec@h1".into())), "{env:?}");
+        let author = || {
+            named()
+                .env("GIT_CONFIG_COUNT", "3")
+                .env("GIT_CONFIG_KEY_2", "author.email")
+                .env("GIT_CONFIG_VALUE_2", "a@x")
+        };
+        assert_eq!(fallback_identity(&author, "h1"), [("GIT_COMMITTER_EMAIL".to_string(), "fspec@h1".to_string())]);
+
+        let both = || {
+            named().env("GIT_CONFIG_COUNT", "3").env("GIT_CONFIG_KEY_2", "user.email").env("GIT_CONFIG_VALUE_2", "s@x")
+        };
+        assert!(fallback_identity(&both, "h1").is_empty(), "a configured identity is left alone");
     }
 }
