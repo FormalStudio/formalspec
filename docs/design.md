@@ -2093,6 +2093,7 @@ self-signed chain are unverified.
 | `fspec activity [--json] [--once]` | Follow the operation stream of every running apply, update, rollback and run |
 | `fspec run <pkg> [--bin b] [--update] [--detach] [-- args]` | Run a store package once, outside the spec |
 | `fspec search <query> [--json] [--limit n] [--offline]` | Rank packages from every catalog this machine can read |
+| `fspec app install <id>`, `uninstall <id>`, `owner <path>`, `list`, `init` | Install and uninstall through a commit to the spec's `apps.star` |
 | `fspec switch --distro d [--release r]` | Install another distro beside this one |
 | `fspec switch --adopt-boot` | Make the running root own boot, so the old one can be forgotten |
 | `fspec switch --reset-var` | Stage a reset of `/etc` and `/var` for the next boot of a bootc host |
@@ -2341,10 +2342,26 @@ how the shell starts a GUI app. A Flathub app runs from fspec's own flatpak inst
 catalogs clearly mean (`firefox` is Flathub's). Distro and Homebrew packages cannot run without
 being installed and are refused. [shell-install.md](shell-install.md) has the shell's side.
 
+## Installing from the shell
+
+`fspec app install <id>` (a search id: `flatpak:org.mozilla.firefox`, `zypper:btop`) adds the
+package to this host's list in `apps.star` beside the spec, which `modules/apps.star` (written once
+by `fspec app init`) turns into `pkg(...)`s for each host that lists `apps` in its modules. The
+edit is made on the upstream branch's tip through a throwaway git index, so the checkout's own
+edits are never read or staged, the new package is resolved into `fspec.lock`, and the commit is
+applied for that host and package's scope, then pushed. `fspec app uninstall` takes the entry out
+the same way; a package declared anywhere else is refused. `fspec app owner` says which package put
+a desktop file there and whether `uninstall` can take it out. A machine records what `fspec app`
+last pushed from it, and an apply of it from a checkout that lacks that commit is refused. The
+system scope goes through `sudo` when it needs no password or has a terminal, else `pkexec`.
+[shell-install.md](shell-install.md) is the contract the shell reads.
+
 ## Search
 
 `fspec search <query>` ranks packages from every catalog the machine can read: the aqua registry
-and Flathub's app ids (each kept a day under `~/.cache/fspec/catalog/`), Homebrew's own API cache
+and Flathub's app ids (each kept a day under `~/.cache/fspec/catalog/`; Flathub's AppStream
+catalog, fetched in the background into fspec's own flatpak installation, adds names, summaries,
+versions and icons), Homebrew's own API cache
 on macOS, the distro's package search (zypper, pacman, apt), and crates.io and npm asked per query
 with a 2s timeout (`--offline` leaves those two out). Names equal to the query come first, then
 names ending in it (`MozillaFirefox`, `org.mozilla.firefox`), spellings within two edits, names

@@ -528,6 +528,7 @@ fn searching<'a>(fetch: &'a MapFetch, runner: &'a RecordingRunner, cache: &std::
         cache: cache.to_path_buf(),
         brew: None,
         net: Some(Box::new(net)),
+        appstream: vec![],
     });
     cx.local = ("x86_64-linux".into(), "opensuse-tumbleweed".into());
     cx

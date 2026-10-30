@@ -2,6 +2,7 @@
 //! Resolvers are the only code that talks to registries; apply installs from the lock alone.
 
 mod age;
+pub mod appstream;
 mod aqua;
 mod cargo;
 pub mod catalog;

@@ -1,6 +1,6 @@
 # The operation stream
 
-`fspec apply`, `fspec update`, `fspec rollback` and `fspec run` say what they are doing on a local socket while
+`fspec apply`, `fspec update`, `fspec rollback`, `fspec run` and `fspec app` say what they are doing on a local socket while
 they run, so a desktop shell can show them as live activity instead of a terminal. This is the
 protocol, version 1. The write side is `crates/fspec-core/src/activity.rs`; `fspec activity`
 prints it.
@@ -83,10 +83,10 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
 | Field | Meaning |
 | --- | --- |
 | `id` | Opaque and unique, stable for the operation's life; the socket's file name |
-| `kind` | `apply`, `update`, `rollback` or `run` |
-| `source` | Opaque. Operations with equal sources are one row: applies of one host, updates of one spec. `fspec:<kind>:<host>`, `fspec:update:<spec dir>`, `fspec:apply:all`, `fspec:run:<package>` |
-| `title` | A sentence for people: `Applying g815`, `Updating fspec.lock`, `Rolling back e1504g`, `Running ripgrep` |
-| `host` | The host being changed, `null` for an update, a run and `apply --all` |
+| `kind` | `apply`, `update`, `rollback`, `run`, `install` or `uninstall` |
+| `source` | Opaque. Operations with equal sources are one row: applies of one host, updates of one spec. `fspec:<kind>:<host>`, `fspec:update:<spec dir>`, `fspec:apply:all`, `fspec:run:<package>`, `fspec:install:<search id>`, `fspec:uninstall:<search id>` |
+| `title` | A sentence for people: `Applying g815`, `Updating fspec.lock`, `Rolling back e1504g`, `Running ripgrep`, `Installing Firefox`, `Uninstalling Firefox` |
+| `host` | The host being changed (an install's included), `null` for an update, a run and `apply --all` |
 | `pid` | The fspec process |
 | `started`, `updated` | Milliseconds since the epoch: when it started and when the step last changed |
 | `state` | `running`, `succeeded` or `failed` |
@@ -110,6 +110,8 @@ Readers never write. Lines with a `v` the reader does not know are skipped.
 | `committing` | apply, rollback | Changing the machine, in phase order under the journal |
 | `resolving` | update, run | Asking upstream for each package's newest version (a run only before its first start, or with `--update`) |
 | `writing` | update | Writing `fspec.lock` |
+| `resolving` | install, uninstall | Reading `apps.star` at the upstream tip and resolving the new package into `fspec.lock`; then `committing` (item `spec`) while the commit is written, then an apply's own phases |
+| `pushing` | install, uninstall | Pushing the commit it applied to the spec's upstream branch |
 | `preparing` | run | Unpacking into the user store and linking its commands, or downloading a Flathub app into fspec's flatpak installation; the run succeeds when the command starts, not when it exits |
 
 `progress.unit` is `resources` (apply and rollback: one per resource the plan changes, counted in

@@ -36,6 +36,10 @@ pub struct Catalog {
     /// HTTP with a short timeout, for per-query catalogs (npm, crates.io) and Flathub's id list.
     /// `None` searches offline.
     pub net: Option<Box<dyn Fetch>>,
+    /// Flatpak's copies of Flathub's AppStream catalog (`.../appstream/flathub/<arch>/active`),
+    /// the newest of which gives Flathub apps their names, summaries, versions and icons. With none
+    /// of them there, Flathub is its bare id list.
+    pub appstream: Vec<PathBuf>,
 }
 
 impl Catalog {
@@ -46,8 +50,24 @@ impl Catalog {
             .unwrap_or_else(|| home.join(".cache"))
             .join("fspec/catalog");
         let brew = cfg!(target_os = "macos").then(|| home.join("Library/Caches/Homebrew/api"));
-        Catalog { cache, brew, net }
+        let active = format!("appstream/flathub/{}/active", std::env::consts::ARCH);
+        let appstream = vec![
+            fspec_flatpak(home).join(&active),
+            home.join(".local/share/flatpak").join(&active),
+            PathBuf::from("/var/lib/flatpak").join(&active),
+        ];
+        Catalog { cache, brew, net, appstream }
     }
+}
+
+/// The flatpak installation `fspec run` and the catalog refresh use, `fspec_dev::cache_dir`'s
+/// `flatpak/installation`.
+pub fn fspec_flatpak(home: &Path) -> PathBuf {
+    std::env::var_os("XDG_CACHE_HOME")
+        .filter(|v| !v.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| home.join(".cache"))
+        .join("fspec/dev/flatpak/installation")
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -106,12 +126,17 @@ pub struct Hit {
     /// Other names it answers to: aliases, an app id's last segment, a display name.
     pub keys: Vec<String>,
     pub description: Option<String>,
+    /// What people call it, when the catalog says (`Firefox` for `org.mozilla.firefox`).
+    pub title: Option<String>,
+    pub version: Option<String>,
+    /// A theme icon name or an absolute path.
+    pub icon: Option<String>,
 }
 
 impl Hit {
     fn new(origin: Origin, name: impl Into<String>, description: Option<&str>) -> Hit {
         let description = description.map(str::trim).filter(|d| !d.is_empty()).map(str::to_string);
-        Hit { origin, name: name.into(), keys: vec![], description }
+        Hit { origin, name: name.into(), keys: vec![], description, title: None, version: None, icon: None }
     }
 
     pub fn id(&self) -> String {
@@ -408,6 +433,23 @@ fn aqua_hits(cx: &Cx, cat: &Catalog) -> Result<Vec<Hit>> {
 /// Flathub's app ids, one download a day. They carry no description; the last segment of an id
 /// is the name a user knows the app by.
 fn flathub_hits(cat: &Catalog) -> Result<Vec<Hit>> {
+    if let Some(active) = crate::appstream::newest(&cat.appstream) {
+        let apps = crate::appstream::apps(&active, &cat.cache.join("flathub-apps.json"))?;
+        return Ok(apps
+            .into_iter()
+            .map(|a| {
+                let last = a.id.rsplit('.').next().unwrap_or(&a.id).to_string();
+                let keys = std::iter::once(last).chain(a.name.clone()).collect();
+                Hit {
+                    keys,
+                    title: a.name,
+                    version: a.version,
+                    icon: a.icon,
+                    ..Hit::new(Origin::Flathub, &a.id, a.summary.as_deref())
+                }
+            })
+            .collect());
+    }
     let body = cached(&cat.cache.join("flathub-ids.json"), FLATHUB_IDS, cat.net.as_deref())?;
     let ids: Vec<String> = serde_json::from_slice(&body).context("parsing Flathub's app ids")?;
     Ok(ids

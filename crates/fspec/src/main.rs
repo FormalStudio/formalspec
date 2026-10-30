@@ -1,4 +1,5 @@
 mod activity;
+mod app;
 mod backends;
 mod dev;
 mod run;
@@ -367,6 +368,12 @@ enum Command {
         /// Leave out the sources asked over the network per query (crates.io, npm).
         #[arg(long)]
         offline: bool,
+    },
+    /// Install and uninstall apps through the spec: an edit of its apps.star, committed, applied
+    /// for the host and pushed (see docs/shell-install.md).
+    App {
+        #[command(subcommand)]
+        cmd: app::AppCommand,
     },
     /// Print what the applies, updates and rollbacks running now are doing, and keep following
     /// them and any that start (see docs/activity.md).
@@ -765,7 +772,10 @@ fn main() -> Result<()> {
                                 fspec_core::activity::step(|s| s.item = Some(format!("{} over ssh", h.name)));
                                 pinned.remote(*dirty, wait)?.apply(h, &alias, scope.map(scope_name))
                             }
-                            None => apply_local(&paths, &pinned, h, *scope, wait, skip),
+                            None => {
+                                check_apps(&paths, &pinned)?;
+                                apply_local(&paths, &pinned, h, *scope, wait, skip)
+                            }
                         }
                     })
                     .map(drop)
@@ -960,6 +970,7 @@ fn main() -> Result<()> {
             run::run(&paths, pkg, bin.as_deref(), *update, *detach, args)
         }
         Command::Search { query, json, limit, offline } => search::run(&paths, query, *json, *limit, *offline),
+        Command::App { cmd } => app::run(&paths, &spec_path, cmd),
         Command::Activity { json, once } => activity::print(&fspec_core::activity::dir(), *json, *once),
         Command::Vm { cmd } => vm::run(&fspec_eval::evaluate(&spec_path)?, cmd),
         Command::Try { target, host, keep, cpus, memory, disk, headless, print, list, delete } => {
@@ -1815,6 +1826,33 @@ fn apply_local(
     Ok(())
 }
 
+/// Refuses to apply this machine from a spec that lacks the commit `fspec app` last pushed from
+/// it, which would undo that install. A spec outside git has no history to ask.
+fn check_apps(paths: &Paths, pinned: &Pinned) -> Result<()> {
+    let Some(applied) = std::fs::read(paths.user_state_dir().join("apps.json"))
+        .ok()
+        .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+        .and_then(|v| v.get("commit")?.as_str().map(str::to_string))
+    else {
+        return Ok(());
+    };
+    let repo = pinned.checkout.as_deref().unwrap_or(&pinned.spec_dir);
+    let ours = match &pinned.commit {
+        Some(c) => c.clone(),
+        None => match LiveRunner.run(&fspec_remote::cmd::git_commit(repo)) {
+            Ok(o) if o.status == 0 => o.stdout.trim().to_string(),
+            _ => return Ok(()),
+        },
+    };
+    if LiveRunner.run(&fspec_remote::cmd::git_contains(repo, &applied, &ours))?.status != 0 {
+        bail!(
+            "this machine was last changed by `fspec app` at {}, which this spec does not have; pull first",
+            &applied[..12.min(applied.len())]
+        );
+    }
+    Ok(())
+}
+
 /// The spec a plan or apply reads: the working tree, or a snapshot of one commit of it.
 struct Pinned {
     spec_path: PathBuf,
@@ -1855,6 +1893,7 @@ impl Pinned {
             loads_cache: None,
             commit: self.commit.clone(),
             wait,
+            checkout: self.checkout.clone(),
         })
     }
 }
@@ -2015,12 +2054,19 @@ fn is_root(runner: &dyn Runner) -> Result<bool> {
 /// The system scope needs root and the user scope must not run as root, so a non-root apply,
 /// plan or rollback hands the system scope to `sudo fspec <command> --scope system`. What it
 /// prints is returned for `plan --json` and passed through otherwise.
+/// Runs `command` for the system scope as root: through `sudo` when it needs no password or
+/// there is a terminal to ask in, else through `pkexec`, so a run started by the desktop shell
+/// gets its polkit agent's prompt and fspec never handles a password.
 fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str], checkout: Option<&Path>) -> Result<Vec<u8>> {
     let exe = std::env::current_exe()?;
-    let mut sudo = std::process::Command::new("sudo");
+    let how = app::escalate();
+    let mut sudo = match how {
+        app::Escalate::Sudo => std::process::Command::new("sudo"),
+        app::Escalate::Pkexec => std::process::Command::new("pkexec"),
+    };
     // A builder is reached with the user's ssh agent (fspec-build's `ssh`), which a remote apply
-    // forwards and sudo would drop.
-    if std::env::var_os("SSH_AUTH_SOCK").is_some() {
+    // forwards and sudo would drop. pkexec drops the whole environment.
+    if how == app::Escalate::Sudo && std::env::var_os("SSH_AUTH_SOCK").is_some() {
         sudo.arg("--preserve-env=SSH_AUTH_SOCK");
     }
     sudo.arg(exe).arg("--spec").arg(spec).arg("--home").arg(&paths.home);
@@ -2035,8 +2081,15 @@ fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str], checkou
     if capture {
         sudo.stdout(std::process::Stdio::piped());
     }
-    let out = sudo.spawn().and_then(|c| c.wait_with_output()).context("running sudo")?;
+    let what = match how {
+        app::Escalate::Sudo => "sudo",
+        app::Escalate::Pkexec => "pkexec",
+    };
+    let out = sudo.spawn().and_then(|c| c.wait_with_output()).with_context(|| format!("running {what}"))?;
     if !out.status.success() {
+        if let Some(why) = out.status.code().filter(|_| how == app::Escalate::Pkexec).and_then(app::pkexec_failure) {
+            bail!("system scope {}: {why}", command[0]);
+        }
         bail!("system scope {} failed", command[0]);
     }
     Ok(out.stdout)

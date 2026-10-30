@@ -51,6 +51,7 @@ fn remote<'a>(dir: &Path, runner: &'a RecordingRunner, dirty: bool) -> Remote<'a
         loads_cache: None,
         commit: None,
         wait: true,
+        checkout: None,
     }
 }
 
@@ -385,6 +386,7 @@ fn an_older_remote_gets_the_locked_engine_before_the_spec() {
         loads_cache: None,
         commit: None,
         wait: true,
+        checkout: None,
     };
     r.plan(&h, "g815").unwrap();
 
@@ -423,6 +425,7 @@ fn a_remote_with_no_fspec_gets_the_locked_engine_for_its_declared_platform() {
         loads_cache: None,
         commit: None,
         wait: true,
+        checkout: None,
     };
     r.plan(&h, "g815").unwrap();
 
@@ -466,6 +469,7 @@ fn an_older_remote_builds_the_locked_engine_when_ci_has_not() {
         loads_cache: None,
         commit: None,
         wait: true,
+        checkout: None,
     };
     r.plan(&h, "g815").unwrap();
 
@@ -507,6 +511,7 @@ fn a_host_with_builders_has_them_build_the_locked_engine() {
         loads_cache: None,
         commit: None,
         wait: true,
+        checkout: None,
     };
     r.plan(&h, "g815").unwrap();
 

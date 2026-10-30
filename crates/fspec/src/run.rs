@@ -4,7 +4,7 @@
 //! installation ([`flatpak`]). docs/shell-install.md has the design.
 
 mod cask;
-mod flatpak;
+pub mod flatpak;
 
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -60,10 +60,16 @@ pub fn declare(spec: &str) -> Result<Target> {
         "flatpak" if flatpak::is_app_id(arg) => return Ok(Target::Flatpak(arg.to_string())),
         "flatpak" => bail!("`{arg}` is not a Flathub app id like org.mozilla.firefox"),
         "github" => bail!("github:{arg} must be owner/repo"),
-        "brew" if cfg!(target_os = "macos") && !arg.contains('/') => return Ok(Target::Cask(arg.to_string())),
-        "zypper" | "pacman" | "dnf" | "apt" | "xbps" | "brew" => bail!(
-            "{source} packages cannot run without being installed; to install it, add \
-             `pkg({arg:?}, source = {source}())` to the spec and run `fspec apply`"
+        "brew" | "cask" if cfg!(target_os = "macos") && !arg.contains('/') => {
+            return Ok(Target::Cask(arg.to_string()));
+        }
+        "zypper" | "pacman" | "dnf" | "apt" | "brew" => bail!(
+            "{source} packages cannot run without being installed; `fspec app install {source}:{arg}` \
+             installs it through the spec"
+        ),
+        "xbps" => bail!(
+            "xbps packages cannot run without being installed; to install it, add \
+             `pkg({arg:?}, source = xbps())` to the spec and run `fspec apply`"
         ),
         other => bail!("fspec run takes aqua, github, npm, cargo, flatpak and (on macOS) brew packages, not {other}"),
     };
@@ -256,11 +262,12 @@ mod tests {
     fn what_cannot_run_uninstalled_or_could_break_out_of_the_string_is_refused() {
         assert_eq!(
             declare("zypper:MozillaFirefox").unwrap_err().to_string(),
-            "zypper packages cannot run without being installed; to install it, add \
-             `pkg(\"MozillaFirefox\", source = zypper())` to the spec and run `fspec apply`"
+            "zypper packages cannot run without being installed; `fspec app install zypper:MozillaFirefox` \
+             installs it through the spec"
         );
         if cfg!(target_os = "macos") {
             assert_eq!(declare("brew:firefox").unwrap(), Target::Cask("firefox".into()));
+            assert_eq!(declare("cask:firefox").unwrap(), Target::Cask("firefox".into()));
         } else {
             assert!(declare("brew:htop").unwrap_err().to_string().contains("source = brew()"));
         }

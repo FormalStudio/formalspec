@@ -6,14 +6,13 @@ once without landing anywhere. This is fspec's half of the launcher's Install mo
 
 1. a search call (id, name, source, version, icon, description, installed, per package);
 2. an install and an uninstall call, each taking a package id and returning an operation id at
-   once;
+   once (`fspec app install --detach`, `fspec app uninstall --detach`);
 3. the operation stream ([activity.md](activity.md));
-4. an owner query: which fspec package, if any, put a given desktop file there.
+4. an owner query: which fspec package, if any, put a given desktop file there (`fspec app owner`).
 
 On top of those, `fspec run` runs a package once, the way `nix run` did.
 
-Status: `fspec run` for store sources and Flathub apps and a first `fspec search` are built; everything else here
-is design, for FormalOS plan task 4.1.
+Status: all of it is built except `fspec app undo` and the polkit action file (see Privileges).
 
 ## The rule this keeps
 
@@ -24,208 +23,235 @@ hears of it, and nothing it fetched outlives `fspec gc`.
 
 ## The apps module
 
-Two files in the spec repo, created by `fspec app init`:
+Two files beside the spec entry point, created by `fspec app init`:
 
 `apps.star`, the data fspec edits. Nothing else in the repo writes it, and fspec rewrites it
-whole in this shape, so comments in it are not kept:
+whole, so comments in it are not kept. It is one assignment of a JSON-shaped literal, which is
+valid Starlark and which fspec reads back without evaluating:
 
 ```python
-# Written by `fspec app`.
+# Written by `fspec app install` and `uninstall`, whole, so edits here are not kept. modules/apps.star turns it into packages.
 APPS = {
     "e1504g": [
-        {"pkg": "org.mozilla.firefox", "source": "flatpak", "added": "2026-10-29"},
-        {"pkg": "btop", "source": "zypper", "added": "2026-10-29"},
-    ],
+        {
+            "name": "org.mozilla.firefox",
+            "source": "flatpak",
+            "ref": "org.mozilla.firefox",
+            "added": "2026-10-30"
+        }
+    ]
 }
 ```
 
-`modules/apps.star`, plain Starlark written once, which the spec's author owns from then on:
+`name` is the `pkg(...)` name, `source` the builtin (`flatpak`, `zypper`, `pacman`, `apt`, `dnf`,
+`aqua`, `github`, `npm`, `cargo`, and on macOS `brew` and `cask`), `ref` what that builtin takes.
+A host with no entries has no key.
+
+`modules/apps.star`, plain Starlark written once, which the spec's author owns from then on: it
+loads `APPS` and defines `apps(host)`, returning `pkg(a["name"], source = <builtin>(a["ref"]))` for
+each of the host's entries. Each host that installs from the shell adds it once:
 
 ```python
-load("//apps.star", "APPS")
-
-def apps(host):
-    return [pkg(a["pkg"], source = _SOURCES[a["source"]](a["pkg"])) for a in APPS.get(host.name, [])]
+load("//modules/apps.star", "apps")
+host(..., modules = [..., apps])
 ```
 
-(with `_SOURCES` mapping each source name to its builtin). Each host that installs from the
-shell adds `apps` to its `modules` once. No builtin, field or lock key is new, so `ENGINE` does
-not move.
+No builtin, field or lock key is new, so `ENGINE` does not move.
 
-Entries are per host: an app installed on e1504g lands on e1504g. `fspec app install --host h`
-or `--hosts all` writes other hosts' lists. `fspec app install` refuses a spec whose host does
-not get the new package once evaluated (`e1504g does not load modules/apps.star`), which is
-checked by evaluating, not by reading `host.star`.
+Entries are per host: an app installed on e1504g lands on e1504g. `--host h` writes another
+host's list and applies that host over ssh. An install whose package does not reach the host
+once the edited spec is evaluated is refused before anything is committed (`host e1504g does not
+load modules/apps.star; add apps to its modules ...`).
 
-A package that the spec already declares elsewhere is refused as a duplicate by the plan, as two
-declarations of one name always are; the search row reads it as installed.
+A package the host already declares is refused, matched by name and by what it installs (a
+`pkg("parsec", source = flatpak("com.parsecgaming.parsec"))` blocks
+`flatpak:com.parsecgaming.parsec`): `host g815 already declares parsec (...); it is installed by
+the spec`. The search row reads it as installed by `spec`.
 
 ## Where the commit is made
 
-`fspec app` edits the checkout named by `$FSPEC_SPEC`, the variable plan and apply already
-read; the shell's environment carries it. Without it every `fspec app` call fails with
-`set FSPEC_SPEC to the spec checkout installs commit to`, and the launcher shows that as its one
-dim row. A host applied only over ssh, as e1504g is from the macbook today, has no checkout: the
-spec declares a clone for it in its home module, and `FSPEC_SPEC` points there.
+`fspec app` edits the repo holding the spec it is given (`--spec`, a `spec.star` in the current
+directory, then `$FSPEC_SPEC`, as plan and apply pick it). The shell's environment carries
+`FSPEC_SPEC`. The checkout's branch needs an upstream (`origin/main`), which installs are pushed
+to. A host applied only over ssh has no checkout of its own: the spec declares a clone for it and
+points `FSPEC_SPEC` there.
 
-An install is, under the host's apply queue lock (`~/.local/state/fspec/queue/<host>.lock`, so
-two installs and an apply take turns, the second showing `queued`):
+An install runs under the host's apply queue lock (`~/.local/state/fspec/queue/<host>.lock`), so
+two installs and an apply take turns, the second showing `queued`:
 
-1. `git fetch`; the base is the upstream branch's tip.
-2. Read `apps.star` and `fspec.lock` from the base commit, not the working tree, add the entry,
-   and resolve only the new package into the lock (`fspec update <pkg>`'s code).
-3. Write a commit from a temporary index (`git hash-object -w`, `git update-index --cacheinfo`
-   under `GIT_INDEX_FILE`, `git write-tree`, `git commit-tree -p <base>`): subject
-   `feat(apps): install firefox on e1504g`. No ref moves yet, and uncommitted edits in the
-   checkout are never read, staged or swept in.
-4. `fspec apply --rev <commit> --host <this host> --scope <the entry's scope>`.
-5. On success, push the commit to the upstream branch. A rejected push means the branch moved:
-   redo steps 2 and 3 on the new tip (the edit is data, so it is regenerated, never rebased) and
-   push that. Offline, the commit is kept under `refs/fspec/apps/<host>` and pushed by the next
-   `fspec app` call.
-6. Fast-forward the local branch when it was the base, and write `apps.star` and `fspec.lock`
-   into the working tree only where they still equal the base's copy; a file someone is editing
-   is left alone and named.
+1. `git fetch` of the upstream branch; the base is its tip (the last fetched tip when offline),
+   or this host's unpushed commit under `refs/fspec/apps/<host>` when that is built on the tip.
+2. `apps.star` read from the base commit, not the working tree; the tree of the base unpacked
+   into a temp directory, `apps.star` rewritten there, and the new package alone resolved into
+   that tree's `fspec.lock` (`fspec update <name>`'s code).
+3. A commit written from a throwaway index (`git read-tree <base>`, `hash-object -w`,
+   `update-index --cacheinfo`, `write-tree`, `commit-tree -p <base>`) under the user's own git
+   identity: subject `feat(apps): install org.mozilla.firefox on e1504g`. No ref moves, and
+   uncommitted edits in the checkout are never read, staged or swept in.
+4. That commit applied for the host and the package's scope, as `fspec apply --rev <commit>
+   --scope <scope>` would.
+5. A push of the commit to the upstream branch. A rejected push means the branch moved: steps 1
+   to 3 run again on the new tip (the edit is data, so it is regenerated, never rebased; the
+   machine is not applied twice) and that commit is pushed, up to four tries. Any other push
+   failure keeps the commit under `refs/fspec/apps/<host>`, says so, and the next `fspec app` call
+   builds on it and pushes it. When the upstream branch has moved on without it by then, that
+   call refuses, naming the `git merge` that puts it on the tip (a merge, since the host records
+   that commit), rather than build on the
+   tip and lose the unpushed change.
+6. The checked-out branch fast-forwarded to the commit when it is the upstream branch and has
+   nothing of its own; git refuses where an uncommitted edit would be overwritten, and fspec then
+   says it left the branch as it was.
 
-On failure in step 4 the journal has rolled the machine back and no ref ever pointed at the
+When step 4 fails the journal has rolled the machine back and no ref ever pointed at the
 commit, so the spec and the machine both stay as they were.
 
-An install applies the spec as of its commit, the same thing `fspec apply` would: changes pushed
-from another machine but not yet applied here go in with it, and the stream's progress counts
-them. The plan is printed in the result for the Activity row's details.
+An install applies the spec as of its commit, which is what `fspec apply` would do: changes pushed
+from another machine but not yet applied here go in with it.
 
 ### Another machine must not undo it
 
-Today `fspec apply --host e1504g` from the macbook converges e1504g to whatever the macbook's
-checkout says, so a checkout that has not pulled would uninstall Firefox. With installs on the
-host, a remote apply gets a guard: the host records the commit it last applied (pushed sha) in
-its user state, `fspec facts --json` reports it, and the driving fspec refuses a spec commit that
-does not contain it (`git merge-base --is-ancestor`): `e1504g was last applied from 1a2b3c4,
-which this checkout does not have; pull first`. `--dirty` applies keep working, since the dirty
-tree is on top of a commit that has it.
+`fspec apply --host e1504g` from the macbook converges e1504g to whatever the macbook's checkout
+says, so a checkout that has not pulled would uninstall Firefox. After each push, `fspec app`
+writes the commit to `~/.local/state/fspec/apps.json` on the host it changed (over ssh, as
+`fspec app mark <commit>`, for `--host`), `fspec facts
+--json` reports it as `apps`, and an apply refuses a spec that does not contain it (`git
+merge-base --is-ancestor`), from another machine and from this one alike: `e1504g was last
+changed by fspec app at 1a2b3c4d5e6f, which this checkout does not have; pull first`. A
+`--dirty` apply is checked against its `HEAD`. A host whose fspec predates the field reports
+none and is not checked.
 
 ## Search
 
 ```
-fspec search <query> [--json] [--limit 30] [--source flatpak|distro|store]
+fspec search <query> [--json] [--limit 30] [--offline]
 ```
 
-Answers from local catalogs only, so a keystroke never waits on the network. One JSON line per
-package, best match first:
+One JSON line per package, best match first:
 
 ```json
-{"id":"flatpak:org.mozilla.firefox","name":"Firefox","source":"flatpak","version":"144.0.2","icon":"/home/kyan/.cache/fspec/catalog/flathub/icons/org.mozilla.firefox.png","description":"Fast, private and safe web browser","installed":false,"run":false}
+{"id":"flatpak:org.mozilla.firefox","name":"Firefox","source":"flatpak","version":"159.0","icon":"/home/kyan/.cache/fspec/dev/flatpak/installation/appstream/flathub/x86_64/active/icons/128x128/org.mozilla.firefox.png","description":"Fast, Private & Safe Web Browser","installed":false,"owner":null,"installable":true,"run":true,"spec":"pkg(\"org.mozilla.firefox\", source = flatpak())"}
 ```
 
-`id` is `<source>:<name>` and is what install, uninstall and run take. `icon` is a theme icon
-name, an absolute path, or `null` (the launcher's `package` icon). `run` says whether
-`fspec run` can start it.
+| Field | Meaning |
+| --- | --- |
+| `id` | `<source>:<ref>`, what `fspec app install`, `uninstall` and `fspec run` take |
+| `name` | The catalog's display name where it has one (Flathub's AppStream), else the package name |
+| `source` | `flatpak`, `zypper`, `pacman`, `apt`, `aqua`, `npm`, `cargo`, `brew` or `cask` |
+| `version` | The catalog's newest version, or `null` where the catalog does not say (the distro's search, aqua) |
+| `icon` | An absolute path to the catalog's 128px icon, or `null` (the launcher's `package` icon) |
+| `description` | One line, or `null` |
+| `installed` | Whether this machine has it, by any of the three owners below |
+| `owner` | `spec` (a package in this machine's state, installed by an apply), `flatpak` (in `flatpak list`, outside the spec), `distro` (the package manager has it, outside the spec), or `null` |
+| `installable` | Whether `fspec app install` can write this source for this machine: Flathub, the distro's own manager, aqua, github, npm and cargo on Linux; Homebrew, casks, aqua, github, npm and cargo on macOS |
+| `run` | Whether `fspec run` starts it without installing |
+| `spec` | The `pkg(...)` that declares it by hand |
 
-The catalogs are the sources the apps module can write for this host, under
-`~/.cache/fspec/catalog/`:
+`--offline` (the launcher's) leaves out crates.io and npm, the two catalogs asked over the network
+per query, so a keystroke never waits on the network. The aqua registry and Flathub's id list are
+fspec's own copies under `~/.cache/fspec/catalog/`, fetched again when a day old. Flathub's
+AppStream catalog is flatpak's own, fetched in a process of its own by a search that finds none or
+one a day old (`flatpak --user update --appstream flathub` against fspec's flatpak installation,
+`~/.cache/fspec/dev/flatpak/installation`, so the user's installation is never touched); that
+search answers from what it has, and the ones after it get names, summaries, versions and icons.
+The newest of that copy, the user's and the system installation's is read, through an index under
+`~/.cache/fspec/catalog/flathub-apps.json` read again only when the catalog changes.
 
-| Source | Catalog | Scope it installs in |
-| --- | --- | --- |
-| `flatpak` (Flathub) | Flathub's AppStream (`appstream.xml.gz` and its 128px icons) | user (`flatpak --user`) |
-| `distro` (`zypper`, `pacman`, `dnf`, `apt`, `xbps`) | the distro's AppStream catalog (`/usr/share/swcatalog`) for apps, the package manager's own search for the rest | system |
-| `store` (aqua, `github`) | the aqua registry's index | system |
-| `brew` (macOS) | formulae.brew.sh's JSON | system |
-
-Built so far (`fspec_sources::catalog`, which also writes the suggestions under a name that does
-not resolve): `--json`, `--limit` and `--offline`, with `id`, `name`, `source`, `description`,
-`run` and `spec` per line. Its catalogs are the aqua registry and Flathub's app ids (`/api/v2/appstream`,
-ids only, so no name or description yet) kept a day under `~/.cache/fspec/catalog/`, Homebrew's
-own API cache, the distro's package search, and crates.io and npm asked per query with a 2s
-timeout, which `--offline` leaves out for the launcher. Not built yet: `version`, `icon`,
-`installed`, `--source`, AppStream catalogs and the background refresh; a stale catalog is fetched
-again in the foreground and the stale copy used when that fails.
-
-A catalog older than a day is refreshed in the background by the search that finds it stale;
-that search answers from the old one. `installed` is true when this host's state holds the
-package, or the package manager has it (`rpm -q`, `flatpak list`), so a distro's base apps read
-installed too. Desktop apps (an AppStream `desktop-application`) rank above command-line tools of
-the same name.
+`installed` costs one `flatpak list` and one `rpm -q` (`pacman -Qq`, `dpkg-query -W`) per search
+for the rows shown, so it is right for distro base apps too.
 
 ## Install and uninstall
 
 ```
-fspec app install <id> [--detach]
-fspec app remove <id> [--detach]
+fspec app install <id> [--host <h>] [--detach]
+fspec app uninstall <id> [--host <h>] [--detach]
 ```
 
-Without `--detach` they run in the foreground like `apply`. With it, fspec forks the work into a
-process of its own (a transient user unit, `systemd-run --user --unit fspec-app-<op id>`, where
-systemd runs; else a `setsid` child), waits until that operation is listening, prints
-`{"op":"<id>"}` and exits. That is the launcher's "returns an operation id at once": the shell
-then follows `<id>.sock` on the stream, and a shell restart does not stop the install.
+Without `--detach` they run in the foreground like `apply` and print the commit (`feat(apps):
+install org.mozilla.firefox on g815 1a2b3c4d5e6f`). With it, fspec starts the same command in a
+session of its own (`setsid`, stdio closed, the operation id passed down), waits until that
+operation is listening on the stream, prints `{"op":"<id>"}` and exits. That is the launcher's
+"returns an operation id at once": the shell follows `<id>.sock`, and a shell restart does not
+stop the install. The child stays in the caller's cgroup and so in its login session, which is
+where polkit looks for the agent that answers a prompt. A command that fails before it publishes
+fails the parent with its exit status.
 
-On the stream an install is kind `install` (`remove` for an uninstall), source
-`fspec:app:<id>`, title `Installing Firefox`, with `keys` holding `pkg:<name>` throughout. Its
-phases are `queued`, `resolving` (the lock entry), `committing` with item `spec` for the commit,
-then the apply's own phases, then `pushing`. These kinds and phases are additions within
-version 1 of the protocol.
+On the stream an install is kind `install` (`uninstall` for an uninstall), source
+`fspec:install:<id>`, title `Installing Firefox` (Flathub's name where its catalog is here, else
+the package name), host the host it changes. Its phases are `resolving`, `committing` with item
+`spec`, `evaluating`, the apply's own phases (`planning`, `preparing`, `committing`, per scope),
+then `pushing`; the result is the apply's change count. These are additions within version 1 of
+the protocol ([activity.md](activity.md)).
 
-`fspec app remove` takes the entry out of `apps.star` the same way. A package declared anywhere
-but `apps.star` is refused (`firefox is declared in modules/linux/packages.star; remove it
-there`), which is what the owner query's `removable` tells the launcher before it offers the
-action. Removal trashes the app's data as any removal does; installing it again before
-`fspec gc` restores it.
+`fspec app uninstall` takes the entry out of `apps.star` the same way and applies the scope the
+package was in. A package declared anywhere but `apps.star` is refused (`parsec (flatpak:...) is
+declared in host g815's spec outside apps.star; take it out there`), which is what the owner
+query's `removable` tells the launcher before it offers the action. Removal trashes the app's
+data as any removal does; installing it again before `fspec gc` restores it. The lock entry stays
+until the next `fspec update`.
+
+`fspec app list [--json]` prints the host's entries (`id`, `name`, `added`), what the sidebar's
+updates and rollback rows (Plan 5.3) read.
 
 ## Owner query
 
 ```
-fspec owner <path> [--json]
+fspec app owner <path or desktop id> [--json]
 ```
 
 ```json
-{"path":"/var/lib/flatpak/exports/share/applications/org.mozilla.firefox.desktop","id":"flatpak:org.mozilla.firefox","pkg":"org.mozilla.firefox","source":"flatpak","scope":"user","removable":true}
+{"path":"/var/lib/flatpak/exports/share/applications/org.mozilla.firefox.desktop","id":"flatpak:org.mozilla.firefox","pkg":"org.mozilla.firefox","source":"flatpak","owner":"spec","removable":true}
 ```
 
-`id` and `pkg` are `null` when no fspec package owns the file; `removable` is true only for an
-entry in this host's `apps.star`. fspec finds the package from where the file is:
+A target with no `/` is a desktop file id (`org.mozilla.firefox`, with or without `.desktop`),
+looked up in `$XDG_DATA_HOME`, the user's and the system's Flatpak exports and `$XDG_DATA_DIRS`.
+The native package behind the file is found from where it is:
 
 - under a Flatpak `exports/share/applications`: the file's stem is the app id;
-- a link under `/usr/local/share/applications`: its target is in a store path, which a state
-  record names;
-- anywhere else: the package manager's owner query (`rpm -qf`, `pacman -Qoq`, `dpkg -S`,
-  `xbps-query -o`), matched against the state's distro packages;
-- on macOS, a bundle in `/Applications` that a state record copied there.
+- anywhere else: the package manager's owner query (`rpm -qf`, `pacman -Qoq`, `dpkg -S`).
+
+`owner` is `spec` when a package in this machine's state installs that, else `flatpak` or
+`distro`; with no package behind the file every field but `path` is `null`. `removable` is true
+only for a `spec` package in this host's `apps.star`. A desktop file a store package links under
+`/usr/local/share/applications` reads as owned by no package.
 
 ## Privileges
 
 - The edit, the commit, the push and the user scope run as the user. The spec is never written
   as root.
-- A Flathub install is a user-scope change and `fspec app` applies only the scope its entry
-  lives in, so it never asks for a password.
-- A distro or store package needs the system scope. From a terminal that stays `sudo`, as today.
-  With no terminal (stdin is not a tty, which is how the shell runs it), fspec hands the system
-  scope to `pkexec` instead, with the same arguments `sudo_system` already passes, so the prompt
-  is the shell's polkit agent's. The engine package ships the action:
+- Every source the module writes on Linux installs in the system scope (`flatpak()` installs
+  `--system`), so an install changes it, as an apply does.
+- The system scope runs as root through `sudo` when `sudo -n true` succeeds (no password asked)
+  or stdin is a terminal (asked there, as today). With neither, which is how the shell runs it,
+  fspec hands it to `pkexec` with the same arguments, so the prompt is the session's polkit
+  agent's and fspec never holds a password. pkexec drops the environment, so `SSH_AUTH_SOCK`
+  does not reach the system scope and a `git(...)` package with no CI build cannot use builders
+  from a shell install; installs from a terminal still can.
+- A refusal fails the operation before anything in the system scope changed: pkexec's 126 reads
+  `system scope apply: authorisation cancelled; nothing in the system scope changed`, its 127
+  `not authorised to change system software (no polkit agent answered, or the password was
+  refused)`. The user scope and the commit are not touched.
+- Not built yet: a polkit action for fspec itself, which would name the prompt and keep the
+  authorisation five minutes (`auth_admin_keep`) so an install and its undo prompt once:
 
   ```xml
   <action id="dev.formalsnake.fspec.system-scope">
     <description>Change system software</description>
     <defaults><allow_active>auth_admin_keep</allow_active></defaults>
-    <annotate key="org.freedesktop.policykit.exec.path">/usr/local/bin/fspec</annotate>
+    <annotate key="org.freedesktop.policykit.exec.path">/opt/fspec/current/bin/fspec</annotate>
   </action>
   ```
 
-  `auth_admin_keep` is one prompt per five minutes, so an install and its undo do not prompt
-  twice. pkexec drops the environment, so `SSH_AUTH_SOCK` does not reach the system scope and a
-  `git(...)` package with no CI build cannot use builders from a shell install; it fails saying
-  so, and installs from a terminal still can.
-- A cancelled prompt fails the operation with `authorisation cancelled`, before anything
-  changed.
+  Without it pkexec asks under its generic `org.freedesktop.policykit.exec` action, every time.
 
 ## Rollback
 
-- **Undo an install or removal**: `fspec app undo [<id>]` makes the inverse commit for the last
-  `fspec app` change of that package on this host and applies it, through the same steps as an
-  install. An undone removal brings the app back with its data from the trash. This is what the
-  Activity row's `Undo` and the sidebar's rollback row run, since the spec stays the truth.
+- **Undo an install or removal**: `fspec app uninstall` or `install` of the same id is the
+  inverse commit, through the same steps. Not built yet: `fspec app undo [<id>]`, which would make
+  that inverse commit for the last `fspec app` change, and bring a removed app's data back from
+  the trash.
 - **Roll the machine back**: `fspec rollback` repoints the previous generation as it always has.
   The spec still holds the app, so `plan` reports it as drift until the spec is reverted; the
-  shell offers `fspec app undo` instead of `rollback` for anything `fspec app` did.
+  shell offers the inverse `fspec app` call instead of `rollback` for anything `fspec app` did.
 - **A failed install** needs neither: see step 4 above.
 
 ## Run once
@@ -277,5 +303,5 @@ launcher's old `:nix` route.
 - **Distro and Homebrew packages** cannot run without being installed: unprivileged zypper
   resolves no dependencies (`install --dry-run` wants root), and the packages assume their own
   paths under `/` (Firefox's launcher sets `MOZ_DIST_LIB=/usr/lib64/firefox`). `fspec run` refuses
-  them naming the `pkg(...)` to add to the spec before `fspec apply`, and search rows from those
-  sources carry `run: false`.
+  them naming the `fspec app install` that installs them, and search rows from those sources
+  carry `run: false`.

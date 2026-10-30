@@ -46,8 +46,8 @@ fn parse(token: &str, doc: &Value, arm: bool) -> Result<Cask> {
             .filter(|k| k != "uninstall")
             .collect();
         bail!(
-            "cask {token} has no app to start (it installs {}); to install it, add \
-             `pkg({token:?}, source = brew(cask = True))` to the spec and run `fspec apply`",
+            "cask {token} has no app to start (it installs {}); `fspec app install cask:{token}` installs \
+             it through the spec",
             kinds.join(", ")
         );
     };
@@ -87,7 +87,7 @@ pub fn run(
                 let doc = match api.get_json(&format!("https://formulae.brew.sh/api/cask/{token}.json")) {
                     Err(e) if fspec_core::fetch::is_not_found(&e) => bail!(
                         "`{token}` is not a Homebrew cask, and a formula cannot run without being installed; \
-                         to install it, add `pkg({token:?}, source = brew())` to the spec and run `fspec apply`"
+                         `fspec app install brew:{token}` installs it through the spec"
                     ),
                     r => r?,
                 };
@@ -306,8 +306,8 @@ mod tests {
         let doc = json!({"url": "u", "artifacts": [{"pkg": ["X.pkg"]}, {"uninstall": []}]});
         assert_eq!(
             parse("x", &doc, true).unwrap_err().to_string(),
-            "cask x has no app to start (it installs pkg); to install it, add \
-             `pkg(\"x\", source = brew(cask = True))` to the spec and run `fspec apply`"
+            "cask x has no app to start (it installs pkg); `fspec app install cask:x` installs \
+             it through the spec"
         );
         assert!(parse("x", &json!({"url": "u", "artifacts": [{"app": ["../A.app"]}]}), true).is_err());
     }

@@ -40,12 +40,22 @@ pub fn batch(alias: &str) -> Cmd {
     Cmd::new("ssh").args(["-o", "ConnectTimeout=5", "-o", "BatchMode=yes"]).arg(alias)
 }
 
+/// `fspec app mark` on the remote, recording the spec commit an install there pushed.
+pub fn mark_apps(alias: &str, commit: &str) -> Cmd {
+    batch(alias).arg(format!("{FSPEC} app mark {commit}"))
+}
+
 pub fn probe(alias: &str) -> Cmd {
     batch(alias).arg(format!("{FSPEC} facts --json"))
 }
 
 pub fn git_commit(spec_dir: &Path) -> Cmd {
     Cmd::new("git").arg("-C").arg(spec_dir.display().to_string()).args(["rev-parse", "HEAD"])
+}
+
+/// Succeeds when `ancestor` is in the history of `commit`.
+pub fn git_contains(repo: &Path, ancestor: &str, commit: &str) -> Cmd {
+    Cmd::new("git").arg("-C").arg(repo.display().to_string()).args(["merge-base", "--is-ancestor", ancestor, commit])
 }
 
 /// The commit `rev` names, or a failure when it names none.

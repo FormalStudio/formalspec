@@ -42,6 +42,8 @@ pub enum Kind {
     Update,
     Rollback,
     Run,
+    Install,
+    Uninstall,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +66,8 @@ pub enum Phase {
     Committing,
     Resolving,
     Writing,
+    /// `fspec app`: pushing the spec commit it applied.
+    Pushing,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -129,6 +133,8 @@ impl Operation {
             Kind::Update => "update",
             Kind::Rollback => "rollback",
             Kind::Run => "run",
+            Kind::Install => "install",
+            Kind::Uninstall => "uninstall",
         };
         Operation {
             id: format!("{started:x}-{pid}"),

@@ -28,12 +28,21 @@ pub struct Probe {
     /// The remote fspec's [`ENGINE`]; one from before the field prints none, read as 0.
     #[serde(default)]
     pub engine: u32,
+    /// The spec commit `fspec app` last pushed from the machine
+    /// (`~/.local/state/fspec/apps.json`). A spec shipped to it must contain that commit, or the
+    /// apply would undo an install made there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub apps: Option<String>,
 }
 
 impl Probe {
     pub fn local(hostname: String) -> Probe {
         let (platform, distro) = Facts::probe_local();
-        Probe { hostname, platform, distro, engine: ENGINE }
+        let apps = std::env::var_os("HOME")
+            .and_then(|h| std::fs::read(Path::new(&h).join(".local/state/fspec/apps.json")).ok())
+            .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
+            .and_then(|v| v.get("commit")?.as_str().map(str::to_string));
+        Probe { hostname, platform, distro, engine: ENGINE, apps }
     }
 }
 
@@ -106,6 +115,8 @@ pub struct Remote<'a> {
     pub commit: Option<String>,
     /// Queue behind an apply already running on the remote rather than fail (`--no-wait`).
     pub wait: bool,
+    /// The git checkout `spec_dir` was snapshotted from, when it is a snapshot.
+    pub checkout: Option<PathBuf>,
 }
 
 /// One commit of the spec's repo, unpacked on its own (`--rev`).
@@ -332,13 +343,33 @@ impl Remote<'_> {
     }
 
     pub fn apply(&self, host: &Host, alias: &str, scope: Option<&str>) -> Result<()> {
-        if let Reach::Unreachable(why) = self.reach(host, alias)? {
-            bail!("host {} is unreachable over ssh ({alias}): {why}", host.name);
+        match self.reach(host, alias)? {
+            Reach::Unreachable(why) => bail!("host {} is unreachable over ssh ({alias}): {why}", host.name),
+            Reach::Reachable(found) => self.has_apps(host, &found)?,
         }
         let dest = self.ship(alias)?;
         let out = self.runner.run(&cmd::apply(alias, &dest, &self.spec_file, &host.name, scope, self.wait))?;
         if out.status != 0 {
             bail!("apply on {} exited {}", host.name, out.status);
+        }
+        Ok(())
+    }
+
+    /// Refuses a spec that lacks the commit `fspec app` last pushed from the host.
+    fn has_apps(&self, host: &Host, found: &Probe) -> Result<()> {
+        let Some(applied) = &found.apps else { return Ok(()) };
+        let repo = self.checkout.as_deref().unwrap_or(&self.spec_dir);
+        let ours = match &self.commit {
+            Some(c) => c.clone(),
+            None => self.runner.check(&cmd::git_commit(repo))?.stdout.trim().to_string(),
+        };
+        let out = self.runner.run(&cmd::git_contains(repo, applied, &ours))?;
+        if out.status != 0 {
+            bail!(
+                "{} was last changed by `fspec app` at {}, which this checkout does not have; pull first",
+                host.name,
+                &applied[..12.min(applied.len())]
+            );
         }
         Ok(())
     }
