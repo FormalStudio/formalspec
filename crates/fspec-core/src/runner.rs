@@ -230,6 +230,8 @@ impl Runner for LiveRunner {
 struct Lines {
     pending: Vec<u8>,
     kept: Vec<u8>,
+    /// `pending` ends in a `\r` whose line the watch already saw.
+    told: bool,
 }
 
 impl Lines {
@@ -240,15 +242,24 @@ impl Lines {
             let end = start + at;
             let crlf = match self.pending[end] {
                 b'\r' => match self.pending.get(end + 1) {
-                    // Whether this `\r` starts a `\r\n` is up to the next chunk.
-                    None => break,
+                    // Whether this `\r` starts a `\r\n` is up to the next chunk, but a bar
+                    // redrawn before a quiet stretch reaches the watch now.
+                    None => {
+                        if !self.told {
+                            watch(Some(&String::from_utf8_lossy(&self.pending[start..end])));
+                            self.told = true;
+                        }
+                        break;
+                    }
                     Some(b'\n') => true,
                     Some(_) => false,
                 },
                 _ => true,
             };
             let line = &self.pending[start..end];
-            watch(Some(&String::from_utf8_lossy(line)));
+            if !std::mem::take(&mut self.told) {
+                watch(Some(&String::from_utf8_lossy(line)));
+            }
             if crlf {
                 self.kept.extend_from_slice(line);
                 self.kept.push(b'\n');
@@ -261,7 +272,9 @@ impl Lines {
     fn finish(mut self, watch: &mut dyn FnMut(Option<&str>)) -> String {
         if self.pending.last() == Some(&b'\r') {
             self.pending.pop();
-            watch(Some(&String::from_utf8_lossy(&self.pending)));
+            if !self.told {
+                watch(Some(&String::from_utf8_lossy(&self.pending)));
+            }
         } else if !self.pending.is_empty() {
             watch(Some(&String::from_utf8_lossy(&self.pending)));
             self.kept.extend_from_slice(&self.pending);
@@ -332,5 +345,19 @@ mod tests {
         for want in ["bar 1", "bar 2", "done", "next", "oops"] {
             assert!(seen.iter().any(|l| l == want), "{want} in {seen:?}");
         }
+    }
+
+    #[test]
+    fn a_bar_ending_a_chunk_reaches_the_watch_once() {
+        let mut seen = Vec::new();
+        let mut watch = |l: Option<&str>| seen.extend(l.map(str::to_owned));
+        let mut lines = Lines::default();
+        lines.push(b"Building 1/3\r", &mut watch);
+        lines.push(b"Building 2/3\r", &mut watch);
+        lines.push(b"\nCompiling a\r", &mut watch);
+        lines.push(b"\n", &mut watch);
+        let kept = lines.finish(&mut watch);
+        assert_eq!(seen, ["Building 1/3", "Building 2/3", "Compiling a"]);
+        assert_eq!(kept, "Building 2/3\nCompiling a\n");
     }
 }
