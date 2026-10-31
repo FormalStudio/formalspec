@@ -125,11 +125,13 @@ pub fn detail(active: &Path, id: &str) -> Result<Option<Detail>> {
 }
 
 pub fn detail_of(xml: &str, id: &str, icons: &Path) -> Option<Detail> {
-    let (plain, desktop) = (format!("<id>{id}</id>"), format!("<id>{id}.desktop</id>"));
-    let at = xml.find(&plain).or_else(|| xml.find(&desktop))?;
-    let start = xml[..at].rfind("<component ")?;
-    let end = xml[at..].find("</component>")? + at;
-    let block = &xml[start..end];
+    // The component whose own id is `id`, as `parse` names it: the same `<id>` also sits in other
+    // components' `<requires>`, `<suggests>` and `<replaces>`.
+    let block = xml
+        .split("<component ")
+        .skip(1)
+        .filter_map(|c| c.find("</component>").map(|end| &c[..end]))
+        .find(|block| text(block, "id").is_some_and(|own| own.strip_suffix(".desktop").unwrap_or(&own) == id))?;
     let developer = text(block, "developer_name").or_else(|| {
         let dev = &block[block.find("<developer")?..];
         text(&dev[..dev.find("</developer>")?], "name")
@@ -329,6 +331,8 @@ mod tests {
         let old = detail_of(XML, "org.gnome.Old", Path::new("/nowhere")).unwrap();
         assert_eq!((old.name.as_deref(), old.description, old.screenshot), (Some("Old"), None, None));
         assert!(detail_of(XML, "org.absent", Path::new("/nowhere")).is_none());
+        let suggested = format!("<components><component type=\"desktop-application\"><id>org.other</id><name>Other</name><suggests><id>org.mozilla.firefox</id></suggests></component>{}", &xml[xml.find("<component ").unwrap()..]);
+        assert_eq!(detail_of(&suggested, "org.mozilla.firefox", Path::new("/nowhere")).unwrap().name.as_deref(), Some("Firefox"));
     }
 
     #[test]
