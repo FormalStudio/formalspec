@@ -165,6 +165,20 @@ fn failure_rolls_back_everything() {
 }
 
 #[test]
+fn one_key_in_two_scopes_fails_the_plan() {
+    let w = World::new();
+    let timer = |user: bool| Desired {
+        resource: serde_json::from_value(serde_json::json!(
+            {"kind": "timer", "name": "prune", "exec": "/bin/true", "schedule": "@daily", "user": user}
+        ))
+        .unwrap(),
+        owner: None,
+    };
+    let err = plan_scope(&w.cx(Scope::System), &[&FakeFiles], &[timer(false), timer(true)], &State::default()).unwrap_err();
+    assert!(err.to_string().contains("timer:prune is declared more than once"), "{err}");
+}
+
+#[test]
 fn unclaimed_resource_fails_the_plan() {
     let w = World::new();
     let pkg = Desired {

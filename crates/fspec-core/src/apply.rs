@@ -18,7 +18,7 @@ use crate::journal::{Journal, remove_any};
 use crate::lock::Lock;
 use crate::par;
 use crate::paths::Paths;
-use crate::plan::{Action, Change, Plan, plan};
+use crate::plan::{Action, Change, Plan, check_unique, plan};
 use crate::resource::{Desired, Key, Resource, Scope};
 use crate::runner::Runner;
 use crate::state::{Entry, State};
@@ -265,6 +265,8 @@ pub trait Backend: Sync {
 
 /// Plan for one scope: the config diff plus drift that backends report on unchanged resources.
 pub fn plan_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], state: &State) -> Result<Plan> {
+    // Keys carry no scope, and the commit looks resources up by key across both.
+    check_unique(desired)?;
     let desired: Vec<Desired> = desired.iter().filter(|d| d.resource.scope() == cx.scope).cloned().collect();
     let empty = State::default();
     let (system, user) = match cx.scope {
