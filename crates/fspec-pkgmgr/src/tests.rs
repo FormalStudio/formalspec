@@ -1447,6 +1447,67 @@ fn a_dropped_name_skips_the_dry_run_and_takes_its_deps_before_the_adds() {
 }
 
 #[test]
+fn a_dropped_name_a_declared_package_needs_stays_installed() {
+    let w = tumbleweed();
+    w.apply(Scope::System, &[distro_res(TW, &["gcc", "binutils", "go", "pkgconfig(x)", "liby", "libx-devel"])])
+        .unwrap();
+    w.take();
+    let dry = "zypper --non-interactive --no-refresh remove --dry-run --clean-deps";
+    w.answer("rpm -q --whatprovides --qf %{NAME}\\n pkgconfig(x)", 0, "libx-devel\n");
+    w.answer(
+        &format!("{dry} liby"),
+        0,
+        "The following 2 packages are going to be REMOVED:\n  liby libx-devel\n\n2 packages to remove.\n",
+    );
+    w.answer(
+        &format!("{dry} libx-devel"),
+        0,
+        "The following package is going to be REMOVED:\n  libx-devel\n\n1 package to remove.\n",
+    );
+    w.answer(
+        &format!("{dry} binutils"),
+        0,
+        "The following 3 packages are going to be REMOVED:\n  binutils gcc gcc15\n\n3 packages to remove.\n",
+    );
+    w.answer(
+        &format!("{dry} go"),
+        0,
+        "The following 2 packages are going to be REMOVED:\n  go go1.25\n\n2 packages to remove.\n",
+    );
+    w.apply(Scope::System, &[distro_res(TW, &["gcc", "pkgconfig(x)"])]).unwrap();
+    let lines = w.take();
+    assert!(lines.contains(&format!("{} go", FAMS[4].remove)), "{lines:#?}");
+    for kept in ["binutils", "liby", "libx-devel"] {
+        assert!(!lines.iter().any(|l| l.starts_with(FAMS[4].remove) && l.contains(kept)), "{lines:#?}");
+    }
+    let rec = &w.state(Scope::System).entries[&distro_res(TW, &[]).resource.key()].record;
+    assert_eq!(rec["names"], json!(["gcc", "pkgconfig(x)"]));
+}
+
+#[test]
+fn drift_on_a_declared_distro_package_is_reinstalled() {
+    let f = &FAMS[4];
+    let w = tumbleweed();
+    let want = [distro_res(TW, &["gcc", "rustup", "!rust-src"])];
+    let gone = format!("{} rust-src", f.version);
+    w.answer(&gone, 1, "");
+    w.apply(Scope::System, &want).unwrap();
+    disable_rolling(&w);
+    w.take();
+    w.answer(&format!("{} rustup", f.version), 1, "");
+    assert!(is_drift(&w.plan(Scope::System, &want).unwrap()));
+    w.apply(Scope::System, &want).unwrap();
+    let installs: Vec<String> = w.take().into_iter().filter(|l| l.starts_with(f.install)).collect();
+    // The `!name` rides along, so a conflicting rust-src goes in the same transaction.
+    assert_eq!(installs, [format!("{} rustup !rust-src", f.install)]);
+
+    w.forget_answers();
+    w.answer(&gone, 1, "");
+    let plan = w.plan(Scope::System, &want).unwrap();
+    assert!(plan.changes.is_empty(), "{plan}");
+}
+
+#[test]
 fn flatpak_installs_the_gl_extensions_for_the_loaded_nvidia_driver() {
     let mut w = World::linux();
     w.lock.upsert(locked("sober", "flatpak:org.vinegarhq.Sober", None, &[("any", commit("aaa"))]));

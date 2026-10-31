@@ -153,6 +153,42 @@ pub(crate) fn check_solvable(cx: &Cx, names: &[String]) -> Result<()> {
     bail!("zypper cannot install these packages together:\n{}", problems.join("\n"))
 }
 
+/// The names in `dropped` that cannot go without taking a package `declared` names, each with
+/// the first one it would take. zypper removes every package requiring one it removes, so
+/// dropping binutils takes gcc, and with `--clean-deps` whatever only those pulled in.
+pub(crate) fn held(cx: &Cx, dropped: &[String], declared: &[String]) -> Result<Vec<(String, String)>> {
+    let mut names: Vec<String> = declared.iter().filter(|n| !n.starts_with('!')).cloned().collect();
+    // A capability (`pkgconfig(pam)`, a file path) is removed under its provider's name.
+    let caps: Vec<String> = names.iter().filter(|n| n.contains('(') || n.starts_with('/')).cloned().collect();
+    if !caps.is_empty() {
+        let cmd = Cmd::new("rpm").args(["-q", "--whatprovides", "--qf", r"%{NAME}\n"]).args(caps);
+        let out = cx.runner.run(&cmd)?.stdout;
+        names.extend(out.lines().map(str::trim).filter(|l| !l.is_empty() && !l.contains(' ')).map(str::to_string));
+    }
+    let mut out = Vec::new();
+    for name in dropped {
+        // The summary's header is translated, and the parse reads the English one.
+        let cmd = zypper(["--no-refresh", "remove", "--dry-run", "--clean-deps"]).arg(name).env("LC_ALL", "C");
+        let removed = removed_by(&cx.runner.run(&cmd)?.stdout);
+        if let Some(by) = removed.iter().find(|r| names.contains(r)) {
+            out.push((name.clone(), by.clone()));
+        }
+    }
+    Ok(out)
+}
+
+/// The packages a `zypper remove` run lists under "going to be REMOVED".
+pub(crate) fn removed_by(stdout: &str) -> Vec<String> {
+    stdout
+        .lines()
+        .skip_while(|l| !l.contains("going to be REMOVED"))
+        .skip(1)
+        .take_while(|l| !l.trim().is_empty())
+        .flat_map(str::split_whitespace)
+        .map(str::to_string)
+        .collect()
+}
+
 /// Notes for the distro repos when they are not at `snapshot`.
 pub(crate) fn snapshot_drift(cx: &Cx, snapshot: &str) -> Vec<String> {
     let mut notes = Vec::new();

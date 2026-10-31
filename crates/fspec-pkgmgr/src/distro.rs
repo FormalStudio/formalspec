@@ -11,7 +11,7 @@ use fspec_core::state::Entry;
 use serde_json::Value;
 
 use crate::family::Family;
-use crate::pkgs::{drift_names, install, record_names, recorded_names, remove};
+use crate::pkgs::{drift_names, install, live_versions, record_names, recorded_names, remove};
 use crate::{text, zypper};
 
 /// The `packages` list of `fedora(...)`, `arch(...)`, `tumbleweed(...)` and the other classic
@@ -346,11 +346,32 @@ impl Backend for DistroBackend {
             {
                 zypper::move_to(cx, journal, s)?;
             }
-            let dropped: Vec<String> =
+            let mut dropped: Vec<String> =
                 had.iter().filter(|n| !want.contains(n) && !n.starts_with('!')).cloned().collect();
-            let added: Vec<String> = want.iter().filter(|n| !had.contains(n)).cloned().collect();
+            if fam == Family::Zypper && !dropped.is_empty() {
+                for (name, by) in zypper::held(cx, &dropped, want)? {
+                    eprintln!("fspec: keeping {name}: removing it would take {by}, which the packages declare");
+                    dropped.retain(|n| *n != name);
+                }
+            }
             if !dropped.is_empty() {
                 remove(cx, journal, fam, &dropped, &rec)?;
+            }
+            // Every declared name not installed, not only the new ones: a removal on another
+            // manager can still take a dependent, and drift on a declared package lands here.
+            let kept: Vec<String> = want.iter().filter(|n| had.contains(n) && !n.starts_with('!')).cloned().collect();
+            let live = if kept.is_empty() { Default::default() } else { live_versions(cx, fam, &kept)? };
+            let mut added: Vec<String> = want
+                .iter()
+                .filter(|n| !had.contains(n) || (kept.contains(n) && !live.contains_key(*n)))
+                .cloned()
+                .collect();
+            // The `!name`s ride along, so a reinstall that conflicts with one removes it in the
+            // same transaction (rustup with `!rust-src`).
+            if !added.is_empty() {
+                let gone: Vec<String> =
+                    want.iter().filter(|n| n.starts_with('!') && !added.contains(n)).cloned().collect();
+                added.extend(gone);
             }
             if !added.is_empty() {
                 install(cx, fam, &added, None)?;
