@@ -29,11 +29,23 @@ pub struct State {
     /// them is new. `None` until the first apply, which only takes the baseline.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub seen: Option<BTreeSet<String>>,
+    /// The spec commit the last apply converged this scope to, `None` when it applied a tree
+    /// that is not one commit (a dirty or unversioned spec). A generation keeps the one it was
+    /// made from; this file the newest, which an apply that changed nothing still moves.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rev: Option<String>,
 }
 
 impl Default for State {
     fn default() -> State {
-        State { version: VERSION, generation: 0, entries: BTreeMap::new(), data: BTreeMap::new(), seen: None }
+        State {
+            version: VERSION,
+            generation: 0,
+            entries: BTreeMap::new(),
+            data: BTreeMap::new(),
+            seen: None,
+            rev: None,
+        }
     }
 }
 
@@ -62,6 +74,15 @@ impl State {
             bail!("{} is state version {}, this fspec reads {VERSION}", path.display(), state.version);
         }
         Ok(state)
+    }
+
+    /// The `rev` of the state file at `path` alone, `None` for a missing or unreadable one.
+    pub fn rev_at(path: &Path) -> Option<String> {
+        #[derive(Deserialize)]
+        struct Rev {
+            rev: Option<String>,
+        }
+        serde_json::from_slice::<Rev>(&fs::read(path).ok()?).ok()?.rev
     }
 
     /// Write-then-rename, so a crash never leaves a torn state file.

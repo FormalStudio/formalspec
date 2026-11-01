@@ -174,7 +174,8 @@ fn one_key_in_two_scopes_fails_the_plan() {
         .unwrap(),
         owner: None,
     };
-    let err = plan_scope(&w.cx(Scope::System), &[&FakeFiles], &[timer(false), timer(true)], &State::default()).unwrap_err();
+    let err =
+        plan_scope(&w.cx(Scope::System), &[&FakeFiles], &[timer(false), timer(true)], &State::default()).unwrap_err();
     assert!(err.to_string().contains("timer:prune is declared more than once"), "{err}");
 }
 
@@ -432,4 +433,28 @@ fn an_apply_that_waited_takes_the_generation_after_the_one_before_it() {
     apply_scope(&w.cx(Scope::System), backends, &[file("/etc/a", "1")]).unwrap();
     apply_scope(&stale, backends, &[file("/etc/a", "2")]).unwrap();
     assert_eq!(w.state(Scope::System).generation, 2);
+}
+
+#[test]
+fn the_applied_commit_lands_in_the_state_and_its_generation_even_with_nothing_to_do() {
+    let w = World::new();
+    let backends: &[&dyn Backend] = &[&FakeFiles];
+    let want = vec![file("/etc/a", "A")];
+    let apply = |rev| {
+        let held = lock_scope(&w.paths.system_state_dir(), true).unwrap();
+        apply_held(&w.cx(Scope::System), backends, &want, rev, &held).unwrap()
+    };
+    apply(Some("aaa"));
+    let generation = State::load(&w.paths.system_state_dir().join("generations/1.json")).unwrap();
+    assert_eq!(generation.rev.as_deref(), Some("aaa"));
+
+    assert!(apply(Some("bbb")).changes.is_empty());
+    let state = w.state(Scope::System);
+    assert_eq!((state.generation, state.rev.as_deref()), (1, Some("bbb")));
+    assert_eq!(State::rev_at(&w.paths.system_state_dir().join("state.json")).as_deref(), Some("bbb"));
+    let generation = State::load(&w.paths.system_state_dir().join("generations/1.json")).unwrap();
+    assert_eq!(generation.rev.as_deref(), Some("aaa"));
+
+    apply(None);
+    assert_eq!(w.state(Scope::System).rev, None);
 }

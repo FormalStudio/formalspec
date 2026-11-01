@@ -218,7 +218,10 @@ data as any removal does; installing it again before `fspec gc` restores it. The
 until the next `fspec update`.
 
 `fspec app list [--json]` prints the host's entries (`id`, `name`, `added`), what the sidebar's
-updates and rollback rows (Plan 5.3) read.
+updates and rollback rows (Plan 5.3) read. The updates row counts the upstream commits the
+machine has not applied: `fspec facts --json`'s `applied` (the spec commit each scope's last
+apply converged to, see design.md's State), not the checkout's `HEAD`, which an apply over ssh
+from another machine never moves.
 
 ## Owner query
 

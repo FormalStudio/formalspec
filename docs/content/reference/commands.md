@@ -240,5 +240,5 @@ For hosts declared with `vm(...)`. See [VM hosts](../guides/vm-hosts.md).
 | Command | Does |
 | --- | --- |
 | `fspec eval [--host <h> \| --all]` | Prints a host as the spec declares it, modules expanded, as JSON. Any host evaluates on any machine |
-| `fspec facts [--json]` | Prints this machine's host name, platform and distro, as `apply` compares them with the declaration |
+| `fspec facts [--json]` | Prints this machine's host name, platform and distro, as `apply` compares them with the declaration; `--json` adds the fspec engine, the last `fspec app` commit (`apps`) and the spec commit each scope was last applied from (`applied`) |
 | `fspec --version` | Prints the version |

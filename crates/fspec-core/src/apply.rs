@@ -401,13 +401,21 @@ pub fn apply_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired]) -> R
     // Taken before recovery: a second apply would otherwise replay the first one's live journal
     // and share its staging directory.
     let held = lock_scope(&cx.state_dir(), true)?;
-    apply_held(cx, backends, desired, &held)
+    apply_held(cx, backends, desired, None, &held)
 }
 
 /// [`apply_scope`] under a [`lock_scope`] the caller already holds. The generation is the locked
 /// state's next one, whatever `cx` was built with: an apply that waited sees the generation the
-/// one before it wrote.
-pub fn apply_held(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], _held: &Held) -> Result<Plan> {
+/// one before it wrote. `rev` is the spec commit `desired` comes from, recorded in the state once
+/// the apply succeeds.
+pub fn apply_held(
+    cx: &Cx,
+    backends: &[&dyn Backend],
+    desired: &[Desired],
+    rev: Option<&str>,
+    _held: &Held,
+) -> Result<Plan> {
+    let rev = rev.map(str::to_string);
     let dir = cx.state_dir();
     let state_path = dir.join("state.json");
     activity::phase(activity::Phase::Planning, Some(cx.scope));
@@ -432,6 +440,10 @@ pub fn apply_held(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], _held
             entry.resource = d.resource.clone();
             refreshed = true;
         }
+    }
+    if p.changes.is_empty() && state.rev != rev {
+        state.rev = rev.clone();
+        refreshed = true;
     }
     if refreshed {
         state.save(&state_path)?;
@@ -501,7 +513,7 @@ pub fn apply_held(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], _held
         }
     };
 
-    let mut next = State { generation: cx.generation, ..state.clone() };
+    let mut next = State { generation: cx.generation, rev, ..state.clone() };
     for op in &handed {
         next.entries.remove(&op.key);
     }

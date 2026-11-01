@@ -39,7 +39,7 @@ The same `/opt/fspec` root is used on macOS.
 | --- | --- |
 | `/var/lib/fspec/state.json` | System: what FormalSpec owns machine-wide |
 | `~/.local/state/fspec/state.json` | User: what it owns in your home |
-| `<state dir>/generations/<n>.json` | A snapshot of state per generation, used by `rollback` |
+| `<state dir>/generations/<n>.json` | A snapshot of state per generation, used by `rollback`, with the spec commit it was applied from (`rev`) |
 | `<state dir>/journal.json` | The undo journal of an apply in progress |
 | `<state dir>/apply.lock` | Held by the running apply, with its pid and start time; a second apply waits for it |
 | `~/.local/state/fspec/queue/<host>.lock` | The queue of `fspec apply`s of one host on this machine |

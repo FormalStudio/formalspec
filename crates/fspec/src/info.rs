@@ -75,7 +75,14 @@ fn flatpak(paths: &Paths, app: &str, info: &mut Info, runner: &dyn Runner) {
     }
     // The cached summary carries both sizes; `remote-info --cached` leaves them out.
     let cmd = Cmd::new("flatpak")
-        .args(["--user", "remote-ls", "--cached", "--app", "--columns=application,download-size,installed-size", "flathub"])
+        .args([
+            "--user",
+            "remote-ls",
+            "--cached",
+            "--app",
+            "--columns=application,download-size,installed-size",
+            "flathub",
+        ])
         .env("FLATPAK_USER_DIR", catalog::fspec_flatpak(&paths.home).display().to_string())
         .env("LC_ALL", "C");
     if let Ok(out) = runner.run(&cmd).filter_status()
@@ -94,7 +101,8 @@ fn sizes(out: &str, app: &str) -> Option<(String, String)> {
 }
 
 fn zypper(package: &str, info: &mut Info, runner: &dyn Runner) {
-    let cmd = Cmd::new("zypper").args(["--no-refresh", "--non-interactive", "--quiet", "info", package]).env("LC_ALL", "C");
+    let cmd =
+        Cmd::new("zypper").args(["--no-refresh", "--non-interactive", "--quiet", "info", package]).env("LC_ALL", "C");
     let Ok(out) = runner.run(&cmd).filter_status() else { return };
     parse_zypper(&out, info);
 }
@@ -111,7 +119,8 @@ fn parse_zypper(out: &str, info: &mut Info) {
     let Some(at) = out.lines().position(|l| l.trim_start().starts_with("Description")) else { return };
     let mut paragraphs: Vec<String> = vec![];
     let mut current = String::new();
-    let head = out.lines().nth(at).and_then(|l| l.split_once(':')).map(|(_, v)| v.trim().to_string()).unwrap_or_default();
+    let head =
+        out.lines().nth(at).and_then(|l| l.split_once(':')).map(|(_, v)| v.trim().to_string()).unwrap_or_default();
     for line in std::iter::once(head.as_str()).chain(out.lines().skip(at + 1)) {
         let line = line.trim();
         if line.is_empty() {
@@ -173,10 +182,15 @@ mod tests {
         assert_eq!(info.name.as_deref(), Some("btop"));
         assert_eq!(info.version.as_deref(), Some("1.4.0-1.2"));
         assert_eq!(info.installed.as_deref(), Some("1.1 MiB"));
-        assert_eq!(info.summary.as_deref(), Some("Usage and stats for processor, memory, disks, network and processes"));
+        assert_eq!(
+            info.summary.as_deref(),
+            Some("Usage and stats for processor, memory, disks, network and processes")
+        );
         assert_eq!(
             info.description.as_deref(),
-            Some("Resource monitor that shows usage and stats for processor, memory, disks, network and processes.\nC++ version and continuation of bashtop and bpytop.")
+            Some(
+                "Resource monitor that shows usage and stats for processor, memory, disks, network and processes.\nC++ version and continuation of bashtop and bpytop."
+            )
         );
         assert_eq!((info.license, info.developer, info.screenshot), (None, None, None));
     }

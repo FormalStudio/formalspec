@@ -131,10 +131,22 @@ fn fspec(dest: &str, spec_file: &str, args: &[&str]) -> String {
     format!("{FSPEC} --spec {dest}/{spec_file} {}", args.join(" "))
 }
 
-pub fn apply(alias: &str, dest: &str, spec_file: &str, host: &str, scope: Option<&str>, wait: bool) -> Cmd {
+/// `commit` is the commit the shipped spec is, when it is one, which the remote records as applied.
+pub fn apply(
+    alias: &str,
+    dest: &str,
+    spec_file: &str,
+    host: &str,
+    scope: Option<&str>,
+    commit: Option<&str>,
+    wait: bool,
+) -> Cmd {
     let mut args = vec!["apply", "--local", "--host", host];
     if let Some(scope) = scope {
         args.extend(["--scope", scope]);
+    }
+    if let Some(commit) = commit {
+        args.extend(["--commit", commit]);
     }
     if !wait {
         args.push("--no-wait");
@@ -273,7 +285,7 @@ mod tests {
     #[test]
     fn apply_and_plan_lines() {
         let dest = spec_dir("abc123", None);
-        let apply = apply("g815", &dest, "spec.star", "g815", None, true);
+        let apply = apply("g815", &dest, "spec.star", "g815", None, None, true);
         assert_eq!(apply.program, "ssh");
         assert_eq!(
             apply.args,
@@ -284,8 +296,8 @@ mod tests {
             ]
         );
         assert!(apply.interactive);
-        let scoped = super::apply("g815", &dest, "spec.star", "g815", Some("user"), false);
-        assert!(scoped.args[2].ends_with("apply --local --host g815 --scope user --no-wait"));
+        let scoped = super::apply("g815", &dest, "spec.star", "g815", Some("user"), Some("abc123"), false);
+        assert!(scoped.args[2].ends_with("apply --local --host g815 --scope user --commit abc123 --no-wait"));
         assert_eq!(
             plan("g815", &dest, "spec.star", "g815").args[5],
             r#"PATH="/usr/local/bin:$PATH" fspec --spec "$HOME/.cache/fspec/spec/abc123"/spec.star plan --json --local --host g815"#

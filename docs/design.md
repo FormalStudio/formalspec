@@ -798,6 +798,17 @@ file with the hash it wrote, each service, each app data path it attributed to
 a package, and the last-applied value of every key in a patched file. Plan is a
 diff between the evaluated config and this state.
 
+Each also records `rev`, the spec commit its last successful apply converged
+it to: the `--rev` snapshot's, or on the remote end of `apply --host` the
+shipped commit, passed down as `--commit` when the shipped tree is clean. An
+apply of a tree that is not one commit (dirty, or a local working tree)
+records none. An apply that changed nothing still moves it, so a host applied
+from another machine's checkout knows which commit it runs even when the
+commits since touched only other hosts; each `generations/<n>.json` keeps the
+`rev` it was made from, and `rollback` records the restored generation's.
+`fspec facts --json` reports both scopes' as `applied` (`{"system": "<commit>",
+"user": "<commit>"}`), readable without root.
+
 ## Removal and cleanup
 
 Deleting a line from the config removes the thing completely on the next

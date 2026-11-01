@@ -2,8 +2,8 @@ mod activity;
 mod app;
 mod backends;
 mod dev;
-mod run;
 mod info;
+mod run;
 mod search;
 mod secret;
 mod try_vm;
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use clap::{Parser, Subcommand, ValueEnum};
 use fspec_core::activity::{Kind, Operation, Phase};
-use fspec_core::apply::{apply_held, apply_scope, desired_from_generation, lock_scope, plan_scope, state_dir};
+use fspec_core::apply::{apply_held, desired_from_generation, lock_scope, plan_scope, state_dir};
 use fspec_core::engine;
 use fspec_core::facts::{Facts, local_hostname};
 use fspec_core::fetch::LiveFetch;
@@ -40,6 +40,10 @@ struct Cli {
     /// sudo end of the system scope.
     #[arg(long, global = true, hide = true)]
     checkout: Option<PathBuf>,
+    /// The spec commit the given spec is, on the remote and sudo ends of an apply of one: what
+    /// the state records as applied.
+    #[arg(long, global = true, hide = true)]
+    commit: Option<String>,
     /// The parent's operation socket, on the sudo end of the system scope: its progress is sent
     /// there instead of published.
     #[arg(long, global = true, hide = true)]
@@ -560,7 +564,7 @@ fn main() -> Result<()> {
         },
         Command::Plan { host, json, all, dirty, rev, local, scope } => {
             let pinned = match local {
-                true => Pinned::given(&spec_path, cli.checkout.clone())?,
+                true => Pinned::given(&spec_path, cli.checkout.clone(), cli.commit.clone())?,
                 false => Pinned::new(&spec_path, rev.as_deref())?,
             };
             let spec = fspec_eval::evaluate(&pinned.spec_path)?;
@@ -747,7 +751,7 @@ fn main() -> Result<()> {
                 let (wait, skip) = (!*no_wait, *skip_undecryptable_secrets);
                 let spec = fspec_eval::evaluate(&spec_path)?;
                 if *local {
-                    let pinned = Pinned::given(&spec_path, cli.checkout.clone())?;
+                    let pinned = Pinned::given(&spec_path, cli.checkout.clone(), cli.commit.clone())?;
                     return apply_local(&paths, &pinned, named(&spec, host.as_deref())?, *scope, wait, skip);
                 }
                 let this = local_hostname();
@@ -829,6 +833,8 @@ fn main() -> Result<()> {
                         sudo_system(&spec_path, &host.name, &paths, &["rollback", &n.to_string()], None)?;
                         continue;
                     }
+                    let held = lock_scope(&dir, true)?;
+                    let state = State::load(&dir.join("state.json"))?;
                     let desired = desired_from_generation(&dir, n)?;
                     let past = if n == 0 {
                         State::default()
@@ -838,7 +844,8 @@ fn main() -> Result<()> {
                     // The generation records its packages; the rest of the lock, such as the
                     // Tumbleweed snapshot and the image digests, stays as the lock has it.
                     env.lock.pkg = fspec_store::lock_from_state(&past).pkg;
-                    let plan = apply_scope(&env.cx(scope, &state), &backends::all(), &desired)?;
+                    let plan =
+                        apply_held(&env.cx(scope, &state), &backends::all(), &desired, past.rev.as_deref(), &held)?;
                     fspec_core::activity::changed(plan.changes.len() as u64);
                     println!("{plan}");
                 }
@@ -931,7 +938,7 @@ fn main() -> Result<()> {
             Ok(())
         }
         Command::Facts { json } => {
-            let probe = Probe::local(local_hostname());
+            let probe = Probe::local(local_hostname(), &paths);
             if *json {
                 println!("{}", serde_json::to_string(&probe)?);
             } else {
@@ -1693,13 +1700,7 @@ fn plan_local(paths: &Paths, pinned: &Pinned, host: &Host, scope: Option<ScopeAr
     for scope in scopes {
         // The system scope reads root-only files (sudoers drop-ins, the ESP), as apply writes them.
         if scope == Scope::System && is_live(paths) && !is_root(env.runner.as_ref())? {
-            let out = sudo_system(
-                &pinned.spec_path,
-                &host.name,
-                paths,
-                &["plan", "--json", "--local"],
-                pinned.checkout.as_deref(),
-            )?;
+            let out = sudo_system(&pinned.spec_path, &host.name, paths, &["plan", "--json", "--local"], Some(pinned))?;
             plans.push(serde_json::from_slice(&out).context("reading the system scope's plan from sudo")?);
             continue;
         }
@@ -1804,7 +1805,7 @@ fn apply_local(
             if skip_secrets {
                 args.push("--skip-undecryptable-secrets");
             }
-            sudo_system(&pinned.spec_path, &host.name, paths, &args, pinned.checkout.as_deref())?;
+            sudo_system(&pinned.spec_path, &host.name, paths, &args, Some(pinned))?;
             continue;
         }
         let dir = state_dir(paths, scope);
@@ -1820,7 +1821,7 @@ fn apply_local(
             }
             skipped.extend(left_out.into_iter().map(|(path, _)| path));
         }
-        let plan = apply_held(&env.cx(scope, &state), &backends::all(), &desired, &held)?;
+        let plan = apply_held(&env.cx(scope, &state), &backends::all(), &desired, pinned.commit.as_deref(), &held)?;
         fspec_core::activity::changed(plan.changes.len() as u64);
         println!("{plan}");
     }
@@ -1867,22 +1868,23 @@ fn check_apps(paths: &Paths, pinned: &Pinned) -> Result<()> {
 struct Pinned {
     spec_path: PathBuf,
     spec_dir: PathBuf,
-    /// The snapshot's commit, which a remote host gets it under.
+    /// The commit this spec is: a snapshot's, or the one a remote or sudo end was handed.
     commit: Option<String>,
     /// The working tree the snapshot was taken from.
     checkout: Option<PathBuf>,
 }
 
 impl Pinned {
-    /// The spec at `spec_path` as it is on disk, `checkout` being where it was snapshotted from.
-    fn given(spec_path: &Path, checkout: Option<PathBuf>) -> Result<Pinned> {
+    /// The spec at `spec_path` as it is on disk, `checkout` being where it was snapshotted from
+    /// and `commit` the commit it is.
+    fn given(spec_path: &Path, checkout: Option<PathBuf>, commit: Option<String>) -> Result<Pinned> {
         let spec_dir = spec_path.parent().context("spec has no parent directory")?.to_path_buf();
-        Ok(Pinned { spec_path: spec_path.to_path_buf(), spec_dir, commit: None, checkout })
+        Ok(Pinned { spec_path: spec_path.to_path_buf(), spec_dir, commit, checkout })
     }
 
     /// The working tree, or with `rev` a snapshot of that commit.
     fn new(spec_path: &Path, rev: Option<&str>) -> Result<Pinned> {
-        let working = Pinned::given(spec_path, None)?;
+        let working = Pinned::given(spec_path, None, None)?;
         let Some(rev) = rev else { return Ok(working) };
         let cache = fspec_remote::snapshots().context("neither XDG_CACHE_HOME nor HOME is set")?;
         let snap = fspec_remote::snapshot(&LiveRunner, &working.spec_dir, rev, &cache)?;
@@ -2067,7 +2069,7 @@ fn is_root(runner: &dyn Runner) -> Result<bool> {
 /// Runs `command` for the system scope as root: through `sudo` when it needs no password or
 /// there is a terminal to ask in, else through `pkexec`, so a run started by the desktop shell
 /// gets its polkit agent's prompt and fspec never handles a password.
-fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str], checkout: Option<&Path>) -> Result<Vec<u8>> {
+fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str], pinned: Option<&Pinned>) -> Result<Vec<u8>> {
     let how = app::escalate();
     let exe = match how {
         app::Escalate::Sudo => std::env::current_exe()?,
@@ -2087,8 +2089,11 @@ fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str], checkou
         sudo.arg("--activity-relay").arg(relay);
     }
     sudo.args(command).args(["--scope", "system", "--host", host]);
-    if let Some(checkout) = checkout {
+    if let Some(checkout) = pinned.and_then(|p| p.checkout.as_deref()) {
         sudo.arg("--checkout").arg(checkout);
+    }
+    if let Some(commit) = pinned.and_then(|p| p.commit.as_deref()) {
+        sudo.arg("--commit").arg(commit);
     }
     let capture = command.contains(&"--json");
     if capture {

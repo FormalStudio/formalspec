@@ -78,7 +78,9 @@ fn apply_probes_ships_then_runs_with_a_terminal() {
     assert_eq!(lines[2], format!("{PROBE} 'mkdir -p {dest} && tar -xf - -C {dest}'"));
     assert_eq!(
         lines[3],
-        format!("ssh -t g815 'PATH=\"/usr/local/bin:$PATH\" fspec --spec {dest}/spec.star apply --local --host g815'")
+        format!(
+            "ssh -t g815 'PATH=\"/usr/local/bin:$PATH\" fspec --spec {dest}/spec.star apply --local --host g815 --commit abc123'"
+        )
     );
     assert_eq!(lines.len(), 4);
 

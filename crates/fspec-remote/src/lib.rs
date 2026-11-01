@@ -9,7 +9,7 @@ use anyhow::{Context, Result, bail};
 use fspec_core::engine;
 use fspec_core::lock::{Lock, SHIPPED_LOADS, loads_cache};
 use fspec_core::runner::{Output, Runner};
-use fspec_core::{Facts, Host, Plan};
+use fspec_core::{Facts, Host, Paths, Plan, State};
 use serde::{Deserialize, Serialize};
 
 pub use cmd::{Target, target};
@@ -17,7 +17,7 @@ pub use cmd::{Target, target};
 /// What this fspec can read, compared against the remote's before shipping it a spec. Bump it
 /// with every builtin, builtin argument, resource field or lock key a spec can use, since an
 /// older fspec fails on them, or worse, ignores an unknown lock key.
-pub const ENGINE: u32 = 12;
+pub const ENGINE: u32 = 13;
 
 /// What `fspec facts --json` prints: the machine as it is, to compare against its declaration.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
@@ -33,16 +33,38 @@ pub struct Probe {
     /// apply would undo an install made there.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub apps: Option<String>,
+    /// The spec commit each scope's last apply converged it to, where it applied one.
+    #[serde(default, skip_serializing_if = "Applied::is_empty")]
+    pub applied: Applied,
+}
+
+/// `state.json`'s `rev` per scope.
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Applied {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub user: Option<String>,
+}
+
+impl Applied {
+    fn is_empty(&self) -> bool {
+        self.system.is_none() && self.user.is_none()
+    }
 }
 
 impl Probe {
-    pub fn local(hostname: String) -> Probe {
+    pub fn local(hostname: String, paths: &Paths) -> Probe {
         let (platform, distro) = Facts::probe_local();
-        let apps = std::env::var_os("HOME")
-            .and_then(|h| std::fs::read(Path::new(&h).join(".local/state/fspec/apps.json")).ok())
+        let apps = std::fs::read(paths.user_state_dir().join("apps.json"))
+            .ok()
             .and_then(|b| serde_json::from_slice::<serde_json::Value>(&b).ok())
             .and_then(|v| v.get("commit")?.as_str().map(str::to_string));
-        Probe { hostname, platform, distro, engine: ENGINE, apps }
+        let applied = Applied {
+            system: State::rev_at(&paths.system_state_dir().join("state.json")),
+            user: State::rev_at(&paths.user_state_dir().join("state.json")),
+        };
+        Probe { hostname, platform, distro, engine: ENGINE, apps, applied }
     }
 }
 
@@ -293,6 +315,11 @@ impl Remote<'_> {
     /// (it may have no GitHub token for a private repo). Returns the remote directory as a shell
     /// word.
     pub fn ship(&self, alias: &str) -> Result<String> {
+        Ok(self.shipped(alias)?.0)
+    }
+
+    /// [`Remote::ship`], and the commit what it shipped is when that is one commit (not dirty).
+    fn shipped(&self, alias: &str) -> Result<(String, Option<String>)> {
         let (commit, tree_dirty, files) = match &self.commit {
             Some(commit) => (commit.clone(), false, vec![".".to_string()]),
             None => self.tracked()?,
@@ -318,7 +345,7 @@ impl Remote<'_> {
                 self.runner.check(&cmd::ship_into(alias, &format!("{dest}/{SHIPPED_LOADS}"), &archive))?;
             }
         }
-        Ok(dest)
+        Ok((dest, (!tree_dirty).then_some(commit)))
     }
 
     /// The commit, whether the tree is dirty, and the files of the working tree to ship.
@@ -347,8 +374,16 @@ impl Remote<'_> {
             Reach::Unreachable(why) => bail!("host {} is unreachable over ssh ({alias}): {why}", host.name),
             Reach::Reachable(found) => self.has_apps(host, &found)?,
         }
-        let dest = self.ship(alias)?;
-        let out = self.runner.run(&cmd::apply(alias, &dest, &self.spec_file, &host.name, scope, self.wait))?;
+        let (dest, commit) = self.shipped(alias)?;
+        let out = self.runner.run(&cmd::apply(
+            alias,
+            &dest,
+            &self.spec_file,
+            &host.name,
+            scope,
+            commit.as_deref(),
+            self.wait,
+        ))?;
         if out.status != 0 {
             bail!("apply on {} exited {}", host.name, out.status);
         }
