@@ -1,4 +1,5 @@
 use anyhow::{Result, bail};
+use fspec_core::fetch::git;
 use fspec_core::lock::LockedPkg;
 use fspec_core::runner::Cmd;
 
@@ -12,7 +13,7 @@ pub fn resolve(url: &str, rev: &str, paths: &[String], cx: &Cx, out: &mut Locked
         return Ok(());
     }
     if rev == "latest" {
-        let o = cx.runner.check(&Cmd::new("git").args(["ls-remote", "--tags", "--sort=-v:refname", url]))?;
+        let o = git(cx.runner, url, Cmd::new("git").args(["ls-remote", "--tags", "--sort=-v:refname", url]))?;
         let refs = parse(&o.stdout);
         let Some((_, first)) = refs.iter().find(|(_, r)| r.starts_with("refs/tags/")) else {
             bail!("{url} has no tags to take `latest` from");
@@ -27,7 +28,7 @@ pub fn resolve(url: &str, rev: &str, paths: &[String], cx: &Cx, out: &mut Locked
         out.version = Some(tag.trim_start_matches("refs/tags/").to_string());
         return Ok(());
     }
-    let o = cx.runner.check(&Cmd::new("git").args(["ls-remote", url, rev]))?;
+    let o = git(cx.runner, url, Cmd::new("git").args(["ls-remote", url, rev]))?;
     let refs = parse(&o.stdout);
     let wants =
         [format!("refs/heads/{rev}"), format!("refs/tags/{rev}^{{}}"), format!("refs/tags/{rev}"), rev.to_string()];
@@ -43,8 +44,10 @@ pub fn resolve(url: &str, rev: &str, paths: &[String], cx: &Cx, out: &mut Locked
 fn last_touching(url: &str, branch: &str, tip: &str, paths: &[String], cx: &Cx) -> Result<String> {
     let tmp = tempfile::tempdir()?;
     let dir = tmp.path().display().to_string();
-    cx.runner.check(
-        &Cmd::new("git")
+    git(
+        cx.runner,
+        url,
+        Cmd::new("git")
             .args(["clone", "-q", "--bare", "--filter=blob:none", "--single-branch", "--branch", branch, url])
             .arg(&dir),
     )?;

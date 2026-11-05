@@ -100,13 +100,13 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     }
     // A forced checkout and a clean drop the last build's patches and untracked files; ignored
     // files (an in-tree target/) stay, so they build incrementally too.
+    runner.check(&Cmd::new("git").args(["-C", &src, "remote", "set-url", "origin", job.url]))?;
+    fspec_core::fetch::git(
+        runner,
+        job.url,
+        Cmd::new("git").args(["-C", &src, "fetch", "-q", "--depth", "1", "origin", job.rev]),
+    )?;
     for cmd in [
-        Cmd::new("git").args(["-C", &src, "remote", "set-url", "origin", job.url]),
-        fspec_core::fetch::github_git_env(job.url, github_token(job.url))
-            .into_iter()
-            .fold(Cmd::new("git").args(["-C", &src, "fetch", "-q", "--depth", "1", "origin", job.rev]), |c, (k, v)| {
-                c.env(k, v)
-            }),
         Cmd::new("git").args(["-C", &src, "checkout", "-q", "-f", "FETCH_HEAD"]),
         Cmd::new("git").args(["-C", &src, "clean", "-q", "-ffd"]),
     ] {
@@ -193,11 +193,6 @@ pub fn job_tag(job: &Job) -> Result<String> {
     Ok(crate::tag(job.rev, &crate::identity(job.pkg, job.url, job.rev, patches.as_deref())?, job.platform))
 }
 
-/// Looked up only for a github.com URL, so a local or other forge's source never runs `gh`.
-fn github_token(url: &str) -> Option<&'static str> {
-    url.starts_with("https://github.com/").then(fspec_core::fetch::github_token).flatten()
-}
-
 /// Homebrew refuses to run as root, and a macOS recipe installs its tools with it. When the
 /// system scope's apply runs through sudo, a macOS build runs as the user who ran sudo.
 fn build_user(platform: &str) -> Option<String> {
@@ -224,6 +219,10 @@ impl Runner for AsUser<'_> {
             Some(u) => self.inner.run_watched(&as_user(cmd, u), watch),
             None => self.inner.run_watched(cmd, watch),
         }
+    }
+
+    fn github_token(&self) -> Option<String> {
+        self.inner.github_token()
     }
 }
 

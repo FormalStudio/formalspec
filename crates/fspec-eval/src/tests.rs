@@ -396,6 +396,15 @@ hosts = [host("m", platform = "aarch64-darwin", modules = [[formalmusic()]])]
     }
 
     #[test]
+    fn a_private_load_resolves_its_ref_with_the_token() {
+        let mut t = T::new();
+        t.runner.github_token = Some("t0k".into());
+        t.eval(Mode::Resolve { runner: &t.runner, locked: &BTreeMap::new(), keep: false }).unwrap();
+        let calls = t.runner.calls.lock().unwrap();
+        assert!(calls[0].env.iter().any(|(k, _)| k == "GIT_CONFIG_VALUE_0"), "{calls:?}");
+    }
+
+    #[test]
     fn evaluation_needs_the_lock_and_a_matching_file() {
         let t = T::new();
         let err = t.eval(Mode::Locked(&BTreeMap::new())).unwrap_err();

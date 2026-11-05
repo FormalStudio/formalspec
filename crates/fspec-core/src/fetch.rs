@@ -5,6 +5,8 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 
 use anyhow::{Context, Result, anyhow};
+
+use crate::runner::{Cmd, Output, Runner};
 use sha2::Digest;
 
 /// HTTP reads for resolvers and the store. Tests use [`MapFetch`].
@@ -43,12 +45,16 @@ pub struct HttpError {
     pub url: String,
     pub status: u16,
     pub rate_limited: Option<String>,
+    /// A GitHub 404 asked without a token, which is also how GitHub answers for a private
+    /// repository.
+    pub anonymous: bool,
 }
 
 impl fmt::Display for HttpError {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match &self.rate_limited {
             Some(note) => write!(f, "GET {}: GitHub API rate limit reached ({note})", self.url),
+            None if self.anonymous => write!(f, "GET {}: HTTP {} ({PRIVATE})", self.url, self.status),
             None => write!(f, "GET {}: HTTP {}", self.url, self.status),
         }
     }
@@ -76,12 +82,15 @@ pub fn github_token() -> Option<&'static str> {
         .as_deref()
 }
 
+/// How a GitHub request that needed credentials it did not have is explained.
+pub const PRIVATE: &str = "a private repository? set GITHUB_TOKEN or run `gh auth login`";
+
 /// Git configuration that sends `token` for one command against a github.com URL, as
 /// `GIT_CONFIG_*` variables so it lands in neither the process list nor the checkout's config.
-pub fn github_git_env(url: &str, token: Option<&str>) -> Vec<(String, String)> {
+fn github_git_env(url: &str, token: Option<&str>) -> Vec<(String, String)> {
     use base64::Engine;
     match token {
-        Some(t) if url.starts_with("https://github.com/") => {
+        Some(t) if is_github(url) => {
             let basic = base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{t}"));
             vec![
                 ("GIT_CONFIG_COUNT".into(), "1".into()),
@@ -91,6 +100,53 @@ pub fn github_git_env(url: &str, token: Option<&str>) -> Vec<(String, String)> {
         }
         _ => vec![],
     }
+}
+
+fn is_github(url: &str) -> bool {
+    url.starts_with("https://github.com/")
+}
+
+/// Runs `cmd`, a git command against `url`, with the runner's GitHub token for a github.com URL
+/// and no credential prompt, so a private repository is read with the user's login or fails
+/// saying it needs one.
+pub fn git(runner: &dyn Runner, url: &str, cmd: Cmd) -> Result<Output> {
+    let token = if is_github(url) { runner.github_token() } else { None };
+    let cmd = github_git_env(url, token.as_deref())
+        .into_iter()
+        .fold(cmd.env("GIT_TERMINAL_PROMPT", "0"), |c, (k, v)| c.env(k, v));
+    runner.check(&cmd).map_err(|e| {
+        let text = format!("{e:#}");
+        let denied = ["could not read Username", "Authentication failed", "Repository not found"]
+            .iter()
+            .any(|m| text.contains(m));
+        match token {
+            _ if !denied || !is_github(url) => e,
+            None => e.context(format!("{url}: {PRIVATE}")),
+            Some(_) => e.context(format!("{url}: not found, or the GitHub token cannot read it (`gh auth status`)")),
+        }
+    })
+}
+
+/// The API URL serving the release asset that `url`, a github.com release download URL, names.
+/// A private repository's download URL answers 404 even to a token; the API asset URL, asked
+/// for `application/octet-stream`, redirects to the file.
+pub fn release_asset_api(fetch: &dyn Fetch, url: &str) -> Result<Option<String>> {
+    let Some(rest) = url.strip_prefix("https://github.com/") else { return Ok(None) };
+    let mut parts = rest.splitn(5, '/');
+    let (Some(owner), Some(repo), Some("releases"), Some("download"), Some(tail)) =
+        (parts.next(), parts.next(), parts.next(), parts.next(), parts.next())
+    else {
+        return Ok(None);
+    };
+    let Some((tag, _)) = tail.rsplit_once('/') else { return Ok(None) };
+    let release = fetch.get_json(&format!("https://api.github.com/repos/{owner}/{repo}/releases/tags/{tag}"))?;
+    Ok(release["assets"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find(|a| a["browser_download_url"].as_str() == Some(url))
+        .and_then(|a| a["url"].as_str())
+        .map(str::to_string))
 }
 
 /// HTTP(S) through ureq; `file://` URLs read the local file, for fixtures.
@@ -115,11 +171,7 @@ impl LiveFetch {
     /// server gave, and return the body's sha256 in hex. Bodies too large to hold in memory (an
     /// app's disk image) come this way.
     pub fn download(&self, url: &str, dest: &Path, progress: &mut dyn FnMut(u64, Option<u64>)) -> Result<String> {
-        let resp = self.agent.get(url).header("User-Agent", "fspec").call().with_context(|| format!("GET {url}"))?;
-        let status = resp.status().as_u16();
-        if !(200..300).contains(&status) {
-            return Err(HttpError { url: url.into(), status, rate_limited: None }.into());
-        }
+        let resp = self.call(url, &[])?;
         let total = resp.headers().get("content-length").and_then(|v| v.to_str().ok()?.parse().ok());
         let mut reader = resp.into_body().into_reader();
         let mut file = std::fs::File::create(dest).with_context(|| format!("creating {}", dest.display()))?;
@@ -140,6 +192,48 @@ impl LiveFetch {
     }
 }
 
+impl LiveFetch {
+    /// GET `url`, the GitHub token sent to api.github.com, as a 2xx response or an
+    /// [`HttpError`]. A github.com release download answering 404 is asked again through the API
+    /// with the token, the one way a private repository's asset is served.
+    fn call(&self, url: &str, headers: &[(&str, &str)]) -> Result<ureq::http::Response<ureq::Body>> {
+        let api = url.starts_with("https://api.github.com/");
+        let token = if api { github_token() } else { None };
+        let mut req = self.agent.get(url).header("User-Agent", "fspec");
+        if let Some(token) = token {
+            req = req.header("Authorization", &format!("Bearer {token}"));
+        }
+        for (k, v) in headers {
+            req = req.header(*k, *v);
+        }
+        let resp = req.call().with_context(|| format!("GET {url}"))?;
+        let status = resp.status().as_u16();
+        if (200..300).contains(&status) {
+            return Ok(resp);
+        }
+        let github = api || is_github(url);
+        if status == 404 && is_github(url) && github_token().is_some() {
+            // ureq drops the Authorization header on the redirect to the asset's storage host.
+            if let Some(asset) = release_asset_api(self, url)? {
+                return self.call(&asset, &[("Accept", "application/octet-stream")]);
+            }
+        }
+        let got = lowered(&resp);
+        let header = |name: &str| got.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
+        let rate_limited = (api && matches!(status, 403 | 429) && header("x-ratelimit-remaining") == Some("0"))
+            .then(|| rate_limit_note(header("x-ratelimit-reset"), token.is_some()));
+        let anonymous = github && status == 404 && github_token().is_none();
+        Err(HttpError { url: url.into(), status, rate_limited, anonymous }.into())
+    }
+}
+
+fn lowered(resp: &ureq::http::Response<ureq::Body>) -> Vec<(String, String)> {
+    resp.headers()
+        .iter()
+        .filter_map(|(k, v)| Some((k.as_str().to_ascii_lowercase(), v.to_str().ok()?.to_string())))
+        .collect()
+}
+
 impl Default for LiveFetch {
     fn default() -> Self {
         LiveFetch::new()
@@ -156,28 +250,8 @@ impl Fetch for LiveFetch {
             let body = std::fs::read(path).with_context(|| format!("reading {url}"))?;
             return Ok(Response { headers: vec![], body });
         }
-        let github = url.starts_with("https://api.github.com/");
-        let token = if github { github_token() } else { None };
-        let mut req = self.agent.get(url).header("User-Agent", "fspec");
-        if let Some(token) = token {
-            req = req.header("Authorization", &format!("Bearer {token}"));
-        }
-        for (k, v) in headers {
-            req = req.header(*k, *v);
-        }
-        let resp = req.call().with_context(|| format!("GET {url}"))?;
-        let headers: Vec<(String, String)> = resp
-            .headers()
-            .iter()
-            .filter_map(|(k, v)| Some((k.as_str().to_ascii_lowercase(), v.to_str().ok()?.to_string())))
-            .collect();
-        let status = resp.status().as_u16();
-        if !(200..300).contains(&status) {
-            let header = |name: &str| headers.iter().find(|(k, _)| k == name).map(|(_, v)| v.as_str());
-            let rate_limited = (github && matches!(status, 403 | 429) && header("x-ratelimit-remaining") == Some("0"))
-                .then(|| rate_limit_note(header("x-ratelimit-reset"), token.is_some()));
-            return Err(HttpError { url: url.into(), status, rate_limited }.into());
-        }
+        let resp = self.call(url, headers)?;
+        let headers = lowered(&resp);
         let mut body = Vec::new();
         resp.into_body().into_reader().read_to_end(&mut body).with_context(|| format!("reading {url}"))?;
         Ok(Response { headers, body })
@@ -223,7 +297,7 @@ impl Fetch for MapFetch {
         self.bodies
             .get(url)
             .cloned()
-            .ok_or_else(|| anyhow!(HttpError { url: url.into(), status: 404, rate_limited: None }))
+            .ok_or_else(|| anyhow!(HttpError { url: url.into(), status: 404, rate_limited: None, anonymous: false }))
     }
 
     fn request(&self, url: &str, headers: &[(&str, &str)]) -> Result<Response> {
@@ -235,7 +309,80 @@ impl Fetch for MapFetch {
 
 #[cfg(test)]
 mod tests {
-    use super::github_git_env;
+    use super::*;
+    use crate::runner::RecordingRunner;
+
+    fn denied(stderr: &str) -> Output {
+        Output { status: 128, stdout: String::new(), stderr: stderr.into() }
+    }
+
+    #[test]
+    fn git_against_github_carries_the_token_and_never_prompts() {
+        let runner = RecordingRunner { github_token: Some("t0k".into()), ..Default::default() };
+        git(
+            &runner,
+            "https://github.com/a/private",
+            Cmd::new("git").args(["ls-remote", "https://github.com/a/private"]),
+        )
+        .unwrap();
+        git(&runner, "https://gitlab.com/a/b", Cmd::new("git").args(["ls-remote", "https://gitlab.com/a/b"])).unwrap();
+        let calls = runner.calls.lock().unwrap();
+        let keys = |c: &Cmd| c.env.iter().map(|(k, _)| k.clone()).collect::<Vec<_>>();
+        assert_eq!(
+            keys(&calls[0]),
+            ["GIT_TERMINAL_PROMPT", "GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"]
+        );
+        assert_eq!(keys(&calls[1]), ["GIT_TERMINAL_PROMPT"]);
+    }
+
+    #[test]
+    fn git_refused_by_github_says_it_needs_a_login() {
+        let runner = RecordingRunner::default();
+        runner.respond(
+            "git ls-remote",
+            denied("fatal: could not read Username for 'https://github.com': terminal prompts disabled"),
+        );
+        let err = git(&runner, "https://github.com/a/private", Cmd::new("git").args(["ls-remote", "x"])).unwrap_err();
+        assert!(err.to_string().contains("set GITHUB_TOKEN or run `gh auth login`"), "{err:#}");
+
+        let runner = RecordingRunner { github_token: Some("t0k".into()), ..Default::default() };
+        runner.respond("git ls-remote", denied("remote: Repository not found."));
+        let err = git(&runner, "https://github.com/a/private", Cmd::new("git").args(["ls-remote", "x"])).unwrap_err();
+        assert!(err.to_string().contains("the GitHub token cannot read it"), "{err:#}");
+
+        let runner = RecordingRunner::default();
+        runner.respond("git ls-remote", denied("fatal: unable to access: Could not resolve host"));
+        let err = git(&runner, "https://github.com/a/b", Cmd::new("git").args(["ls-remote", "x"])).unwrap_err();
+        assert!(!format!("{err:#}").contains("GITHUB_TOKEN"), "{err:#}");
+    }
+
+    #[test]
+    fn a_release_download_maps_to_its_api_asset() {
+        let dl = "https://github.com/o/r/releases/download/v1.0/tool-linux.tar.gz";
+        let release = serde_json::json!({"assets": [
+            {"browser_download_url": "https://github.com/o/r/releases/download/v1.0/other", "url": "https://api.github.com/repos/o/r/releases/assets/1"},
+            {"browser_download_url": dl, "url": "https://api.github.com/repos/o/r/releases/assets/2"},
+        ]});
+        let fetch =
+            MapFetch::default().with("https://api.github.com/repos/o/r/releases/tags/v1.0", release.to_string());
+        assert_eq!(
+            release_asset_api(&fetch, dl).unwrap().as_deref(),
+            Some("https://api.github.com/repos/o/r/releases/assets/2")
+        );
+        assert_eq!(release_asset_api(&fetch, "https://github.com/o/r/archive/v1.0.tar.gz").unwrap(), None);
+        assert_eq!(release_asset_api(&fetch, "https://example.com/o/r/releases/download/v1.0/x").unwrap(), None);
+    }
+
+    #[test]
+    fn an_anonymous_github_404_names_the_login() {
+        let e = HttpError {
+            url: "https://api.github.com/repos/a/b".into(),
+            status: 404,
+            rate_limited: None,
+            anonymous: true,
+        };
+        assert!(e.to_string().ends_with("HTTP 404 (a private repository? set GITHUB_TOKEN or run `gh auth login`)"));
+    }
 
     #[test]
     fn a_github_source_gets_the_token_as_a_header_for_that_host_alone() {

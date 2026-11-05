@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use fspec_core::engine;
 use fspec_core::lock::{Lock, SHIPPED_LOADS, loads_cache};
-use fspec_core::runner::{Output, Runner};
+use fspec_core::runner::{Cmd, Output, Runner};
 use fspec_core::{Facts, Host, Paths, Plan, State};
 use serde::{Deserialize, Serialize};
 
@@ -345,6 +345,9 @@ impl Remote<'_> {
                 self.runner.check(&cmd::ship_into(alias, &format!("{dest}/{SHIPPED_LOADS}"), &archive))?;
             }
         }
+        if let Some(token) = self.runner.github_token() {
+            self.runner.check(&cmd::ship_token(alias, &dest, &token))?;
+        }
         Ok((dest, (!tree_dirty).then_some(commit)))
     }
 
@@ -375,19 +378,17 @@ impl Remote<'_> {
             Reach::Reachable(found) => self.has_apps(host, &found)?,
         }
         let (dest, commit) = self.shipped(alias)?;
-        let out = self.runner.run(&cmd::apply(
-            alias,
-            &dest,
-            &self.spec_file,
-            &host.name,
-            scope,
-            commit.as_deref(),
-            self.wait,
-        ))?;
+        let apply = cmd::apply(alias, &dest, &self.spec_file, &host.name, scope, commit.as_deref(), self.wait);
+        let out = self.runner.run(&self.tokened(apply, &dest))?;
         if out.status != 0 {
             bail!("apply on {} exited {}", host.name, out.status);
         }
         Ok(())
+    }
+
+    /// `run` reading the token [`Remote::ship`] left beside `dest`, when there is one.
+    fn tokened(&self, run: Cmd, dest: &str) -> Cmd {
+        if self.runner.github_token().is_some() { cmd::with_token(run, dest) } else { run }
     }
 
     /// Refuses a spec that lacks the commit `fspec app` last pushed from the host.
@@ -414,7 +415,7 @@ impl Remote<'_> {
             return Ok(Planned::Unreachable);
         }
         let dest = self.ship(alias)?;
-        let out = self.runner.check(&cmd::plan(alias, &dest, &self.spec_file, &host.name))?;
+        let out = self.runner.check(&self.tokened(cmd::plan(alias, &dest, &self.spec_file, &host.name), &dest))?;
         let plan = serde_json::from_str(&out.stdout)
             .with_context(|| format!("`fspec plan --json` on {alias} printed: {}", out.stdout.trim()))?;
         Ok(Planned::Plan(plan))

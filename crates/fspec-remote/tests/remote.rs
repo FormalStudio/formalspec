@@ -91,6 +91,26 @@ fn apply_probes_ships_then_runs_with_a_terminal() {
 }
 
 #[test]
+fn apply_hands_the_github_token_over_stdin() {
+    let (dir, mut runner) = fixture("");
+    runner.github_token = Some("t0k".into());
+    runner.respond(
+        &format!("{PROBE} 'PATH=\"/usr/local/bin:$PATH\" fspec facts --json'"),
+        ok(&probe_json("x86_64-linux", "bazzite")),
+    );
+    let h = host("g815", "x86_64-linux", "bazzite");
+    remote(dir.path(), &runner, false).apply(&h, "g815", None).unwrap();
+
+    let lines = apply_lines(dir.path(), &runner);
+    let dest = "\"$HOME/.cache/fspec/spec/abc123\"";
+    assert_eq!(lines[3], format!("{PROBE} 'umask 077 && cat > {dest}/.github-token'"));
+    assert!(!lines.iter().any(|l| l.contains("t0k")), "{lines:?}");
+    assert!(lines[4].starts_with(&format!("ssh -t g815 'GITHUB_TOKEN=\"$(cat {dest}/.github-token")), "{}", lines[4]);
+    let calls = runner.calls.lock().unwrap();
+    assert!(calls.iter().any(|c| c.stdin.as_deref() == Some("t0k")));
+}
+
+#[test]
 fn sync_checks_only_the_platform() {
     let h = host("g815", "x86_64-linux", "opensuse-tumbleweed");
     let probe = |platform, distro| serde_json::from_str(&probe_json(platform, distro)).unwrap();

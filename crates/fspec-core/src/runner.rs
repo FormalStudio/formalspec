@@ -105,6 +105,12 @@ pub trait Runner: Sync {
         Ok(out)
     }
 
+    /// The GitHub token a git command against github.com carries ([`crate::fetch::git`]). None
+    /// unless the runner reaches the real machine.
+    fn github_token(&self) -> Option<String> {
+        None
+    }
+
     /// `check` through [`Runner::run_watched`].
     fn check_watched(&self, cmd: &Cmd, watch: &mut dyn FnMut(Option<&str>)) -> Result<Output> {
         checked(cmd, self.run_watched(cmd, watch)?, &[0])
@@ -128,6 +134,10 @@ fn checked(cmd: &Cmd, out: Output, ok: &[i32]) -> Result<Output> {
 pub struct LiveRunner;
 
 impl Runner for LiveRunner {
+    fn github_token(&self) -> Option<String> {
+        crate::fetch::github_token().map(str::to_string)
+    }
+
     fn run(&self, cmd: &Cmd) -> Result<Output> {
         let mut c = Command::new(&cmd.program);
         c.args(&cmd.args).envs(cmd.env.iter().map(|(k, v)| (k, v)));
@@ -308,6 +318,8 @@ pub struct RecordingRunner {
     pub calls: Mutex<Vec<Cmd>>,
     /// Matched against the start of `Cmd`'s display form, first match wins.
     pub responses: Mutex<Vec<(String, Output)>>,
+    /// What [`Runner::github_token`] answers.
+    pub github_token: Option<String>,
 }
 
 impl RecordingRunner {
@@ -322,6 +334,10 @@ impl RecordingRunner {
 }
 
 impl Runner for RecordingRunner {
+    fn github_token(&self) -> Option<String> {
+        self.github_token.clone()
+    }
+
     fn run(&self, cmd: &Cmd) -> Result<Output> {
         self.calls.lock().unwrap().push(cmd.clone());
         let line = cmd.to_string();

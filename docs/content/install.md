@@ -82,7 +82,7 @@ is older than this one`.
 
 | Tool | Needed for |
 | --- | --- |
-| `gh` or `GITHUB_TOKEN` | More than 60 GitHub API requests an hour during `fspec update`, and private `gh:` loads |
+| `gh` or `GITHUB_TOKEN` | More than 60 GitHub API requests an hour during `fspec update`, and private GitHub repositories (`gh:` loads, `git(...)` sources, release assets) |
 | `npm` | npm packages with runtime dependencies |
 | `podman` or `docker` | `git(...)` builds with `image =`, `lib()` lookups for apt, pacman and xbps, `container` in `dev.star` |
 | `oras` | Pulling CI-built packages from an OCI registry |

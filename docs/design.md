@@ -160,10 +160,18 @@ so the lock always holds an exact commit or version.
 Resolvers read GitHub's API with a token when one is available: `GITHUB_TOKEN`,
 else what `gh auth token` prints. Without one GitHub allows 60 requests an hour,
 and a refusal for that reason is reported as the rate limit (with when it
-resets), never as a missing release. A build fetches a `git(...)` source on
-github.com with the same token, as `GIT_CONFIG_*` variables for that one
-command, and the system scope's sudo keeps `GITHUB_TOKEN` (root has no `gh`
-login), so a private repository builds wherever its user is logged in.
+resets), never as a missing release. Every git command against github.com
+(`fspec update` resolving a `git(...)` rev or a `gh:` load's ref, a build
+fetching its source) goes through one helper, `fspec_core::fetch::git`, which
+sends the same token as `GIT_CONFIG_*` variables for that one command and never
+prompts; refused for lack of one, it says so. A release asset of a private
+repository answers 404 at its download URL, so a github.com download that 404s
+with a token is asked again at the release's API asset URL, as
+`application/octet-stream`; the lock keeps the download URL. The system scope's
+sudo keeps `GITHUB_TOKEN` (root has no `gh` login), and a remote apply or plan
+ships the user's token beside the spec over stdin (`.github-token`, mode 0600),
+which the remote's fspec reads into `GITHUB_TOKEN` and deletes, so a private
+repository resolves, downloads and builds wherever its user is logged in.
 
 ### Modes
 

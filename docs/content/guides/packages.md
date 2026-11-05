@@ -417,7 +417,9 @@ one: `GITHUB_TOKEN`, else what `gh auth token` prints. Log in once with the GitH
 gh auth login
 ```
 
-A token also lets [`gh:` loads](../concepts/hosts-and-modules.md) read private repositories.
+The token also reaches private repositories: [`gh:` loads](../concepts/hosts-and-modules.md),
+`git(...)` sources (resolved and built) and `github(...)` release assets. Without it, a private
+repository fails saying ``a private repository? set GITHUB_TOKEN or run `gh auth login` ``.
 
 ## How it works
 
@@ -445,6 +447,7 @@ A token also lets [`gh:` loads](../concepts/hosts-and-modules.md) read private r
 | `version = is supported for aqua, github, npm, cargo, python and pypi packages` | Remove `version`. Pin a git package with `rev` and a url package with its URL |
 | `no stable release of <repo> is old enough for the release_age policy` | Every release is newer than the host's `release_age`. Set `channel = "bleeding"`, pin a `version`, or wait |
 | ``GET <url>: GitHub API rate limit reached (resets in 42 min; set GITHUB_TOKEN or run `gh auth login` for a higher limit)`` | Run `gh auth login`, or set `GITHUB_TOKEN` |
+| ``<url>: a private repository? set GITHUB_TOKEN or run `gh auth login` `` | GitHub refused an anonymous read. Run `gh auth login` with an account that can read the repository |
 | ``fspec.lock has pkg:<name> from `<old>` but not from `<new>`; run `fspec update` `` | You changed the package's source. Run `fspec update` |
 | `pkg <name> is not in fspec.lock, run fspec update` | You added a package and did not update the lock |
 | `? no backend applies pkg:<name> on <host> (...)` | The source does not exist on this host: a distro source of another distro, `brew` on Linux, `flatpak` on macOS. Give the host another source |

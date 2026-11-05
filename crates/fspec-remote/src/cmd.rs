@@ -127,6 +127,25 @@ pub fn ship(alias: &str, commit: &str, dest: &str, archive: &Path, dirty: bool) 
     batch(alias).arg(format!("{wipe}mkdir -p {dest} && tar -xf - -C {dest}")).stdin_file(archive)
 }
 
+/// Where [`ship_token`] leaves the user's GitHub token beside a shipped spec.
+const TOKEN: &str = ".github-token";
+
+/// The user's GitHub token into the shipped spec's directory, readable by the user alone, for
+/// the run there to fetch private GitHub repositories with. It goes over stdin, so it is in no
+/// process list here or there.
+pub fn ship_token(alias: &str, dest: &str, token: &str) -> Cmd {
+    batch(alias).arg(format!("umask 077 && cat > {dest}/{TOKEN}")).stdin(token)
+}
+
+/// `cmd`, an ssh command running fspec, handed what [`ship_token`] left as `GITHUB_TOKEN`; the
+/// file goes as it is read.
+pub fn with_token(mut cmd: Cmd, dest: &str) -> Cmd {
+    if let Some(run) = cmd.args.last_mut() {
+        *run = format!("GITHUB_TOKEN=\"$(cat {dest}/{TOKEN} 2>/dev/null; rm -f {dest}/{TOKEN})\" {run}");
+    }
+    cmd
+}
+
 fn fspec(dest: &str, spec_file: &str, args: &[&str]) -> String {
     format!("{FSPEC} --spec {dest}/{spec_file} {}", args.join(" "))
 }
@@ -302,5 +321,12 @@ mod tests {
             plan("g815", &dest, "spec.star", "g815").args[5],
             r#"PATH="/usr/local/bin:$PATH" fspec --spec "$HOME/.cache/fspec/spec/abc123"/spec.star plan --json --local --host g815"#
         );
+        assert_eq!(
+            with_token(plan("g815", &dest, "spec.star", "g815"), &dest).args[5],
+            r#"GITHUB_TOKEN="$(cat "$HOME/.cache/fspec/spec/abc123"/.github-token 2>/dev/null; rm -f "$HOME/.cache/fspec/spec/abc123"/.github-token)" PATH="/usr/local/bin:$PATH" fspec --spec "$HOME/.cache/fspec/spec/abc123"/spec.star plan --json --local --host g815"#
+        );
+        let token = ship_token("g815", &dest, "t0k");
+        assert_eq!(token.args[5], r#"umask 077 && cat > "$HOME/.cache/fspec/spec/abc123"/.github-token"#);
+        assert_eq!(token.stdin.as_deref(), Some("t0k"));
     }
 }

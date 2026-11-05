@@ -446,7 +446,7 @@ struct RateLimited;
 impl fspec_core::fetch::Fetch for RateLimited {
     fn get(&self, url: &str) -> anyhow::Result<Vec<u8>> {
         let note = Some("resets in 12 min".to_string());
-        Err(fspec_core::fetch::HttpError { url: url.into(), status: 403, rate_limited: note }.into())
+        Err(fspec_core::fetch::HttpError { url: url.into(), status: 403, rate_limited: note, anonymous: false }.into())
     }
 }
 
@@ -503,6 +503,28 @@ fn a_git_branch_with_paths_locks_its_newest_commit_touching_them() {
         "{lines:?}"
     );
     assert!(lines[2].ends_with(&format!("log -1 --format=%H {tip} -- crates Cargo.lock")), "{lines:?}");
+}
+
+#[test]
+fn a_private_github_branch_with_paths_resolves_with_the_token() {
+    let tip = "a".repeat(40);
+    let runner = RecordingRunner { github_token: Some("t0k".into()), ..Default::default() };
+    runner.respond(
+        "git ls-remote https://github.com/o/private main",
+        Output { status: 0, stdout: format!("{tip}\trefs/heads/main\n"), stderr: String::new() },
+    );
+    runner.respond("git -C ", Output { status: 0, stdout: format!("{tip}\n"), stderr: String::new() });
+    let fetch = MapFetch::default();
+    let p = pkg(
+        json!({"name": "tool", "source": {"kind": "git", "url": "https://github.com/o/private", "rev": "main", "paths": ["src"]}}),
+    );
+    resolve(&p, &platforms(&["x86_64-linux"]), None, &cx(&fetch, &runner)).unwrap();
+    let calls = runner.calls.lock().unwrap();
+    let authed = |i: usize| {
+        calls[i].env.iter().any(|(k, v)| k == "GIT_CONFIG_VALUE_0" && v.starts_with("Authorization: Basic "))
+    };
+    assert!(authed(0) && authed(1), "{calls:?}");
+    assert!(!authed(2), "the local log needs no token: {calls:?}");
 }
 
 #[test]

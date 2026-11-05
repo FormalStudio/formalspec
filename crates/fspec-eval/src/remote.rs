@@ -154,7 +154,7 @@ fn resolve(runner: &dyn Runner, t: &Target) -> Result<String> {
         return Ok(reference.to_ascii_lowercase());
     }
     let url = format!("https://github.com/{}", t.repo);
-    let out = runner.check(&Cmd::new("git").args(["ls-remote", &url, reference]))?;
+    let out = fspec_core::fetch::git(runner, &url, Cmd::new("git").args(["ls-remote", &url, reference]))?;
     let mut lines = out.stdout.lines().filter_map(|l| l.split_once('\t'));
     // A tag lists its peeled commit as `<tag>^{}` after the tag object.
     let pick = lines.clone().find(|(_, r)| r.ends_with("^{}")).or_else(|| lines.next());
