@@ -224,7 +224,9 @@ directory. The host evaluates them without fetching anything, so it needs no Git
 for a private repository.
 
 Only the spec travels. Packages, secrets and files are fetched, decrypted and written on the host
-by the host's own fspec, from the lock.
+by the host's own fspec, from the lock. A `git(...)` source on github.com is fetched with the host user's GitHub
+token (`GITHUB_TOKEN`, else `gh auth token`), which fspec hands past sudo to the system scope, so
+a private repository builds on any host where that user is logged in to `gh`.
 
 ### 4. Run the apply
 

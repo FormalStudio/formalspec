@@ -2081,8 +2081,20 @@ fn sudo_system(spec: &Path, host: &str, paths: &Paths, command: &[&str], pinned:
     };
     // A builder is reached with the user's ssh agent (fspec-build's `ssh`), which a remote apply
     // forwards and sudo would drop. pkexec drops the whole environment.
-    if how == app::Escalate::Sudo && std::env::var_os("SSH_AUTH_SOCK").is_some() {
-        sudo.arg("--preserve-env=SSH_AUTH_SOCK");
+    // The GitHub token goes the same way: root has no `gh` login, and a `git(...)` source in a
+    // private repository is fetched with it.
+    if how == app::Escalate::Sudo {
+        let mut keep = vec![];
+        if std::env::var_os("SSH_AUTH_SOCK").is_some() {
+            keep.push("SSH_AUTH_SOCK");
+        }
+        if let Some(token) = fspec_core::fetch::github_token() {
+            sudo.env("GITHUB_TOKEN", token);
+            keep.push("GITHUB_TOKEN");
+        }
+        if !keep.is_empty() {
+            sudo.arg(format!("--preserve-env={}", keep.join(",")));
+        }
     }
     sudo.arg(exe).arg("--spec").arg(spec).arg("--home").arg(&paths.home);
     if let Some(relay) = fspec_core::activity::relay_path() {

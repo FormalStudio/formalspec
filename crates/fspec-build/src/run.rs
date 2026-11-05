@@ -102,7 +102,11 @@ pub fn build(runner: &dyn Runner, job: &Job) -> Result<Built> {
     // files (an in-tree target/) stay, so they build incrementally too.
     for cmd in [
         Cmd::new("git").args(["-C", &src, "remote", "set-url", "origin", job.url]),
-        Cmd::new("git").args(["-C", &src, "fetch", "-q", "--depth", "1", "origin", job.rev]),
+        fspec_core::fetch::github_git_env(job.url, github_token(job.url))
+            .into_iter()
+            .fold(Cmd::new("git").args(["-C", &src, "fetch", "-q", "--depth", "1", "origin", job.rev]), |c, (k, v)| {
+                c.env(k, v)
+            }),
         Cmd::new("git").args(["-C", &src, "checkout", "-q", "-f", "FETCH_HEAD"]),
         Cmd::new("git").args(["-C", &src, "clean", "-q", "-ffd"]),
     ] {
@@ -187,6 +191,11 @@ pub fn job_tag(job: &Job) -> Result<String> {
         false => Some(fspec_core::patches::hash(job.spec_dir, &job.pkg.patches)?),
     };
     Ok(crate::tag(job.rev, &crate::identity(job.pkg, job.url, job.rev, patches.as_deref())?, job.platform))
+}
+
+/// Looked up only for a github.com URL, so a local or other forge's source never runs `gh`.
+fn github_token(url: &str) -> Option<&'static str> {
+    url.starts_with("https://github.com/").then(fspec_core::fetch::github_token).flatten()
 }
 
 /// Homebrew refuses to run as root, and a macOS recipe installs its tools with it. When the

@@ -160,7 +160,10 @@ so the lock always holds an exact commit or version.
 Resolvers read GitHub's API with a token when one is available: `GITHUB_TOKEN`,
 else what `gh auth token` prints. Without one GitHub allows 60 requests an hour,
 and a refusal for that reason is reported as the rate limit (with when it
-resets), never as a missing release.
+resets), never as a missing release. A build fetches a `git(...)` source on
+github.com with the same token, as `GIT_CONFIG_*` variables for that one
+command, and the system scope's sudo keeps `GITHUB_TOKEN` (root has no `gh`
+login), so a private repository builds wherever its user is logged in.
 
 ### Modes
 

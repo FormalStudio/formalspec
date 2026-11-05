@@ -61,12 +61,41 @@ pub fn is_not_found(err: &anyhow::Error) -> bool {
     err.chain().any(|e| e.downcast_ref::<HttpError>().is_some_and(|h| h.status == 404))
 }
 
+/// `GITHUB_TOKEN`, else what `gh auth token` prints, looked up once on first use. Sent to
+/// api.github.com, to git for a `git(...)` source on github.com, and past sudo to the system scope.
+pub fn github_token() -> Option<&'static str> {
+    static TOKEN: OnceLock<Option<String>> = OnceLock::new();
+    TOKEN
+        .get_or_init(|| {
+            std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty()).or_else(|| {
+                let out = std::process::Command::new("gh").args(["auth", "token"]).output().ok()?;
+                let token = String::from_utf8(out.stdout).ok()?.trim().to_string();
+                (out.status.success() && !token.is_empty()).then_some(token)
+            })
+        })
+        .as_deref()
+}
+
+/// Git configuration that sends `token` for one command against a github.com URL, as
+/// `GIT_CONFIG_*` variables so it lands in neither the process list nor the checkout's config.
+pub fn github_git_env(url: &str, token: Option<&str>) -> Vec<(String, String)> {
+    use base64::Engine;
+    match token {
+        Some(t) if url.starts_with("https://github.com/") => {
+            let basic = base64::engine::general_purpose::STANDARD.encode(format!("x-access-token:{t}"));
+            vec![
+                ("GIT_CONFIG_COUNT".into(), "1".into()),
+                ("GIT_CONFIG_KEY_0".into(), "http.https://github.com/.extraHeader".into()),
+                ("GIT_CONFIG_VALUE_0".into(), format!("Authorization: Basic {basic}")),
+            ]
+        }
+        _ => vec![],
+    }
+}
+
 /// HTTP(S) through ureq; `file://` URLs read the local file, for fixtures.
 pub struct LiveFetch {
     agent: ureq::Agent,
-    /// Sent as a bearer token to api.github.com: `GITHUB_TOKEN`, else what `gh auth token` prints,
-    /// looked up on the first API request.
-    github_token: OnceLock<Option<String>>,
 }
 
 impl LiveFetch {
@@ -77,19 +106,7 @@ impl LiveFetch {
     /// One whose every request gives up after `timeout`, for answers a user is waiting on.
     pub fn with_timeout(timeout: Option<std::time::Duration>) -> LiveFetch {
         let config = ureq::Agent::config_builder().http_status_as_error(false).timeout_global(timeout).build();
-        LiveFetch { agent: ureq::Agent::new_with_config(config), github_token: OnceLock::new() }
-    }
-
-    fn github_token(&self) -> Option<&str> {
-        self.github_token
-            .get_or_init(|| {
-                std::env::var("GITHUB_TOKEN").ok().filter(|t| !t.is_empty()).or_else(|| {
-                    let out = std::process::Command::new("gh").args(["auth", "token"]).output().ok()?;
-                    let token = String::from_utf8(out.stdout).ok()?.trim().to_string();
-                    (out.status.success() && !token.is_empty()).then_some(token)
-                })
-            })
-            .as_deref()
+        LiveFetch { agent: ureq::Agent::new_with_config(config) }
     }
 }
 
@@ -140,7 +157,7 @@ impl Fetch for LiveFetch {
             return Ok(Response { headers: vec![], body });
         }
         let github = url.starts_with("https://api.github.com/");
-        let token = if github { self.github_token() } else { None };
+        let token = if github { github_token() } else { None };
         let mut req = self.agent.get(url).header("User-Agent", "fspec");
         if let Some(token) = token {
             req = req.header("Authorization", &format!("Bearer {token}"));
@@ -213,5 +230,20 @@ impl Fetch for MapFetch {
         let sent = headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
         self.requests.lock().unwrap().push((url.to_string(), sent));
         Ok(Response { headers: self.response_headers.get(url).cloned().unwrap_or_default(), body: self.get(url)? })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::github_git_env;
+
+    #[test]
+    fn a_github_source_gets_the_token_as_a_header_for_that_host_alone() {
+        let env = github_git_env("https://github.com/a/private", Some("t0k"));
+        assert_eq!(env[0], ("GIT_CONFIG_COUNT".to_string(), "1".to_string()));
+        assert_eq!(env[1].1, "http.https://github.com/.extraHeader");
+        assert_eq!(env[2].1, "Authorization: Basic eC1hY2Nlc3MtdG9rZW46dDBr");
+        assert!(github_git_env("https://gitlab.com/a/b", Some("t0k")).is_empty());
+        assert!(github_git_env("https://github.com/a/b", None).is_empty());
     }
 }
