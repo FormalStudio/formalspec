@@ -440,7 +440,8 @@ without flatpak (the macbook) locks every Linux host's flatpaks; another remote
 is asked through the local `flatpak remote-info`. Brew records
 `version`; Homebrew can only install the current version, so the brew pin is
 checked (drift, then `brew upgrade`), not enforced, and an upgrade is not
-reversed on rollback.
+reversed on rollback. A removed brew package that is no longer installed is
+skipped, with no reinstall journaled for rollback.
 A `tap` is tapped before the install, and the package is installed by its full
 name (`felixkratz/formulae/sketchybar`), which trusts that one item of the tap
 rather than the whole tap. The tap stays when the package is removed. A tapped

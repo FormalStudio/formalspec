@@ -86,7 +86,12 @@ fn install(cx: &Cx, w: &Want) -> Result<Option<String>> {
     version(cx, f)
 }
 
+/// A formula already gone by hand is left alone: `brew uninstall` would fail the apply, and the
+/// journaled reinstall would bring it back on rollback.
 fn uninstall(cx: &Cx, journal: &mut Journal, f: &Formula) -> Result<()> {
+    if cx.runner.run(&list_cmd(f))?.status != 0 {
+        return Ok(());
+    }
     journal.record(Undo::Run { cmd: cmd("install", f) })?;
     cx.runner.check(&cmd("uninstall", f))?;
     Ok(())

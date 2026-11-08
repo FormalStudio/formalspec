@@ -38,7 +38,8 @@ When a `pkg` is gone from the spec, apply:
 1. Stops and removes the services and timers declared on it with
    `pkg(services = [...], timers = [...])`.
 2. Uninstalls it. A store package drops out of the new generation; a distro package, Flatpak or
-   Homebrew formula is removed by its package manager.
+   Homebrew formula is removed by its package manager. A Homebrew formula or cask you already
+   uninstalled by hand is skipped.
 3. Deletes the files declared on it with `pkg(files = [...])`, if each still has the content
    fspec wrote. A file that you or the app edited is kept, and apply prints
    `fspec: keeping <path>: it changed since fspec wrote it`. A `patch` file has the keys the spec

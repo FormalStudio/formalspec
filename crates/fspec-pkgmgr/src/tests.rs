@@ -354,6 +354,13 @@ fn brew_removal_and_rollback() {
     w.apply(Scope::User, &want[..1]).unwrap();
     assert_eq!(w.take().last().unwrap(), "brew uninstall --cask b");
 
+    // Removed by hand since the last apply: nothing to uninstall, nothing to reinstall on rollback.
+    w.apply(Scope::User, &want).unwrap();
+    w.answer("brew list --cask --versions b", 1, "");
+    w.apply(Scope::User, &want[..1]).unwrap();
+    assert!(!w.take().iter().any(|l| l.starts_with("brew uninstall")));
+    w.forget_answers();
+
     w.answer("brew install --cask c", 1, "");
     let err = w.apply(Scope::User, &[want[0].clone(), brew("c", true, "pinned")]).unwrap_err();
     assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
