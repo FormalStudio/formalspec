@@ -118,9 +118,11 @@ pub struct Detail {
 pub fn detail(active: &Path, id: &str) -> Result<Option<Detail>> {
     let source = active.join("appstream.xml.gz");
     let mut xml = String::new();
-    flate2::read::GzDecoder::new(std::fs::File::open(&source).with_context(|| format!("reading {}", source.display()))?)
-        .read_to_string(&mut xml)
-        .with_context(|| format!("reading {}", source.display()))?;
+    flate2::read::GzDecoder::new(
+        std::fs::File::open(&source).with_context(|| format!("reading {}", source.display()))?,
+    )
+    .read_to_string(&mut xml)
+    .with_context(|| format!("reading {}", source.display()))?;
     Ok(detail_of(&xml, id, &active.join("icons/128x128")))
 }
 
@@ -322,7 +324,10 @@ mod tests {
     <releases>"#,
         );
         let d = detail_of(&xml, "org.mozilla.firefox", Path::new("/nowhere")).unwrap();
-        assert_eq!(d.description.as_deref(), Some("Firefox is a fast browser.\n\u{2022} Private\n\u{2022} Safe & free"));
+        assert_eq!(
+            d.description.as_deref(),
+            Some("Firefox is a fast browser.\n\u{2022} Private\n\u{2022} Safe & free")
+        );
         assert_eq!(d.license.as_deref(), Some("MPL-2.0"));
         assert_eq!(d.developer.as_deref(), Some("Mozilla"));
         assert_eq!(d.screenshot.as_deref(), Some("https://x/624.png"));
@@ -331,8 +336,14 @@ mod tests {
         let old = detail_of(XML, "org.gnome.Old", Path::new("/nowhere")).unwrap();
         assert_eq!((old.name.as_deref(), old.description, old.screenshot), (Some("Old"), None, None));
         assert!(detail_of(XML, "org.absent", Path::new("/nowhere")).is_none());
-        let suggested = format!("<components><component type=\"desktop-application\"><id>org.other</id><name>Other</name><suggests><id>org.mozilla.firefox</id></suggests></component>{}", &xml[xml.find("<component ").unwrap()..]);
-        assert_eq!(detail_of(&suggested, "org.mozilla.firefox", Path::new("/nowhere")).unwrap().name.as_deref(), Some("Firefox"));
+        let suggested = format!(
+            "<components><component type=\"desktop-application\"><id>org.other</id><name>Other</name><suggests><id>org.mozilla.firefox</id></suggests></component>{}",
+            &xml[xml.find("<component ").unwrap()..]
+        );
+        assert_eq!(
+            detail_of(&suggested, "org.mozilla.firefox", Path::new("/nowhere")).unwrap().name.as_deref(),
+            Some("Firefox")
+        );
     }
 
     #[test]
