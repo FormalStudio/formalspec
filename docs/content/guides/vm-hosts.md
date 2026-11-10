@@ -55,7 +55,7 @@ The first start downloads the distro's cloud image once into `~/.cache/fspec/vm/
 VM's machine and checks it against the checksum its project publishes. cloud-init gives the first
 boot the host's name and its first user, with your keys and passwordless sudo. A Tumbleweed VM
 also gets the boot a root `fspec switch --beside` installed has: systemd-boot on the ESP and
-fspec-esp-sync keeping this root's kernels there, so the same boot modules (Limine, a plymouth
+fspec-esp-sync keeping this root's kernels there, so the same boot modules (Limine, a boot
 splash) work on it as on a real host. The guest also knows the VM's machine by its spec name, at
 user networking's gateway with that machine's host keys and user, so a first apply can build on it
 when it is a builder. `start` waits for that setup on a new disk. Everything else

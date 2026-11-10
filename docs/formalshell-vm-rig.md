@@ -82,7 +82,8 @@ show, in order:
    order once it has booted the machine, exactly as on the real hosts.
 3. systemd-boot (no menu, `timeout 0`) starting the `tumbleweed-<kernel>` entry that
    fspec-esp-sync wrote, which counts three tries like a real host's.
-4. The FormalOS plymouth splash, from the initrd, on the VGA card.
+4. The FormalOS boot screen (formalboot: the logo, the bar and the tree of systemd's pending
+   jobs), from the initrd, on the VGA card.
 5. greetd's FormalShell greeter on sway in software (`/etc/greetd/formalshell-session.sh`).
 6. After the password, `/etc/fstestvm/desktop.sh`: Hyprland in software on the same card,
    started as the real hosts start it (`uwsm start`, `start-hyprland`), running `formalshell`
@@ -113,8 +114,7 @@ too: their greetd runs the same way, on vt 1.
 The boot chain is the real hosts' own: `modules/boot/boot.star`'s `formalos_boot` with the chime
 left out (the VM has no sound card, and the chime waits for one before the greeter), and the
 same kernel options as the g815 and e1504g (`quiet splash loglevel=3 udev.log_level=3`, on top of
-the image's console and SELinux options, and `plymouth.ignore-serial-consoles`: the serial console
-that feeds `serial.log` would otherwise force plymouth's text splash). The guest's keymap is `us`, the layout `fspec vm type`
+the image's console and SELinux options). The guest's keymap is `us`, the layout `fspec vm type`
 types through; the real hosts' greeter uses `es`.
 
 ## Users
@@ -142,7 +142,7 @@ seat, so the smoke rig's Hyprland opens the vkms card through it; the greeter an
 Kernel: `kernel-default` with `mac80211_hwsim` (three radios: wlan0 is NetworkManager's station,
 wlan1 and wlan2 the APs, unmanaged) and `bluetooth` loaded at boot. `vkms` is loaded by
 `fstestvm-vkms` once the boot splash has quit and unloaded before the shutdown splash starts:
-plymouth draws on every DRM card and, with vkms beside the VGA card, put its splash off centre. `v4l2loopback` is
+formalboot lights every DRM card and holds it as master, which would keep the smoke rig's Hyprland off vkms. `v4l2loopback` is
 installed and configured (`video_nr=10,11`, "Loop Colour" and "Loop IR", `exclusive_caps=1,1`) but
 not loaded, so `--mirror` loads it itself as before. Two DRM cards: vkms for the smoke rig and
 bochs-drm for the display; both scripts above take the card that is not vkms. Not virtio-vga: its
