@@ -243,7 +243,10 @@ fn upgrade(cx: &Cx, journal: &mut Journal, fam: Family, w: &Want, rec: &Map<Stri
 }
 
 /// Remove `names`, journaling the install that puts them back: the cached file when the record
-/// names one that is still around, the names otherwise.
+/// names one that is still around, the names otherwise. A name no longer installed (uninstalled
+/// by hand, or taken as a dependency by an earlier removal in this apply) is skipped: the
+/// package manager would fail the apply on it, and the journaled install would bring it back on
+/// rollback.
 pub(crate) fn remove(
     cx: &Cx,
     journal: &mut Journal,
@@ -251,11 +254,20 @@ pub(crate) fn remove(
     names: &[String],
     rec: &Map<String, Value>,
 ) -> Result<()> {
+    let mut installed = Vec::new();
+    for name in names {
+        if cx.runner.run(&fam.version(name))?.status == 0 {
+            installed.push(name.clone());
+        }
+    }
+    if installed.is_empty() {
+        return Ok(());
+    }
     journal_undo(cx, journal, fam, || match cached_file(cx, rec) {
-        Some(path) => fam.install_file(&path, names),
-        None => fam.install_names(names),
+        Some(path) => fam.install_file(&path, &installed),
+        None => fam.install_names(&installed),
     })?;
-    cx.runner.check(&fam.remove(names))?;
+    cx.runner.check(&fam.remove(&installed))?;
     Ok(())
 }
 

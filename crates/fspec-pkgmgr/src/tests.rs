@@ -415,7 +415,8 @@ fn dnf_installs_by_name_and_detects_drift() {
     w.forget_answers();
     w.take();
     w.apply(Scope::System, &[]).unwrap();
-    assert_eq!(w.take(), ["dnf remove -y htop", "dnf remove -y jq ripgrep"]);
+    let removes: Vec<String> = w.take().into_iter().filter(|l| l.starts_with("dnf remove")).collect();
+    assert_eq!(removes, ["dnf remove -y htop", "dnf remove -y jq ripgrep"]);
 }
 
 fn rpm_world(body: &[u8], file: &str) -> World {
@@ -694,8 +695,12 @@ fn every_family_installs_by_name_reports_drift_and_removes() {
 
         w.forget_answers();
         w.take();
+        // jq went with htop's dependency cleanup, or by hand: it is not removed again, and no
+        // install of it is journaled for a rollback.
+        w.answer(&format!("{} jq", f.version), 1, "not installed");
         w.apply(Scope::System, &[]).unwrap();
-        assert_eq!(w.take(), [format!("{} htop", f.remove), format!("{} jq ripgrep", f.remove)], "{}", f.kind);
+        let removes: Vec<String> = w.take().into_iter().filter(|l| l.starts_with(f.remove)).collect();
+        assert_eq!(removes, [format!("{} htop", f.remove), format!("{} ripgrep", f.remove)], "{}", f.kind);
     }
 }
 
