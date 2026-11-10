@@ -387,8 +387,8 @@ impl Resource {
                     Scope::User
                 }
             }
-            // Homebrew refuses to run as root.
-            Resource::Pkg(Pkg { source: Source::Brew { .. }, .. }) => Scope::User,
+            // Homebrew refuses to run as root, and atoll installs into the user's data directory.
+            Resource::Pkg(Pkg { source: Source::Brew { .. } | Source::Mac { .. }, .. }) => Scope::User,
             _ => Scope::System,
         }
     }
@@ -567,6 +567,18 @@ pub enum Source {
     Pypi {
         name: String,
     },
+    /// A Mac app, installed on Linux through atoll: the DMG or archive comes from a Sparkle
+    /// `appcast`, or from the `github(...)` or `url(...)` source in `from`.
+    Mac {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<Box<Source>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        appcast: Option<String>,
+        /// The app's `SUPublicEDKey`, base64: `fspec update` checks the enclosure's
+        /// `sparkle:edSignature` against it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        ed_key: Option<String>,
+    },
 }
 
 fn opt(name: &Option<String>) -> String {
@@ -601,6 +613,7 @@ impl Source {
             Source::Url { .. } => "url",
             Source::Python => "python",
             Source::Pypi { .. } => "pypi",
+            Source::Mac { .. } => "mac",
         }
     }
 }
@@ -630,6 +643,8 @@ impl fmt::Display for Source {
             }
             Source::Git { url, rev, .. } => write!(f, "{kind}:{url}@{rev}"),
             Source::Nix { attr } => write!(f, "{kind}:{attr}"),
+            Source::Mac { from: Some(from), .. } => write!(f, "{kind}:{from}"),
+            Source::Mac { appcast, .. } => write!(f, "{kind}:appcast:{}", appcast.as_deref().unwrap_or_default()),
         }
     }
 }

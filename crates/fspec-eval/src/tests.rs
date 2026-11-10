@@ -512,3 +512,48 @@ hosts = [
     assert!(!matches!(engines("own")[0], Source::Git { .. }));
     assert!(engines("mac").is_empty());
 }
+
+#[test]
+fn mac_wraps_an_appcast_a_release_or_a_url() {
+    let spec = eval_str(
+        r#"
+hosts = [host(name = "h", platform = "x86_64-linux", system = tumbleweed(), modules = [
+    pkg("rex", source = mac(appcast = "https://example.com/appcast.xml", ed_key = "jG2o=")),
+    pkg("coteditor", source = mac(github("coteditor/CotEditor", asset = "*.dmg"))),
+    pkg("tool", source = mac(url("https://example.com/Tool.zip"))),
+])]
+"#,
+        &[],
+    )
+    .unwrap();
+    let sources: Vec<String> = spec
+        .host("h")
+        .unwrap()
+        .resources
+        .iter()
+        .filter_map(|r| match r {
+            Resource::Pkg(p) if matches!(p.source, Source::Mac { .. }) => Some(p.source.to_string()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sources,
+        [
+            "mac:appcast:https://example.com/appcast.xml",
+            "mac:github:coteditor/CotEditor",
+            "mac:url:https://example.com/Tool.zip"
+        ]
+    );
+    for (bad, why) in [
+        (r#"mac()"#, "needs a github(...) or url(...) source"),
+        (r#"mac(flatpak("a.b.c"))"#, "got flatpak(...)"),
+        (r#"mac(url("https://x/a.dmg"), appcast = "https://x/a.xml")"#, "not both"),
+        (r#"mac(url("https://x/a.dmg"), ed_key = "k")"#, "ed_key checks the enclosures of an appcast"),
+    ] {
+        let err = eval_str(&format!(
+            "hosts = [host(name = \"h\", platform = \"x86_64-linux\", system = tumbleweed(), modules = [pkg(\"a\", source = {bad})])]"
+        ), &[])
+            .unwrap_err();
+        assert!(format!("{err:#}").contains(why), "{bad}: {err:#}");
+    }
+}

@@ -44,6 +44,32 @@ pub fn parse_time(s: &str) -> Option<i64> {
     Some(days_from_civil(y, m, d) * 86_400 + hh * 3600 + mm * 60 + ss - offset)
 }
 
+/// RFC 2822, as RSS writes `pubDate` (`Tue, 10 Nov 2026 16:09:07 +0000`), to unix seconds.
+/// Zones are numeric offsets or `GMT`, `UT`, `UTC` and `Z`; seconds may be left out.
+pub fn parse_rfc2822(s: &str) -> Option<i64> {
+    let s = s.split_once(',').map_or(s, |(_, rest)| rest);
+    let mut words = s.split_whitespace();
+    let d: i64 = words.next()?.parse().ok()?;
+    let month = words.next()?;
+    let m = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        .iter()
+        .position(|n| n.eq_ignore_ascii_case(month))? as i64
+        + 1;
+    let y: i64 = words.next()?.parse().ok()?;
+    let mut hms = words.next()?.split(':').map(|n| n.parse::<i64>().ok());
+    let (hh, mm, ss) = (hms.next()??, hms.next()??, hms.next().unwrap_or(Some(0))?);
+    let offset = match words.next().unwrap_or("Z") {
+        "Z" | "GMT" | "UT" | "UTC" => 0,
+        zone if zone.len() == 5 && matches!(zone.as_bytes()[0], b'+' | b'-') => {
+            let n = |r: std::ops::Range<usize>| zone.get(r)?.parse::<i64>().ok();
+            let secs = n(1..3)? * 3600 + n(3..5)? * 60;
+            if zone.starts_with('+') { secs } else { -secs }
+        }
+        _ => return None,
+    };
+    Some(days_from_civil(y, m, d) * 86_400 + hh * 3600 + mm * 60 + ss - offset)
+}
+
 fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
     let y = if m <= 2 { y - 1 } else { y };
     let era = y.div_euclid(400);
@@ -65,5 +91,8 @@ mod tests {
         assert_eq!(parse_time("1970-01-02T00:00:00Z"), Some(86_400));
         assert_eq!(parse_time("2024-11-20T12:34:56.789Z"), parse_time("2024-11-20T13:34:56+01:00"));
         assert_eq!(parse_time("2024-02-29T00:00:00Z"), Some(1_709_164_800));
+        assert_eq!(parse_rfc2822("Thu, 29 Feb 2024 01:00:00 +0100"), Some(1_709_164_800));
+        assert_eq!(parse_rfc2822("29 Feb 2024 00:00 GMT"), Some(1_709_164_800));
+        assert_eq!(parse_rfc2822("Thu, 29 Feb 2024 00:00:00 EST"), None);
     }
 }

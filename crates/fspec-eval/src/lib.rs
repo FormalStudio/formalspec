@@ -459,6 +459,25 @@ fn pkg_from(mut map: serde_json::Map<String, Json>) -> anyhow::Result<Resource_>
     Ok(Resource_ { kind: "pkg".into(), data: validated::<Resource>("pkg", map)? })
 }
 
+/// `mac(github(...))`, `mac(url(...))` or `mac(appcast = ..., ed_key = ...)`: one place the app
+/// comes from.
+fn mac_<'v>(args: UnpackTuple<Value<'v>>, kwargs: Value<'v>) -> anyhow::Result<Resource_> {
+    let r = make::<Source>("mac", &["from"], args, kwargs)?;
+    let Ok(Source::Mac { from, appcast, ed_key }) = serde_json::from_value(r.data.clone()) else {
+        bail!("mac(): not a mac source");
+    };
+    match (from.as_deref(), appcast.is_some()) {
+        (Some(_), true) => bail!("mac() takes a source or an appcast, not both"),
+        (None, false) => bail!("mac() needs a github(...) or url(...) source, or appcast = \"<url>\""),
+        (Some(Source::Github { .. } | Source::Url { .. }), _) if ed_key.is_some() => {
+            bail!("mac(): ed_key checks the enclosures of an appcast")
+        }
+        (Some(Source::Github { .. } | Source::Url { .. }), _) | (None, true) => {}
+        (Some(other), _) => bail!("mac() takes a github(...) or url(...) source, got {}(...)", other.kind()),
+    }
+    Ok(r)
+}
+
 fn distro_(distro: &str, default_init: &str, kwargs: Value) -> anyhow::Result<Resource_> {
     let mut map = fields(distro, &[], &[], kwargs)?;
     map.insert("kind".into(), "distro".into());
@@ -929,6 +948,13 @@ fn builtins(builder: &mut GlobalsBuilder) {
         #[starlark(kwargs)] kwargs: Value<'v>,
     ) -> anyhow::Result<Resource_> {
         make::<Source>("url", &["url"], args, kwargs)
+    }
+
+    fn mac<'v>(
+        #[starlark(args)] args: UnpackTuple<Value<'v>>,
+        #[starlark(kwargs)] kwargs: Value<'v>,
+    ) -> anyhow::Result<Resource_> {
+        mac_(args, kwargs)
     }
 
     fn nix<'v>(

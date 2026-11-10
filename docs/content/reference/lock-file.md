@@ -35,7 +35,7 @@ bins = ["ripgrep-15.2.0-aarch64-apple-darwin/rg"]
 | `rev` | For `git(...)`: the exact commit |
 | `patches` | For patched packages: a hash over the patch file names and contents, in order |
 | `parts` | For `pkg(parts = ...)`: an artifact per path |
-| `<platform>` | One artifact per platform a host declares, or `any` for platform-independent ones (npm tarballs, Flatpak commits) |
+| `<platform>` | One artifact per platform a host declares, or `any` for platform-independent ones (npm tarballs, Flatpak commits, a Mac app from an appcast or a URL) |
 
 Each artifact has some of these keys:
 

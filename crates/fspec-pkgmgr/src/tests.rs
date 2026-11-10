@@ -12,13 +12,14 @@ use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 use crate::{
-    AptBackend, BrewBackend, DistroBackend, DnfBackend, FlatpakBackend, MossBackend, PacmanBackend, XbpsBackend,
-    ZypperBackend,
+    AptBackend, AtollBackend, BrewBackend, DistroBackend, DnfBackend, FlatpakBackend, MossBackend, PacmanBackend,
+    XbpsBackend, ZypperBackend,
 };
 
-const ALL: [&dyn Backend; 9] = [
+const ALL: [&dyn Backend; 10] = [
     &FlatpakBackend,
     &BrewBackend,
+    &AtollBackend,
     &DnfBackend,
     &PacmanBackend,
     &AptBackend,
@@ -376,6 +377,173 @@ fn brew_failure_keeps_the_earlier_install() {
     let err = w.apply(Scope::User, &[brew("a", false, "pinned"), brew("b", false, "pinned")]).unwrap_err();
     assert!(format!("{err:#}").contains("rolled back"), "{err:#}");
     assert_eq!(w.take(), ["brew install a", "brew list --versions a", "brew install b"]);
+}
+
+const DMG_URL: &str = "https://example.com/Rex-0.1.0-1925.dmg";
+const REX: &str = r#"{"bundle_id": "com.superlogical.rex", "app": "/h/.local/share/atoll/Applications/Rex.app", "desktop": "/h/.local/share/applications/com.superlogical.rex.desktop"}"#;
+
+/// A UDIF image as far as the store tells one: anything ending in a `koly` trailer.
+fn dmg(tag: &str) -> Vec<u8> {
+    let mut body = tag.as_bytes().to_vec();
+    body.extend(b"koly");
+    body.resize(tag.len() + 512, 0);
+    body
+}
+
+fn mac(name: &str, mode: &str) -> Desired {
+    pkg(name, json!({"kind": "mac", "appcast": "https://example.com/appcast.xml"}), mode)
+}
+
+/// A host with atoll on PATH, `rex` locked to `body` at [`DMG_URL`].
+fn atoll_world(body: &[u8], version: &str) -> World {
+    let mut w = World::linux();
+    w.lock_mac(body, version);
+    w.answer("sh -c", 0, "/opt/fspec/current/bin/atoll\n");
+    w.answer("atoll install --json", 0, REX);
+    w
+}
+
+impl World {
+    fn lock_mac(&mut self, body: &[u8], version: &str) {
+        let a = Artifact { url: Some(DMG_URL.into()), hash: Some(sri(body)), ..Default::default() };
+        self.lock.upsert(locked("rex", "mac:appcast:https://example.com/appcast.xml", Some(version), &[("any", a)]));
+        self.fetch = std::mem::take(&mut self.fetch).with(DMG_URL, body.to_vec());
+    }
+}
+
+#[test]
+fn a_mac_app_installs_through_atoll_as_the_user_and_records_its_bundle_id() {
+    let body = dmg("rex-1925");
+    let w = atoll_world(&body, "0.1.0+1925");
+    let want = [mac("rex", "pinned")];
+    assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
+
+    w.apply(Scope::User, &want).unwrap();
+    let lines = w.take();
+    assert_eq!(lines[0], "sh -c 'command -v atoll'");
+    assert!(lines[1].starts_with("atoll install --json /") && lines[1].ends_with("/atoll/rex/app.dmg"), "{lines:?}");
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    let rec = &w.state(Scope::User).entries[&want[0].resource.key()].record;
+    assert_eq!(rec["bundle_id"], "com.superlogical.rex");
+    assert_eq!(rec["desktop"], "/h/.local/share/applications/com.superlogical.rex.desktop");
+    assert_eq!(rec["version"], "0.1.0+1925");
+
+    w.answer("atoll list --json", 0, &format!("[{REX}]"));
+    assert!(w.plan(Scope::User, &want).unwrap().changes.is_empty());
+}
+
+#[test]
+fn a_zip_hands_atoll_the_app_bundle_inside_it() {
+    use std::io::Write;
+    let mut body = Vec::new();
+    {
+        let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut body));
+        let opts = zip::write::SimpleFileOptions::default();
+        z.start_file("CotEditor.app/Contents/Info.plist", opts).unwrap();
+        z.write_all(b"<plist/>").unwrap();
+        z.finish().unwrap();
+    }
+    let w = atoll_world(&body, "5.1.0");
+    w.apply(Scope::User, &[mac("rex", "pinned")]).unwrap();
+    let install = w.take().into_iter().find(|l| l.starts_with("atoll install")).unwrap();
+    assert!(install.ends_with("/atoll/rex/unpacked/CotEditor.app"), "{install}");
+}
+
+#[test]
+fn a_bumped_lock_or_an_app_gone_from_atoll_reinstalls_and_self_managed_changes_nothing() {
+    let w0 = atoll_world(&dmg("rex-1853"), "0.1.0+1853");
+    let mut w = w0;
+    let want = [mac("rex", "self_managed")];
+    w.apply(Scope::User, &want).unwrap();
+    w.answer("atoll list --json", 0, &format!("[{REX}]"));
+    w.take();
+
+    w.lock_mac(&dmg("rex-1925"), "0.1.0+1925");
+    let plan = w.plan(Scope::User, &want).unwrap();
+    assert!(
+        is_drift(&plan) && plan.to_string().contains("version 0.1.0+1853 is installed, 0.1.0+1925 is locked"),
+        "{plan}"
+    );
+    w.apply(Scope::User, &want).unwrap();
+    assert!(w.take().iter().any(|l| l.starts_with("atoll install --json")));
+    assert!(w.plan(Scope::User, &want).unwrap().changes.is_empty());
+
+    w.answer("atoll list --json", 0, "[]");
+    let plan = w.plan(Scope::User, &want).unwrap();
+    assert!(plan.to_string().contains("com.superlogical.rex is not installed"), "{plan}");
+}
+
+#[test]
+fn a_removed_mac_app_is_uninstalled_by_bundle_id_unless_already_gone() {
+    let w = atoll_world(&dmg("rex"), "1");
+    let want = [mac("rex", "pinned")];
+    w.apply(Scope::User, &want).unwrap();
+    w.answer("atoll list --json", 0, &format!("[{REX}]"));
+    w.take();
+    w.apply(Scope::User, &[]).unwrap();
+    assert_eq!(w.take(), ["atoll list --json", "atoll uninstall com.superlogical.rex"]);
+    assert!(w.state(Scope::User).entries.is_empty());
+
+    w.apply(Scope::User, &want).unwrap();
+    w.answer("atoll list --json", 0, "[]");
+    w.take();
+    w.apply(Scope::User, &[]).unwrap();
+    assert!(!w.take().iter().any(|l| l.starts_with("atoll uninstall")));
+}
+
+#[test]
+fn a_removed_mac_app_moves_the_data_atoll_reported_to_the_trash() {
+    let w = atoll_world(&dmg("rex"), "1");
+    let prefs = w.paths.home.join(".local/share/atoll/prefs/com.superlogical.rex.plist");
+    fs::create_dir_all(prefs.parent().unwrap()).unwrap();
+    fs::write(&prefs, "x").unwrap();
+    let support = w.paths.home.join(".local/share/atoll/Library/Application Support/com.superlogical.rex");
+    let rex = format!(
+        r#"{{"bundle_id": "com.superlogical.rex", "data": [{:?}, {:?}]}}"#,
+        prefs.display().to_string(),
+        support.display().to_string()
+    );
+    w.answer("atoll install --json", 0, &rex);
+    let want = [mac("rex", "pinned")];
+    w.apply(Scope::User, &want).unwrap();
+    w.answer("atoll list --json", 0, &format!("[{rex}]"));
+
+    let plan = w.plan(Scope::User, &[]).unwrap();
+    assert!(
+        plan.to_string().contains("data to trash: ~/.local/share/atoll/prefs/com.superlogical.rex.plist"),
+        "{plan}"
+    );
+    w.apply(Scope::User, &[]).unwrap();
+    assert!(!prefs.exists());
+}
+
+#[test]
+fn a_download_that_misses_its_hash_installs_nothing() {
+    let mut w = atoll_world(&dmg("rex"), "1");
+    w.fetch = MapFetch::default().with(DMG_URL, dmg("tampered"));
+    let err = w.apply(Scope::User, &[mac("rex", "pinned")]).unwrap_err();
+    assert!(format!("{err:#}").contains("hash mismatch"), "{err:#}");
+    assert!(!w.take().iter().any(|l| l.starts_with("atoll install")));
+}
+
+#[test]
+fn mac_apps_need_atoll_on_linux_and_take_no_store_fields() {
+    let w = atoll_world(&dmg("rex"), "1");
+    w.answer("sh -c", 1, "");
+    let plan = w.plan(Scope::User, &[mac("rex", "pinned")]).unwrap();
+    assert!(plan.unsupported.iter().any(|u| u.contains("atoll is not on PATH")), "{plan:?}");
+    w.forget_answers();
+
+    let mut bins = mac("rex", "pinned");
+    if let Resource::Pkg(p) = &mut bins.resource {
+        p.bins = vec!["rex".into()];
+    }
+    let plan = w.plan(Scope::User, &[bins]).unwrap();
+    assert!(plan.unsupported.iter().any(|u| u.contains("bins does not apply")), "{plan:?}");
+
+    let d = World::darwin();
+    let plan = d.plan(Scope::User, &[mac("rex", "pinned")]).unwrap();
+    assert!(plan.unsupported.iter().any(|u| u.contains("on macOS take the DMG")), "{plan:?}");
 }
 
 fn dnf(name: &str, names: &[&str], mode: &str) -> Desired {

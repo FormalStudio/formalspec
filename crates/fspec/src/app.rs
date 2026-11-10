@@ -973,6 +973,21 @@ pub fn store_dir(target: &Path, root: &Path) -> Option<String> {
     Some(format!("store/{}", dir.as_os_str().to_string_lossy()))
 }
 
+/// The `mac(...)` package whose atoll install wrote the desktop file at `path`, as its record
+/// names it.
+pub fn mac_owner<'a>(state: &'a State, path: &Path) -> Option<&'a Pkg> {
+    let real = std::fs::canonicalize(path).ok();
+    let same = |d: &str| Path::new(d) == path || real.is_some() && std::fs::canonicalize(d).ok() == real;
+    state.entries.values().find_map(|e| match &e.resource {
+        Resource::Pkg(p @ Pkg { source: Source::Mac { .. }, .. })
+            if e.record.get("desktop").and_then(|v| v.as_str()).is_some_and(same) =>
+        {
+            Some(p)
+        }
+        _ => None,
+    })
+}
+
 pub fn owner(paths: &Paths, spec_path: &Path, target: &str) -> Result<Owner> {
     let path = match target.contains('/') {
         true => PathBuf::from(target),
@@ -1015,6 +1030,13 @@ pub fn owner(paths: &Paths, spec_path: &Path, target: &str) -> Result<Owner> {
             o.source = p.source.to_string().split(':').next().map(str::to_string);
             spec_pkg(p, &mut o);
         }
+        return Ok(o);
+    }
+    let user = &states.iter().find(|(s, _)| *s == Scope::User).expect("both scopes loaded").1;
+    if let Some(p) = mac_owner(user, &path) {
+        o.id = Some(p.source.to_string());
+        o.source = Some("mac".into());
+        spec_pkg(p, &mut o);
         return Ok(o);
     }
     let (_, distro) = fspec_core::facts::Facts::probe_local();
@@ -1203,6 +1225,29 @@ mod tests {
         assert_eq!(store_dir(&dir.path().join("missing"), &root), None);
         std::fs::write(dir.path().join("plain.desktop"), "").unwrap();
         assert_eq!(store_dir(&dir.path().join("plain.desktop"), &root), None);
+    }
+
+    #[test]
+    fn an_atoll_desktop_file_belongs_to_the_mac_package_whose_record_names_it() {
+        let rex: Pkg = serde_json::from_value(serde_json::json!({
+            "name": "rex", "source": {"kind": "mac", "appcast": "https://example.com/appcast.xml"}
+        }))
+        .unwrap();
+        let desktop = "/home/u/.local/share/applications/com.superlogical.rex.desktop";
+        let mut state = State::default();
+        state.entries.insert(
+            Resource::Pkg(rex.clone()).key(),
+            fspec_core::state::Entry {
+                resource: Resource::Pkg(rex),
+                owner: None,
+                record: serde_json::json!({"bundle_id": "com.superlogical.rex", "desktop": desktop})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            },
+        );
+        assert_eq!(mac_owner(&state, Path::new(desktop)).map(|p| p.name.as_str()), Some("rex"));
+        assert!(mac_owner(&state, Path::new("/home/u/.local/share/applications/other.desktop")).is_none());
     }
 
     #[test]

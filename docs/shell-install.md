@@ -240,6 +240,9 @@ The package behind the file is found from where it is:
 - inside a store package once its links are followed (`/usr/local/share/applications` links into
   `/opt/fspec/store/<dir>`, the user store's into `~/.local/share/fspec/store/<dir>`): the package
   whose state record keeps that `store/<dir>`, always `spec`;
+- a desktop file an atoll install wrote (`$XDG_DATA_HOME/applications/<bundle id>.desktop`): the
+  `mac(...)` package whose user state record names that path, always `spec`, with `source`
+  `mac`;
 - under a Flatpak `exports/share/applications`: the file's stem is the app id;
 - anywhere else: the package manager's owner query (`rpm -qf`, `pacman -Qoq`, `dpkg -S`).
 

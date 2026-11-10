@@ -1,7 +1,9 @@
 //! Package manager backends: Flatpak and Homebrew everywhere they exist, dnf, pacman, apt, xbps,
-//! moss and zypper on their classic distros, and the base packages and repos of those distros.
+//! moss and zypper on their classic distros, the base packages and repos of those distros, and
+//! Mac apps through atoll.
 //! Each one journals the inverse command before it changes anything.
 
+mod atoll;
 mod brew;
 mod distro;
 mod family;
@@ -19,6 +21,7 @@ use fspec_core::resource::{Pkg, Resource};
 use fspec_core::runner::{Cmd, Output};
 use serde_json::{Map, Value};
 
+pub use atoll::AtollBackend;
 pub use brew::BrewBackend;
 pub use distro::DistroBackend;
 pub use flatpak::FlatpakBackend;

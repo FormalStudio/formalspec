@@ -342,11 +342,11 @@ pub fn plan_scope(cx: &Cx, backends: &[&dyn Backend], desired: &[Desired], state
         }
     }
     for change in p.changes.iter_mut().filter(|c| c.action == Action::Remove) {
-        let Some(Entry { resource: Resource::Pkg(pkg), .. }) = state.entries.get(&change.key) else { continue };
+        let Some(Entry { resource: Resource::Pkg(pkg), record, .. }) = state.entries.get(&change.key) else { continue };
         if pkg.keep_data {
             continue;
         }
-        let paths = data_paths(cx, pkg, &claims)?;
+        let paths = data_paths(cx, pkg, Some(record), &claims)?;
         for path in &paths {
             cx.check_path(path).with_context(|| format!("data of {}", change.key))?;
         }
@@ -655,7 +655,8 @@ fn trash_removed<'o>(cx: &Cx, removals: impl Iterator<Item = &'o Op>, journal: &
         if let Resource::Pkg(pkg) = op.resource()
             && !pkg.keep_data
         {
-            trash_paths(cx, journal, Some(&pkg.name), &data_paths(cx, pkg, &claims)?)
+            let record = op.current.as_ref().map(|e| &e.record);
+            trash_paths(cx, journal, Some(&pkg.name), &data_paths(cx, pkg, record, &claims)?)
                 .with_context(|| format!("moving the data of {} to the trash", pkg.name))?;
         }
     }

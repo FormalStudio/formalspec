@@ -10,6 +10,7 @@ mod distro;
 mod git;
 mod github;
 mod hash;
+pub mod mac;
 mod npm;
 mod python;
 mod service;
@@ -124,6 +125,14 @@ pub fn resolve(pkg: &Pkg, platforms: &[String], min_age: Option<i64>, cx: &Cx) -
         Source::Python => python::resolve(version, platforms, cx, &mut locked),
         Source::Url { url } => python::url(url, cx, &mut locked),
         Source::Pypi { .. } => Err(anyhow!("pypi(...) packages belong in a dev.star, which fspec dev locks")),
+        Source::Mac { from, appcast, ed_key } => match (from.as_deref(), appcast) {
+            (None, Some(feed)) => mac::appcast(feed, ed_key.as_deref(), cutoff, cx, &mut locked),
+            (Some(Source::Github { repo, asset }), None) => {
+                mac::github(repo, asset.as_deref(), platforms, cutoff, cx, &mut locked)
+            }
+            (Some(Source::Url { url }), None) => python::url(url, cx, &mut locked),
+            _ => Err(anyhow!("mac() takes a github(...) or url(...) source, or an appcast")),
+        },
     };
     result.map_err(|e| match e.downcast_ref::<aqua::NotFound>().and_then(|nf| catalog::suggest(&nf.0, cx)) {
         Some(similar) => anyhow!("{}: {e:#}; {similar}", ctx()),

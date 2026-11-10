@@ -9,7 +9,9 @@ repository.workspace = true
 anyhow.workspace = true
 base64.workspace = true
 fspec-core.workspace = true
+fspec-store.workspace = true
 fspec-switch.workspace = true
+serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 
@@ -17,3 +19,4 @@ sha2.workspace = true
 fspec-eval.workspace = true
 fspec-files.workspace = true
 tempfile.workspace = true
+zip.workspace = true

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use serde_json::{Map, Value};
 
 use crate::apply::{Cx, state_dir};
 use crate::journal::{Journal, Undo, move_any};
@@ -167,10 +168,29 @@ pub fn restore_pkg(cx: &Cx, journal: &mut Journal, pkg: &str) -> Result<()> {
 }
 
 /// Every path `pkg` would lose on removal that exists now, outermost first and without
-/// duplicates: declared, known from its source, attributed.
-pub fn data_paths(cx: &Cx, pkg: &Pkg, claims: &BTreeMap<String, Vec<String>>) -> Result<Vec<PathBuf>> {
-    let specs =
-        pkg.data.iter().cloned().chain(known_data(pkg)).chain(claims.get(&pkg.name).into_iter().flatten().cloned());
+/// duplicates: declared, known from its source or its state record's `data` (what atoll
+/// reported for a `mac(...)` app), attributed.
+pub fn data_paths(
+    cx: &Cx,
+    pkg: &Pkg,
+    record: Option<&Map<String, Value>>,
+    claims: &BTreeMap<String, Vec<String>>,
+) -> Result<Vec<PathBuf>> {
+    let recorded = record
+        .filter(|_| matches!(pkg.source, Source::Mac { .. }))
+        .and_then(|r| r.get("data"))
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string);
+    let specs = pkg
+        .data
+        .iter()
+        .cloned()
+        .chain(known_data(pkg))
+        .chain(recorded)
+        .chain(claims.get(&pkg.name).into_iter().flatten().cloned());
     let mut found: Vec<PathBuf> = Vec::new();
     // Two spellings of one path (`Steam` and `steam` on a case-insensitive disk) count once.
     let mut real: Vec<PathBuf> = Vec::new();

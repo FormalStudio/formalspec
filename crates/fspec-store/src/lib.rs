@@ -2,7 +2,7 @@
 //! `<fspec root>/store/<hash8>-<name>-<version>/`, and each apply builds a generation of
 //! symlinks into the store and switches `current` to it.
 
-mod archive;
+pub mod archive;
 mod dev;
 pub mod gc;
 mod generation;

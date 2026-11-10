@@ -153,6 +153,7 @@ package name or service name fail the plan.
 | `dnf`, `pacman`, `apt`, `xbps`, `moss`, `zypper` | the distro's own repos, plus `repo(...)` ones on zypper |
 | `git(url, rev)` | build from source with a recipe |
 | `nix(attr)` | borrow a nixpkgs build on hosts that have Nix |
+| `mac(...)` | a Mac app on Linux, installed by atoll: `mac(appcast = url, ed_key = key)`, `mac(github(...))` or `mac(url(...))` |
 
 `rev = "main"` and `"latest"` are resolved by `fspec update`, never at apply,
 so the lock always holds an exact commit or version.
@@ -177,11 +178,53 @@ repository resolves, downloads and builds wherever its user is logged in.
 
 - `pinned` (default): exact version and hash from the lock.
 - `self_managed`: FormalSpec pins and installs the first version, then leaves
-  the app's own updater alone. For Steam, Claude Code, browsers.
+  the app's own updater alone. For Steam, Claude Code, browsers. It changes
+  nothing for `mac(...)`: Sparkle under atoll reports no update, so the lock is
+  the app's only updater.
 - `channel = "bleeding"` on a package skips any release-age delay a host
   sets as policy (`host(release_age = "3d")`). A package resolves to the newest
   release at least that old, using the longest delay among the hosts that
   declare it.
+
+### Mac apps
+
+[atoll](https://github.com/FormalStudio/atoll) runs Mac apps on Linux. `mac(...)` declares one,
+wrapping where its DMG or archive comes from:
+
+```python
+pkg("rex", source = mac(appcast = "https://blob.superlogical.com/public/rex-app/preview/appcast.xml",
+    ed_key = "jG2oqfrStpD6pfzWIBAHHbER3yTLaZWToni8eZiBzxE="))
+pkg("coteditor", source = mac(github("coteditor/CotEditor", asset = "*.dmg")))
+pkg("tool", source = mac(url("https://example.com/Tool-2.0.zip")))
+```
+
+`appcast` is the app's Sparkle feed. `fspec update` reads its items as an updater on no channel
+does (items on a `sparkle:channel`, enclosures for another `sparkle:os` and delta updates are
+left out), takes the highest `sparkle:version`, by `pubDate` the newest old enough when a host
+sets `release_age`, downloads its enclosure and locks it under `any`. The version is
+`<shortVersionString>+<version>` when the two differ, since a preview feed ships many builds of
+one `0.1.0`. With `ed_key`, the app's `SUPublicEDKey`, the download must match the enclosure's
+`sparkle:edSignature` (Ed25519 over the file), or the update fails and the lock keeps its entry.
+`github(...)` locks one asset for each Linux platform its hosts declare, matched as the Mac build
+of the same CPU, because atoll runs the slice of the machine's own architecture (a universal DMG
+serves both). `url(...)` locks its one file under `any`.
+
+The package applies in the user scope, since atoll installs into the user's data directory.
+Apply downloads the locked file, checks its hash, and runs `atoll install --json <path>` as the
+user, with the `.dmg` itself or, for a zip or tarball, the one `.app` inside it (at its top or in
+its single top-level directory). atoll copies the bundle to
+`$XDG_DATA_HOME/atoll/Applications/<name>.app` and writes
+`$XDG_DATA_HOME/applications/<bundle id>.desktop` and a hicolor icon. The record keeps the
+bundle id and the app and desktop paths atoll prints, the locked version and hash. One
+`atoll list --json` answers drift for every app: one gone from atoll, or installed from a hash
+the lock has moved past, is installed again. Removing the line runs `atoll uninstall <bundle
+id>`, skipped when the app is already gone. No undo is journaled, since atoll keeps no earlier
+copy to put back: a failed apply keeps what atoll did, and the next one converges from there.
+
+The plan refuses a `mac(...)` package when `atoll` is not on PATH, on macOS (where
+`github(..., asset = "*.dmg")` with `apps = [...]` installs the bundle itself), and with a store
+field (`bins`, `links`, `apps`, `share`, `etc`, `parts`, `patches`, `build`, `build_flags`),
+since atoll takes the app whole.
 
 ### Patches and build flags
 
@@ -442,7 +485,9 @@ is asked through the local `flatpak remote-info`. Brew records
 checked (drift, then `brew upgrade`), not enforced, and an upgrade is not
 reversed on rollback. A removed distro or brew package that is no longer
 installed (by hand, or as a dependency of an earlier removal) is skipped, with
-no reinstall journaled for rollback.
+no reinstall journaled for rollback. A `mac(...)` package locks its DMG or
+archive like a `url(...)`: `any = { url, hash }`, or one artifact per Linux
+platform for a `github(...)` release (see [Mac apps](#mac-apps)).
 A `tap` is tapped before the install, and the package is installed by its full
 name (`felixkratz/formulae/sketchybar`), which trusts that one item of the tap
 rather than the whole tap. The tap stays when the package is removed. A tapped
@@ -834,7 +879,8 @@ When a `pkg` disappears from the config, apply:
 
 1. Stops and removes the services and timers declared on it
    (`pkg(services = [...], timers = [...])`).
-2. Uninstalls it (drops it from the generation, or asks the package manager).
+2. Uninstalls it (drops it from the generation, or asks the package manager,
+   or atoll for a `mac(...)` app).
 3. Deletes the files declared on it (`pkg(files = [...])`), if they still match
    the hash it wrote. A file you or the app edited is kept and reported. Which
    module returned a file never ties it to a package; only `files = [...]` does.
@@ -843,8 +889,10 @@ When a `pkg` disappears from the config, apply:
 App data is found three ways, in order:
 
 - Declared on the package: `pkg("steam", data = ["~/.local/share/Steam"])`.
-- Known by the source: Flatpak data under `~/.var/app/<id>`, registry metadata
-  listing XDG paths for common apps.
+- Known by the source: Flatpak data under `~/.var/app/<id>`, the paths atoll
+  reported for a `mac(...)` app at install (its prefs, `Application Support`
+  and caches, keyed by bundle id), registry metadata listing XDG paths for
+  common apps.
 - Attributed at install: after a package's first run, FormalSpec records new
   entries that appeared under `~/.config`, `~/.local/share`, `~/.local/state`
   and `~/.cache` whose names match the package. Anything it cannot attribute

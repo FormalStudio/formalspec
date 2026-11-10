@@ -23,6 +23,7 @@ first; a source build is the last resort.
 | Something that belongs to the OS: drivers, daemons, shells, libraries, desktop sessions | the distro: `dnf`, `pacman`, `apt`, `xbps`, `moss`, `zypper` | `pkg("htop", source = pacman())` |
 | A desktop app on Linux | `flatpak(id)` | `pkg("obsidian", source = flatpak("md.obsidian.Obsidian"))` |
 | A formula or app on macOS | `brew(name)` | `pkg("wget", source = brew())` |
+| A Mac app with no Linux build, on Linux through atoll | `mac(...)` | `pkg("coteditor", source = mac(github("coteditor/CotEditor", asset = "*.dmg")))` |
 | A JavaScript tool | `npm(name)` | `pkg("prettier", source = npm("prettier"))` |
 | A Rust crate whose GitHub releases carry binaries | `cargo(name)` | `pkg("bat", source = cargo("bat"))` |
 | A file at a fixed URL: a font, an AppImage, a tarball with no releases page | `url(url)` | `pkg("bibata", source = url("https://..."))` |
@@ -141,6 +142,31 @@ pkg("sketchybar", source = brew(tap = "felixkratz/formulae")),
 and installs the item by its full name (`felixkratz/formulae/sketchybar`), which trusts that one
 item of the tap and not the whole tap. The tap stays when you remove the package. Homebrew is
 macOS only.
+
+### Mac apps
+
+```starlark
+pkg("rex", source = mac(appcast = "https://blob.superlogical.com/public/rex-app/preview/appcast.xml",
+    ed_key = "jG2oqfrStpD6pfzWIBAHHbER3yTLaZWToni8eZiBzxE=")),
+pkg("coteditor", source = mac(github("coteditor/CotEditor", asset = "*.dmg"))),
+pkg("tool", source = mac(url("https://example.com/Tool-2.0.zip"))),
+```
+
+`mac(...)` installs a Mac app on a Linux host through [atoll](https://github.com/FormalStudio/atoll),
+which runs it there. Give it the app's Sparkle `appcast`, a `github(...)` release or a `url(...)`.
+`fspec update` locks the newest release in the appcast and, with `ed_key` (the app's
+`SUPublicEDKey`, from its `Info.plist`), refuses a download that does not match its
+`sparkle:edSignature`. A GitHub release locks the Mac build of each Linux host's CPU.
+
+On `fspec apply`, the download is checked against the lock and handed to `atoll install` as you,
+which puts the app in `~/.local/share/atoll/Applications` with a desktop file and an icon, so it
+shows in the launcher like any other app. Removing the line runs `atoll uninstall` and moves the
+app's own data (its preferences, `Application Support` folder and caches) to the trash. `atoll` has to
+be on `PATH`; the plan says so when it is not. `mac(...)` is Linux only: on macOS, use
+`github(..., asset = "*.dmg")` or `url(...)` with [`apps`](#app-bundles-apps).
+
+The app's own Sparkle updater finds nothing under atoll, so `fspec update` is how it updates, and
+`mode = "self_managed"` changes nothing for it.
 
 ### npm
 
@@ -277,7 +303,8 @@ pkg("steam", source = flatpak("com.valvesoftware.Steam"), mode = "self_managed")
 ```
 
 A `self_managed` Flatpak installs without a pinned commit. Removing a `self_managed` package from
-the spec still removes it.
+the spec still removes it. A [Mac app](#mac-apps) ignores the mode, since the lock is its only
+updater.
 
 ## What gets linked
 

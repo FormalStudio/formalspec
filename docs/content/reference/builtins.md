@@ -186,6 +186,7 @@ Each returns a value for `pkg(source = ...)`.
 | `url(url)` | `url` | | One file or archive at a fixed URL |
 | `git(url, rev = "main")` | `url`, `rev` | `deps = []`, `image = None`, `paths = []` | A source build at a commit. See [Building from source](../guides/source-builds.md) |
 | `nix(attr)` | `attr` | | A nixpkgs attribute, on hosts that have Nix |
+| `mac(from)` | a `github(...)` or `url(...)` source | `appcast`: a Sparkle feed URL instead of `from`; `ed_key`: the app's `SUPublicEDKey` | A Mac app's DMG or archive, installed on Linux through atoll as the user. See [Mac apps](../guides/packages.md#mac-apps) |
 | `dnf(names)`, `pacman(names)`, `apt(names)`, `xbps(names)`, `moss(names)`, `zypper(names)` | a name or a list | `repo` (zypper only) | The distro's repositories, on hosts of that distro |
 
 `names` defaults to the package's own name. `zypper("nordvpn", repo = "nordvpn")` ties the
