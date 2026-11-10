@@ -20,7 +20,7 @@ declared in your spec or left alone.
 
 | Path | Meaning |
 | --- | --- |
-| `/opt/fspec/store/<hash>-<name>-<version>/` | One unpacked package. Never rewritten; reused when present |
+| `/opt/fspec/store/<hash>-<name>-<version>/` | One unpacked package. Never rewritten; reused when present. On an SELinux host it is relabelled with `restorecon -R` as it lands, so its `bin/` is `bin_t` |
 | `/opt/fspec/generations/<n>/bin/` | A generation: symlinks into the store |
 | `/opt/fspec/current` | Symlink to the active generation |
 | `/opt/fspec/current/bin` | Put this on `PATH` |

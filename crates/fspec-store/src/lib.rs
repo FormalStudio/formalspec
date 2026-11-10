@@ -614,6 +614,9 @@ fn install(cx: &Cx, p: &Pkg, staging: &Path, journal: &mut Journal) -> Result<In
                     unpack_into(cx, p, origin, &dirname, &from, staging)?;
                 }
                 fs::rename(&from, &live).or_else(|_| copy_any(&from, &live).and_then(|()| remove_any(&from)))?;
+                if let Some(relabel) = relabel(&cx.paths.system("/sys/fs/selinux/enforce"), &live) {
+                    cx.runner.check(&relabel)?;
+                }
                 let meta =
                     Sidecar { name: p.name.clone(), version: t.version.clone(), bins: bins_of(p, artifact, &live)? };
                 fs::write(&sidecar, serde_json::to_vec_pretty(&meta)?)?;
@@ -634,6 +637,13 @@ fn install(cx: &Cx, p: &Pkg, staging: &Path, journal: &mut Journal) -> Result<In
         apps: p.apps.clone(),
         locked: t.locked.clone(),
     })
+}
+
+/// On an SELinux host, the command that gives a package moved into the store the policy's labels
+/// for its path. The move keeps the staging directory's label, under which init may not execute a
+/// store binary as a unit's `ExecStart`.
+fn relabel(enforce: &Path, live: &Path) -> Option<Cmd> {
+    enforce.exists().then(|| Cmd::new("restorecon").arg("-R").arg(live.display().to_string()))
 }
 
 /// What the spec names in the package's tree is there.
@@ -861,4 +871,21 @@ fn nix_bins(out: &Path) -> Result<BTreeMap<String, String>> {
         bins.insert(name.clone(), format!("bin/{name}"));
     }
     Ok(bins)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_stored_package_is_relabelled_only_under_selinux() {
+        let dir = tempfile::tempdir().unwrap();
+        let enforce = dir.path().join("enforce");
+        let live = Path::new("/opt/fspec/store/abc-tool-1");
+        assert!(relabel(&enforce, live).is_none());
+        fs::write(&enforce, "1").unwrap();
+        let runner = fspec_core::runner::RecordingRunner::default();
+        runner.check(&relabel(&enforce, live).unwrap()).unwrap();
+        assert_eq!(runner.lines(), ["restorecon -R /opt/fspec/store/abc-tool-1"]);
+    }
 }

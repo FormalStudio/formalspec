@@ -457,7 +457,9 @@ changelog link. Merging it is the auto-update.
 Packages from FormalSpec's own sources unpack into
 `/opt/fspec/store/<hash>-<name>-<version>/`, never into `/usr`. A generation is
 a directory of symlinks into the store, and `/opt/fspec/current` points at the
-active one. On macOS the root is `/opt/fspec` too.
+active one. On macOS the root is `/opt/fspec` too. On an SELinux host a package
+moved into the store is relabelled with `restorecon -R`, so its `bin/` carries
+the policy's `bin_t` and a unit can name a store binary as its `ExecStart`.
 
 This gives FormalSpec three things Nix users expect:
 
