@@ -178,8 +178,10 @@ impl Family {
 }
 
 /// zypper with `--non-interactive`, a global option that has to come before the command.
+/// snapper's zypp plugin would add a pre and post snapshot of `/` to every run, beside the one
+/// the apply already took.
 pub(crate) fn zypper<'a>(args: impl IntoIterator<Item = &'a str>) -> Cmd {
-    Cmd::new("zypper").arg("--non-interactive").args(args)
+    Cmd::new("zypper").arg("--non-interactive").args(args).env("DISABLE_SNAPPER_ZYPP_PLUGIN", "1")
 }
 
 fn zypper_install() -> Cmd {

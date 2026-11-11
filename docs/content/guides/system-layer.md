@@ -227,8 +227,8 @@ takes a read-only snapshot of `/`:
 ```
 
 The snapshot is taken before any package changes commit, so it holds the old kernel and the old
-packages. A failed apply leaves it in place. fspec never deletes these snapshots; remove old ones
-with `sudo btrfs subvolume delete /.snapshots/fspec-<generation>`. Other filesystems get no
+packages. A failed apply leaves it in place. Each apply that takes one deletes all but the three
+newest. fspec's zypper runs skip snapper's own pre and post snapshots. Other filesystems get no
 snapshot.
 
 ## openSUSE Tumbleweed

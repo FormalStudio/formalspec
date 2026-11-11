@@ -838,8 +838,9 @@ generation may keep. See [Concurrent agents](#concurrent-agents).
 
 Before step 4, FormalSpec takes a btrfs or APFS snapshot of the paths it is
 about to touch when the filesystem supports it.
-On btrfs the distro step keeps `/.snapshots/fspec-<generation>` for the five
-newest generations and deletes older ones after taking its own.
+On btrfs the distro step keeps `/.snapshots/fspec-<generation>` for the three
+newest generations and deletes older ones after taking its own. Its zypper runs
+set `DISABLE_SNAPPER_ZYPP_PLUGIN`, so snapper adds no pre and post pair.
 
 Only reads and staging run concurrently, up to eight at a time: the drift
 checks `plan` makes on unchanged resources (one batched query per package

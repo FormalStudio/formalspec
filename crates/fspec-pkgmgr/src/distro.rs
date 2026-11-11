@@ -41,7 +41,7 @@ fn snapshot_path(cx: &Cx) -> String {
 }
 
 /// How many `fspec-<generation>` snapshots an apply leaves, the newest ones.
-const KEEP_SNAPSHOTS: usize = 5;
+const KEEP_SNAPSHOTS: usize = 3;
 
 fn prune_snapshots(cx: &Cx) -> Result<()> {
     let dir = cx.paths.system("/.snapshots");

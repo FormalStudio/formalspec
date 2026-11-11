@@ -1054,7 +1054,7 @@ fn btrfs_snapshot_is_taken_before_the_commit_only_on_btrfs() {
 }
 
 #[test]
-fn a_new_snapshot_leaves_only_the_newest_five() {
+fn a_new_snapshot_leaves_only_the_newest_three() {
     let w = World::on("arch", &[]);
     w.answer("findmnt -no FSTYPE", 0, "btrfs\n");
     let dir = w.paths.system("/.snapshots");
@@ -1065,7 +1065,7 @@ fn a_new_snapshot_leaves_only_the_newest_five() {
     w.apply(Scope::System, &[distro_res("arch", &["linux"])]).unwrap();
     let deletes: Vec<String> = w.take().into_iter().filter(|l| l.starts_with("btrfs subvolume delete")).collect();
     let del = |g: u32| format!("btrfs subvolume delete {}", dir.join(format!("fspec-{g}")).display());
-    assert_eq!(deletes, [del(2)]);
+    assert_eq!(deletes, [del(9), del(3), del(2)]);
 }
 
 fn moss_line(args: &[&str]) -> String {
