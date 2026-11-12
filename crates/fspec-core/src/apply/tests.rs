@@ -60,6 +60,7 @@ fn file(path: &str, content: &str) -> Desired {
         on_conflict: Default::default(),
         on_drift: Default::default(),
         perms: None,
+        moves: false,
     });
     Desired { resource, owner: None }
 }

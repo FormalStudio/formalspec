@@ -197,6 +197,7 @@ mod tests {
             on_conflict: Default::default(),
             on_drift: Default::default(),
             perms: None,
+            moves: false,
         })
     }
 

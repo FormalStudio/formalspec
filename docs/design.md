@@ -975,6 +975,21 @@ owns only the link: when an app replaces it with a file, the link comes back
 and nothing is copied into the target, and `fspec adopt` leaves it alone.
 A real directory in the link's place goes to the trash first, journaled.
 
+`move = True` on a link with a `target` keeps that data instead: a file or
+directory at the path is moved to the target, then linked. It is how a
+directory goes onto another drive in one apply:
+
+```python
+file("~/.android", mode = "link", target = "/Volumes/Kyan Drive/android", move = True)
+```
+
+The move is a rename, or across filesystems a `cp -a` to a staging name beside
+the target, a rename, and the removal of the original, so a target that exists
+is always whole. It fails when the target already exists (both sides hold
+data) or when the target's parent directory is missing (the volume is not
+mounted). It is not journaled: a rollback removes the link and leaves the data
+at the target. Stop whatever writes to the directory before the apply.
+
 ### Three-way merge for `patch`
 
 ```python

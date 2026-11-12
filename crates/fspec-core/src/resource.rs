@@ -705,6 +705,10 @@ pub struct File {
     /// Octal permission bits, e.g. `"0644"`.
     #[serde(default)]
     pub perms: Option<String>,
+    /// `link` mode with a `target`: a file or directory at `path` is moved to the target before
+    /// the link replaces it.
+    #[serde(default, rename = "move", skip_serializing_if = "std::ops::Not::not")]
+    pub moves: bool,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]

@@ -248,6 +248,9 @@ fn check_file(cx: &Cx, f: &File) -> Result<()> {
             if f.content.is_some() {
                 bail!("a link takes src or target, not content");
             }
+            if f.moves && f.target.is_none() {
+                bail!("move takes a link with a target");
+            }
             link_target(cx, f).map(drop)
         }
         FileMode::Patch => {
@@ -427,6 +430,9 @@ fn file_mode(cx: &Cx, f: &File) -> Result<Option<u32>> {
 
 fn commit_link(cx: &Cx, op: &Op, f: &File, path: &Path, journal: &mut Journal) -> Result<Map<String, Value>> {
     let target = link_target(cx, f)?;
+    if f.moves {
+        move_to_target(cx, path, &target)?;
+    }
     // A directory an app made before the link existed holds its own data; the trash keeps it
     // and a rollback puts it back.
     if fs::symlink_metadata(path).is_ok_and(|m| m.is_dir()) {
@@ -455,6 +461,34 @@ fn commit_link(cx: &Cx, op: &Op, f: &File, path: &Path, journal: &mut Journal) -
         fs::rename(&tmp, path).with_context(|| format!("linking {}", path.display()))?;
     }
     Ok(link_record(&target, f))
+}
+
+/// `move = True`: what sits at `path` goes to the link's target, so the link that replaces it
+/// keeps the data reachable. Nothing is journaled; a rollback leaves the data at the target.
+fn move_to_target(cx: &Cx, path: &Path, target: &Path) -> Result<()> {
+    if !fs::symlink_metadata(path).is_ok_and(|m| !m.file_type().is_symlink()) {
+        return Ok(());
+    }
+    if fs::symlink_metadata(target).is_ok() {
+        bail!("{} and {} both hold data; merge them, then apply again", path.display(), target.display());
+    }
+    // A missing parent is a volume that is not mounted. Creating it would copy the data onto
+    // the disk the move is there to relieve.
+    let parent = target.parent().filter(|p| p.is_dir());
+    let Some(parent) = parent else {
+        bail!("{} has no parent directory; is its volume mounted?", target.display());
+    };
+    if fs::rename(path, target).is_ok() {
+        return Ok(());
+    }
+    // rename fails across filesystems. The copy lands under a staging name, so a target that
+    // exists is always a whole one.
+    let name = target.file_name().context("target has no file name")?.to_string_lossy();
+    let staging = parent.join(format!(".{name}.fspec-moving"));
+    remove_any(&staging)?;
+    cx.runner.check(&Cmd::new("cp").arg("-a").arg(path.to_string_lossy()).arg(staging.to_string_lossy()))?;
+    fs::rename(&staging, target).with_context(|| format!("moving {} to {}", path.display(), target.display()))?;
+    remove_any(path)
 }
 
 fn link_record(target: &Path, f: &File) -> Map<String, Value> {

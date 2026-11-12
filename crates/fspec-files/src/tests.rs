@@ -97,6 +97,7 @@ fn file(path: &str) -> File {
         on_conflict: Default::default(),
         on_drift: Default::default(),
         perms: None,
+        moves: false,
     }
 }
 
@@ -286,6 +287,37 @@ fn a_link_can_point_outside_the_repo_at_a_directory_that_is_not_there_yet() {
     ] {
         assert!(w.apply(&want([bad.clone()])).is_err(), "{bad:?}");
     }
+}
+
+#[test]
+fn a_moving_link_takes_the_directory_to_its_target_first() {
+    let w = World::new();
+    let drive = w.at("drive");
+    fs::create_dir_all(&drive).unwrap();
+    fs::create_dir_all(w.at(".android/avd")).unwrap();
+    fs::write(w.at(".android/avd/pixel.img"), "disk").unwrap();
+    let to = drive.join("android");
+    let f = File { mode: FileMode::Link, target: Some(to.display().to_string()), moves: true, ..file("~/.android") };
+    w.apply(&want([f.clone()])).unwrap();
+    assert_eq!(fs::read_link(w.at(".android")).unwrap(), to);
+    assert_eq!(w.read(".android/avd/pixel.img"), "disk");
+    assert!(w.plan(&want([f.clone()])).changes.is_empty());
+
+    // Data on both sides is never merged or trashed.
+    fs::remove_file(w.at(".android")).unwrap();
+    fs::create_dir_all(w.at(".android")).unwrap();
+    assert!(w.apply(&want([f])).is_err());
+    assert!(w.at(".android").is_dir() && to.join("avd/pixel.img").exists());
+
+    // An unmounted volume has no directory to move into.
+    fs::create_dir_all(w.at(".lima")).unwrap();
+    let gone = w.at("unmounted/lima").display().to_string();
+    let f = File { mode: FileMode::Link, target: Some(gone), moves: true, ..file("~/.lima") };
+    assert!(w.apply(&want([f])).is_err());
+    assert!(w.at(".lima").is_dir());
+
+    let f = File { mode: FileMode::Link, src: Some("files/rc".into()), moves: true, ..file("~/.rc") };
+    assert!(w.apply(&want([f])).is_err(), "move needs a target");
 }
 
 #[test]

@@ -196,7 +196,8 @@ package to a `repo(...)`, so it waits with that repository when the repository i
 
 ```starlark
 file(path, src = None, content = None, target = None, mode = "managed",
-     format = None, owns = {}, on_conflict = "ours", on_drift = "overwrite", perms = None)
+     format = None, owns = {}, on_conflict = "ours", on_drift = "overwrite", perms = None,
+     move = False)
 ```
 
 A file. A path under `~/` is in the user scope; an absolute path is in the system scope. See
@@ -214,6 +215,7 @@ A file. A path under `~/` is in the user scope; an absolute path is in the syste
 | `on_conflict` | string | `"ours"` | `patch` only: `"ours"`, `"theirs"` or `"fail"` when a key you own changed on disk |
 | `on_drift` | string | `"overwrite"` | `managed` only: `"overwrite"` or `"fail"` when the file changed on disk |
 | `perms` | string | the `src` file's mode, else the existing file's, else `"0644"` | Octal permission bits: `"0600"`, `"0440"`. No effect in `link` and `patch` mode |
+| `move` | bool | `False` | `link` with `target` only: a file or directory at `path` is moved to the target before the link replaces it, instead of going to the trash. Fails when the target exists or its parent directory is missing |
 
 Each mode takes its content one way:
 

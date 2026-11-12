@@ -217,6 +217,18 @@ file("~/.local/share/fonts", mode = "link", target = "~/Sync/fonts"),
 A real directory already at the path, such as one an app made before the spec declared the link,
 goes to fspec's trash before the link is made, and a rollback puts it back.
 
+To keep that directory's data and put it on the target, add `move = True`. The apply moves the
+directory to the target and then links it, which is how you relocate a large directory onto
+another drive:
+
+```python
+file("~/.android", mode = "link", target = "/Volumes/External/android", move = True),
+```
+
+Stop the app that writes there first. The apply fails, and moves nothing, when the target already
+exists or when the target's parent directory is missing, which is what an unmounted drive looks
+like. A rollback removes the link and leaves the data on the target.
+
 Some apps save a config by writing a new file and renaming it over the old one, which replaces
 the symlink with a regular file. The next apply handles it:
 
