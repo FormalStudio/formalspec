@@ -271,8 +271,8 @@ impl Remote<'_> {
         tmp: &Path,
         dest: &Path,
     ) -> Result<()> {
-        let pkg = engine::pkg();
-        let rev = lock.pkg(engine::NAME, &pkg.source.to_string()).and_then(|p| p.rev.clone()).with_context(|| {
+        let pkg = engine::build_for(platform);
+        let rev = lock.pkg(engine::NAME, &engine::pkg().source.to_string()).and_then(|p| p.rev.clone()).with_context(|| {
             let has = match engine {
                 Some(n) => format!("is older than this one (engine {n} < {ENGINE})"),
                 None => "is not installed".into(),

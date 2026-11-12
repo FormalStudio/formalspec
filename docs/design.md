@@ -2285,7 +2285,9 @@ the host keeps the fspec it runs: the repo the installer writes has no
 `fspec.lock`, and its first apply runs in the new root before any
 `fspec update`.
 
-macOS hosts are left out: the macbook's fspec comes from Nix.
+macOS hosts are left out of the engine package. A remote apply to a Mac whose
+fspec is older builds the locked engine natively there with the user's cargo,
+since macOS has no static target or build container.
 
 ## Remote hosts
 

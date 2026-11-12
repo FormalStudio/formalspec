@@ -215,9 +215,11 @@ pub fn clean_engine_job(alias: &str) -> Cmd {
 /// Interactive, since sudo may ask for a password.
 pub fn install_engine(alias: &str) -> Cmd {
     let bin = fspec_core::engine::BIN;
+    let dir = Path::new(bin).parent().expect("the engine path has a directory").display();
+    // BSD install, on a Mac, has no -D.
     Cmd::new("ssh")
         .args(["-t", alias])
-        .arg(format!("sudo install -D -m 0755 {ENGINE_UPLOAD} {bin} && rm -f {ENGINE_UPLOAD}"))
+        .arg(format!("sudo mkdir -p {dir} && sudo install -m 0755 {ENGINE_UPLOAD} {bin} && rm -f {ENGINE_UPLOAD}"))
         .interactive()
 }
 

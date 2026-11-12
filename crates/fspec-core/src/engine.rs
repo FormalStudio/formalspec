@@ -3,7 +3,7 @@
 //! other package, and no spec can leave it out.
 
 use crate::lock::Lock;
-use crate::resource::{Desired, Pkg, Resource};
+use crate::resource::{Desired, Pkg, Resource, Source};
 
 pub const NAME: &str = "fspec";
 pub const REPO: &str = "https://github.com/FormalStudio/formalspec";
@@ -16,6 +16,9 @@ const LINK: &str = "/opt/fspec/current/bin/fspec";
 const IMAGE: &str =
     "docker.io/library/rust:1.91-alpine3.22@sha256:8efbfb788786eeb127adc581394349c5fb567712156e0f8c2e499acadbc23756";
 const BUILD: &str = r#"cd "$FSPEC_SRC" && t="$(uname -m)-unknown-linux-musl" && cargo build --release --locked --target "$t" -p fspec && install -Dm755 "target/$t/release/fspec" "$FSPEC_OUT/bin/fspec""#;
+// macOS has no static target and no container to build in, so a Mac compiles against its own
+// libSystem with the user's rustup toolchain. BSD install has no -D.
+const BUILD_DARWIN: &str = r#"cd "$FSPEC_SRC" && PATH="$HOME/.cargo/bin:$PATH" cargo build --release --locked -p fspec && mkdir -p "$FSPEC_OUT/bin" && install -m 755 target/release/fspec "$FSPEC_OUT/bin/fspec""#;
 
 pub fn pkg() -> Pkg {
     serde_json::from_value(serde_json::json!({
@@ -34,6 +37,20 @@ pub fn pkg() -> Pkg {
         "files": [{"path": BIN, "mode": "link", "target": LINK}],
     }))
     .expect("the engine package is a valid pkg")
+}
+
+/// [`pkg`] as a remote engine upgrade builds it for `platform`. macOS hosts leave the engine
+/// package out of their spec, but an older fspec on one still needs the locked engine.
+pub fn build_for(platform: &str) -> Pkg {
+    let mut p = pkg();
+    if platform.ends_with("-darwin") {
+        if let Source::Git { image, deps, .. } = &mut p.source {
+            *image = None;
+            deps.clear();
+        }
+        p.build = vec!["sh".into(), "-c".into(), BUILD_DARWIN.into()];
+    }
+    p
 }
 
 /// `desired` without the engine and its link while `lock` does not pin the engine: a spec repo
@@ -64,7 +81,14 @@ pub fn is_engine(r: &Resource) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::resource::Source;
+
+    #[test]
+    fn a_mac_builds_the_engine_natively() {
+        let p = build_for("aarch64-darwin");
+        assert!(matches!(&p.source, Source::Git { image: None, deps, .. } if deps.is_empty()));
+        assert!(p.build[2].starts_with("cd \"$FSPEC_SRC\"") && !p.build[2].contains("musl"));
+        assert_eq!(build_for("x86_64-linux"), pkg());
+    }
 
     #[test]
     fn the_engine_tracks_main_and_links_the_fixed_path() {
