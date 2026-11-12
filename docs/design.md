@@ -988,7 +988,9 @@ the target, a rename, and the removal of the original, so a target that exists
 is always whole. It fails when the target already exists (both sides hold
 data) or when the target's parent directory is missing (the volume is not
 mounted). It is not journaled: a rollback removes the link and leaves the data
-at the target. Stop whatever writes to the directory before the apply.
+at the target. Stop whatever writes to the directory before the apply. A
+target filesystem that cannot store ownership (sshfs, exFAT) fails the copy
+and leaves the original in place.
 
 ### Three-way merge for `patch`
 

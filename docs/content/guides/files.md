@@ -227,7 +227,9 @@ file("~/.android", mode = "link", target = "/Volumes/External/android", move = T
 
 Stop the app that writes there first. The apply fails, and moves nothing, when the target already
 exists or when the target's parent directory is missing, which is what an unmounted drive looks
-like. A rollback removes the link and leaves the data on the target.
+like. A rollback removes the link and leaves the data on the target. Across filesystems the copy
+keeps ownership, so a target that cannot store it (sshfs, exFAT) fails the apply with the original
+in place.
 
 Some apps save a config by writing a new file and renaming it over the old one, which replaces
 the symlink with a regular file. The next apply handles it:
