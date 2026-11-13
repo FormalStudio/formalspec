@@ -492,6 +492,18 @@ fn a_removed_mac_app_is_uninstalled_by_bundle_id_unless_already_gone() {
 }
 
 #[test]
+fn a_mac_app_is_removed_even_when_atoll_cannot_list() {
+    let w = atoll_world(&dmg("rex"), "1");
+    w.answer("atoll install --json", 0, REX);
+    w.apply(Scope::User, &[mac("rex", "pinned")]).unwrap();
+    w.answer("atoll list --json", 127, "");
+    w.take();
+    w.apply(Scope::User, &[]).unwrap();
+    assert!(!w.take().iter().any(|l| l.starts_with("atoll uninstall")));
+    assert!(w.state(Scope::User).entries.is_empty());
+}
+
+#[test]
 fn a_removed_mac_app_moves_the_data_atoll_reported_to_the_trash() {
     let w = atoll_world(&dmg("rex"), "1");
     let prefs = w.paths.home.join(".local/share/atoll/prefs/com.superlogical.rex.plist");

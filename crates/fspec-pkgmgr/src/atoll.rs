@@ -206,8 +206,11 @@ impl Backend for AtollBackend {
     fn commit(&self, cx: &Cx, ops: &[Op], staging: &Path, _journal: &mut Journal) -> Result<Records> {
         let mut records = Records::new();
         let had = |op: &Op| op.current.as_ref().and_then(|e| text(&e.record, "bundle_id"));
-        if ops.iter().any(|op| op.is_removal()) {
-            let live = installed(cx)?;
+        // An atoll that cannot list its apps cannot uninstall them either (it may be removed
+        // in this same apply), so its apps count as gone rather than blocking every apply.
+        if ops.iter().any(|op| op.is_removal())
+            && let Ok(live) = installed(cx)
+        {
             for (op, id) in ops.iter().filter(|op| op.is_removal()).filter_map(|op| had(op).map(|id| (op, id))) {
                 // Removed by hand since the last apply: nothing left to uninstall.
                 if live.as_ref().is_none_or(|apps| apps.iter().any(|a| a.bundle_id == id)) {
