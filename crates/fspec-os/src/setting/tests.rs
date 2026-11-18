@@ -113,3 +113,19 @@ fn turning_remote_login_off_does_not_prompt() {
     let s = Setting { tool: SettingTool::Systemsetup, key: "remotelogin".into(), value: json!(false) };
     assert_eq!(write(&s, "-a", "off").to_string(), "systemsetup -setremotelogin -f off");
 }
+
+#[test]
+fn spotlight_turns_indexing_off_on_every_volume() {
+    let w = World::darwin();
+    let cx = w.cx(Scope::System);
+    assert!(SettingBackend.check(&cx, &setting("mdutil", "indexing", json!(false))).is_ok());
+    assert!(SettingBackend.check(&cx, &setting("mdutil", "volume", json!(false))).is_err());
+    let backends: &[&dyn Backend] = &[&SettingBackend];
+    w.runner.respond(
+        "mdutil -a -s",
+        out("/:\n\tIndexing enabled. \n/Users/k/OrbStack:\n\tIndexing and searching disabled.\n"),
+    );
+    apply_scope(&cx, backends, &[desired(setting("mdutil", "indexing", json!(false)))]).unwrap();
+    assert_eq!(w.runner.lines(), ["mdutil -a -s", "mdutil -a -i off"]);
+    assert_eq!(indexing_state("/:\n\tIndexing disabled.\n/x:\n\tIndexing and searching disabled.\n"), Some("off"));
+}

@@ -350,6 +350,7 @@ A macOS setting behind a command instead of a defaults domain.
 | `"pmset"` | `pmset -a <key> <value>` | a number, a string without spaces, or a bool written as `1`/`0` |
 | `"systemsetup"` | `systemsetup -set<key> on\|off` | a bool |
 | `"firewall"` | `socketfilterfw --set<key> on\|off` | a bool |
+| `"mdutil"` | `mdutil -a -i on\|off`, key `"indexing"` (Spotlight on every volume) | a bool |
 
 ```starlark
 setting("pmset", "sleep", 0)

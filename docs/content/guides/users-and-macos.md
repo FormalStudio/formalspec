@@ -116,13 +116,14 @@ run `killall Dock` (or log out) to see a change.
 ## Change power, remote login and firewall settings
 
 Some macOS settings have a command and no `defaults` domain. `setting(tool, key, value)` covers
-three of those tools. All of them run as root, in the system scope.
+four of those tools. All of them run as root, in the system scope.
 
 | `tool` | Runs | `value` |
 | --- | --- | --- |
 | `"pmset"` | `pmset -a <key> <value>` | A number, a bool (written `1` or `0`), or a word |
 | `"systemsetup"` | `systemsetup -set<key> on` or `off` | A bool |
 | `"firewall"` | `socketfilterfw --set<key> on` or `off` | A bool |
+| `"mdutil"` | `mdutil -a -i on` or `off`, key `"indexing"` | A bool |
 
 ```starlark
 setting("pmset", "sleep", 0),

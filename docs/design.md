@@ -110,7 +110,7 @@ A config evaluates to a list of resources:
 | `user` | Account, UID, shell, groups |
 | `secret` | An age-encrypted file decrypted at apply |
 | `defaults` | A macOS `defaults` key, `system = True` for /Library/Preferences |
-| `setting` | A macOS system setting behind `pmset`, `systemsetup` or the firewall |
+| `setting` | A macOS system setting behind `pmset`, `systemsetup`, the firewall or `mdutil` |
 | `image` | A bootc base image for the system layer |
 | `timer` | A scheduled job (systemd timer, cron, launchd) |
 
@@ -1203,7 +1203,8 @@ no defaults domain: `setting("pmset", "sleep", 0)` runs `pmset -a sleep 0` and
 checks every power source in `pmset -g custom`, `setting("systemsetup",
 "restartfreeze", True)` runs `systemsetup -setrestartfreeze on`, and
 `setting("firewall", "globalstate", False)` runs `socketfilterfw
---setglobalstate off`. pmset takes a number, the others a bool. A failed apply
+--setglobalstate off`, and `setting("mdutil", "indexing", False)` runs `mdutil
+-a -i off`. pmset takes a number, the others a bool. A failed apply
 restores the previous value (per power source for pmset). Removing a `setting`
 stops managing it and leaves the value, because turning one back has no safe
 default: remote login off cuts ssh. `systemsetup -setremotelogin` needs Full

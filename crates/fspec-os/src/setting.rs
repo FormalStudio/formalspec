@@ -1,5 +1,5 @@
-//! macOS system settings behind a command: power management (`pmset`), `systemsetup`, and the
-//! application firewall (`socketfilterfw`). All of them need root. Removing a `setting` stops
+//! macOS system settings behind a command: power management (`pmset`), `systemsetup`, the
+//! application firewall (`socketfilterfw`) and Spotlight indexing (`mdutil`). All of them need root. Removing a `setting` stops
 //! managing it and leaves the value: turning one back has no safe default (remote login off
 //! cuts ssh), so the previous value is restored only when an apply fails.
 
@@ -37,6 +37,9 @@ impl Backend for SettingBackend {
         let Resource::Setting(s) = r else { return Ok(()) };
         if s.key.is_empty() || !s.key.chars().all(|c| c.is_ascii_alphanumeric()) {
             bail!("setting:{} {} has an invalid key", s.tool.name(), s.key);
+        }
+        if s.tool == SettingTool::Mdutil && s.key != "indexing" {
+            bail!("setting:mdutil {} has an invalid key: it takes only indexing", s.key);
         }
         word(s).map(drop)
     }
@@ -77,7 +80,7 @@ fn word(s: &Setting) -> Result<String> {
         (SettingTool::Pmset, Value::Number(n)) if n.is_u64() => n.to_string(),
         (SettingTool::Pmset, Value::String(v)) if !v.is_empty() && !v.contains(char::is_whitespace) => v.clone(),
         (SettingTool::Pmset, Value::Bool(b)) => u8::from(*b).to_string(),
-        (SettingTool::Systemsetup | SettingTool::Firewall, Value::Bool(b)) => if *b { "on" } else { "off" }.into(),
+        (SettingTool::Systemsetup | SettingTool::Firewall | SettingTool::Mdutil, Value::Bool(b)) => if *b { "on" } else { "off" }.into(),
         (tool, v) => bail!("setting:{} {} cannot be {v}", tool.name(), s.key),
     })
 }
@@ -89,6 +92,7 @@ fn read(runner: &dyn Runner, s: &Setting) -> Result<Option<BTreeMap<String, Stri
         SettingTool::Pmset => Cmd::new("pmset").args(["-g", "custom"]),
         SettingTool::Systemsetup => Cmd::new("systemsetup").arg(format!("-get{}", s.key)),
         SettingTool::Firewall => Cmd::new(FIREWALL).arg(format!("--get{}", s.key)),
+        SettingTool::Mdutil => Cmd::new("mdutil").args(["-a", "-s"]),
     };
     let out = runner.run(&cmd)?;
     if out.status != 0 || out.stdout.trim().is_empty() {
@@ -100,6 +104,7 @@ fn read(runner: &dyn Runner, s: &Setting) -> Result<Option<BTreeMap<String, Stri
             on_off(out.stdout.rsplit(':').next().unwrap_or_default()).map(all).unwrap_or_default()
         }
         SettingTool::Firewall => firewall_state(&out.stdout).map(all).unwrap_or_default(),
+        SettingTool::Mdutil => indexing_state(&out.stdout).map(all).unwrap_or_default(),
     };
     if live.is_empty() {
         bail!("setting:{} {}: could not read it from {:?}", s.tool.name(), s.key, out.stdout.trim());
@@ -156,6 +161,16 @@ fn firewall_state(out: &str) -> Option<&'static str> {
     }
 }
 
+/// `mdutil -a -s` prints `Indexing enabled.` or `Indexing disabled.` (or `Indexing and searching
+/// disabled.` for a volume that opts out) under each volume. One enabled volume reads as on.
+fn indexing_state(out: &str) -> Option<&'static str> {
+    let states: Vec<_> = out.lines().map(str::trim).filter(|l| l.starts_with("Indexing")).collect();
+    if states.is_empty() {
+        return None;
+    }
+    Some(if states.iter().any(|l| l.starts_with("Indexing enabled")) { "on" } else { "off" })
+}
+
 /// `source` is a pmset power source flag; the other tools set one machine-wide value.
 fn write(s: &Setting, source: &str, value: &str) -> Cmd {
     match s.tool {
@@ -166,6 +181,7 @@ fn write(s: &Setting, source: &str, value: &str) -> Cmd {
         }
         SettingTool::Systemsetup => Cmd::new("systemsetup").args([format!("-set{}", s.key), value.into()]),
         SettingTool::Firewall => Cmd::new(FIREWALL).args([format!("--set{}", s.key), value.into()]),
+        SettingTool::Mdutil => Cmd::new("mdutil").args(["-a", "-i", value]),
     }
 }
 

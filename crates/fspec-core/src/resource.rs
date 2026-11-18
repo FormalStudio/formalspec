@@ -866,7 +866,8 @@ impl Defaults {
 }
 
 /// A macOS system setting that has a command and no defaults domain: `pmset -a <key>`,
-/// `systemsetup -set<key>`, or the application firewall's `socketfilterfw --set<key>`.
+/// `systemsetup -set<key>`, the application firewall's `socketfilterfw --set<key>`, or Spotlight's
+/// `mdutil -a -i` (key `indexing`).
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Setting {
@@ -881,6 +882,7 @@ pub enum SettingTool {
     Pmset,
     Systemsetup,
     Firewall,
+    Mdutil,
 }
 
 impl SettingTool {
@@ -889,6 +891,7 @@ impl SettingTool {
             SettingTool::Pmset => "pmset",
             SettingTool::Systemsetup => "systemsetup",
             SettingTool::Firewall => "firewall",
+            SettingTool::Mdutil => "mdutil",
         }
     }
 }
