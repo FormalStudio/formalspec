@@ -46,13 +46,17 @@ impl Journal {
         if path.exists() {
             bail!("{} exists: a previous apply did not finish", path.display());
         }
+        // Backups without a journal are what a crash inside `finish` leaves behind.
+        remove_any(&backups)?;
         fs::create_dir_all(&backups).with_context(|| format!("creating {}", backups.display()))?;
         let j = Journal { path, backups, generation, steps: vec![] };
         j.persist()?;
         Ok(j)
     }
 
-    /// Revert whatever an interrupted apply left behind. Returns whether there was anything.
+    /// Revert whatever an interrupted apply left behind. Returns whether there was anything. An
+    /// apply whose `state.json` already reached the journal's generation was committed and only
+    /// missed its `finish`, so its journal is dropped instead of rolled back.
     pub fn recover(state_dir: &Path, runner: &dyn Runner) -> Result<bool> {
         let (path, backups) = Journal::paths(state_dir);
         let text = match fs::read_to_string(&path) {
@@ -61,7 +65,13 @@ impl Journal {
             Err(e) => return Err(e).with_context(|| format!("reading {}", path.display())),
         };
         let on_disk: OnDisk = serde_json::from_str(&text).with_context(|| format!("parsing {}", path.display()))?;
-        Journal { path, backups, generation: on_disk.generation, steps: on_disk.steps }.rollback(runner)?;
+        let committed = committed_generation(&state_dir.join("state.json"))?.is_some_and(|g| g >= on_disk.generation);
+        let journal = Journal { path, backups, generation: on_disk.generation, steps: on_disk.steps };
+        if committed {
+            journal.finish()?
+        } else {
+            journal.rollback(runner)?
+        }
         Ok(true)
     }
 
@@ -124,16 +134,38 @@ impl Journal {
         Ok(())
     }
 
-    /// The apply succeeded: drop the journal and its backups.
+    /// The apply succeeded: drop the journal and its backups. The journal goes first, since a
+    /// journal whose backups are gone would make `recover` delete the live files.
     pub fn finish(self) -> Result<()> {
-        remove_any(&self.backups)?;
-        remove_any(&self.path)
+        remove_any(&self.path)?;
+        remove_any(&self.backups)
+    }
+}
+
+/// The generation in the `state.json` at `path`, `None` when there is none.
+fn committed_generation(path: &Path) -> Result<Option<u64>> {
+    #[derive(Deserialize)]
+    struct Generation {
+        #[serde(default)]
+        generation: u64,
+    }
+    match fs::read(path) {
+        Ok(bytes) => Ok(Some(
+            serde_json::from_slice::<Generation>(&bytes)
+                .with_context(|| format!("parsing {}", path.display()))?
+                .generation,
+        )),
+        Err(e) if e.kind() == ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e).with_context(|| format!("reading {}", path.display())),
     }
 }
 
 fn undo(step: &Undo, runner: &dyn Runner) -> Result<()> {
     match step {
         Undo::RestorePath { path, backup } => {
+            if let Some(b) = backup.as_ref().filter(|b| fs::symlink_metadata(b).is_err()) {
+                bail!("not restoring {}: its backup {} is missing", path.display(), b.display());
+            }
             remove_any(path)?;
             if let Some(b) = backup {
                 if let Some(parent) = path.parent() {
@@ -232,6 +264,43 @@ mod tests {
         assert_eq!(runner.lines(), ["flatpak uninstall -y x"]);
         assert!(!state.join("journal.json").exists());
         assert!(!Journal::recover(&state, &runner).unwrap());
+    }
+
+    #[test]
+    fn recover_keeps_an_apply_whose_state_was_saved() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        let file = dir.path().join("etc/file");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "old").unwrap();
+
+        let mut j = Journal::begin(&state, 3).unwrap();
+        j.backup(&file).unwrap();
+        fs::write(&file, "new").unwrap();
+        fs::write(state.join("state.json"), r#"{"version":1,"generation":3}"#).unwrap();
+        // A crash after the state is saved, before `finish` drops the journal.
+        drop(j);
+        let runner = RecordingRunner::default();
+        assert!(Journal::recover(&state, &runner).unwrap());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new");
+        assert!(!state.join("journal.json").exists() && !state.join("journal-backups").exists());
+    }
+
+    #[test]
+    fn rollback_keeps_a_file_whose_backup_is_missing() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = dir.path().join("state");
+        let file = dir.path().join("etc/file");
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, "old").unwrap();
+
+        let mut j = Journal::begin(&state, 1).unwrap();
+        j.backup(&file).unwrap();
+        fs::write(&file, "new").unwrap();
+        remove_any(&state.join("journal-backups")).unwrap();
+        drop(j);
+        assert!(Journal::recover(&state, &RecordingRunner::default()).is_err());
+        assert_eq!(fs::read_to_string(&file).unwrap(), "new");
     }
 
     #[test]

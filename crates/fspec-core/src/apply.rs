@@ -540,8 +540,10 @@ pub fn apply_held(
             }
         }
     }
-    next.save(&state_path)?;
+    // Saving `state.json` commits the apply: from here `recover` drops the journal instead of
+    // rolling back.
     next.save(&dir.join("generations").join(format!("{}.json", cx.generation)))?;
+    next.save(&state_path)?;
     journal.finish()?;
     remove_any(&staging)?;
     Ok(p)
