@@ -32,7 +32,7 @@ matches this machine.
 ### fspec update
 
 ```
-fspec update [<pkg>...] [--cache] [--images] [--registry <r>]
+fspec update [<pkg>...] [--cache] [--images] [--snapshots] [--registry <r>]
 ```
 
 Resolves versions, URLs and hashes from upstream and rewrites `fspec.lock`. Prints one line per
@@ -45,6 +45,7 @@ locked like any other, at the newest commit of FormalSpec's `main` that changes 
 | --- | --- |
 | `--cache` | Only record the OCI digest of each CI-built `git(...)` package ([Building from source](../guides/source-builds.md)), resolving nothing. CI's `record` job runs it |
 | `--images` | Pin each image host's pushed image digest instead of resolving packages ([The system layer](../guides/system-layer.md)) |
+| `--snapshots` | Only move each Tumbleweed host's `[zypper.<host>]` pin to the newest snapshot its `release_age` allows. openSUSE drops snapshots after about a month, so a scheduled job running this keeps applies from failing on a pin that no longer exists |
 | `--registry <r>` | Registry for `--images` (default `ghcr.io/<owner>`) or `--cache` (default `ghcr.io/<owner>/fspec-cache`) |
 
 In a directory with a `dev.star` and no `spec.star`, it locks the project environment instead.

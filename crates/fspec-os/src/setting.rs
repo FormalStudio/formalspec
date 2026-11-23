@@ -80,7 +80,9 @@ fn word(s: &Setting) -> Result<String> {
         (SettingTool::Pmset, Value::Number(n)) if n.is_u64() => n.to_string(),
         (SettingTool::Pmset, Value::String(v)) if !v.is_empty() && !v.contains(char::is_whitespace) => v.clone(),
         (SettingTool::Pmset, Value::Bool(b)) => u8::from(*b).to_string(),
-        (SettingTool::Systemsetup | SettingTool::Firewall | SettingTool::Mdutil, Value::Bool(b)) => if *b { "on" } else { "off" }.into(),
+        (SettingTool::Systemsetup | SettingTool::Firewall | SettingTool::Mdutil, Value::Bool(b)) => {
+            if *b { "on" } else { "off" }.into()
+        }
         (tool, v) => bail!("setting:{} {} cannot be {v}", tool.name(), s.key),
     })
 }

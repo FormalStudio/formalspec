@@ -24,6 +24,13 @@ struct Decl {
     age: Option<i64>,
 }
 
+/// Re-pin every Tumbleweed host's snapshot and keep the rest of the lock as it is.
+pub fn snapshots(hosts: &[Host], old: &Lock, cx: &Cx) -> Update {
+    let (mut changes, mut errors) = (Vec::new(), Vec::new());
+    let zypper = crate::snapshot::update(hosts, &old.zypper, cx, &mut changes, &mut errors);
+    Update { lock: Lock { zypper, ..old.clone() }, changes, errors }
+}
+
 /// Re-resolve `only` (every package and snapshot pin when empty), keep the other entries, and
 /// drop entries no host declares any more.
 pub fn update(hosts: &[Host], old: &Lock, only: &[String], cx: &Cx) -> Result<Update> {

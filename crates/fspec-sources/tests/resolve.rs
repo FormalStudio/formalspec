@@ -2,7 +2,7 @@ use fspec_core::fetch::MapFetch;
 use fspec_core::lock::Lock;
 use fspec_core::resource::{Host, Pkg};
 use fspec_core::runner::{Output, RecordingRunner};
-use fspec_sources::update::update;
+use fspec_sources::update::{snapshots, update};
 use fspec_sources::{Cx, parse_age, resolve};
 use serde_json::{Value, json};
 
@@ -438,6 +438,24 @@ fn update_pins_tumbleweed_hosts_to_the_newest_snapshot_old_enough() {
     );
     let text = toml::to_string(&got.lock).unwrap();
     assert!(text.contains("[zypper.laptop]\nsnapshot = \"20251008\""), "{text}");
+}
+
+#[test]
+fn update_snapshots_moves_the_pins_and_leaves_packages_alone() {
+    let fetch = MapFetch::default().with("https://download.opensuse.org/history/list", "20251008\n20251005\n");
+    let runner = RecordingRunner::default();
+    let mut tw = host("laptop", "x86_64-linux", None, vec![]);
+    tw.system = Some(
+        serde_json::from_value(json!({"kind": "distro", "distro": "opensuse-tumbleweed", "init": "systemd"})).unwrap(),
+    );
+    let old = toml_lock(
+        "[[pkg]]\nname = \"fd\"\nsource = \"github:sharkdp/fd\"\nversion = \"10.2.0\"\n\n[zypper.laptop]\nsnapshot = \"20250901\"\n",
+    );
+    let got = snapshots(&[tw], &old, &cx(&fetch, &runner));
+    assert!(got.errors.is_empty(), "{:?}", got.errors);
+    assert_eq!(got.changes, ["snapshot laptop 20250901 -> 20251008"]);
+    assert_eq!(got.lock.zypper["laptop"].snapshot, "20251008");
+    assert_eq!(got.lock.pkg, old.pkg);
 }
 
 /// GitHub's API out of requests for the hour.

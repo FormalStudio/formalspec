@@ -128,6 +128,10 @@ enum Command {
         /// Pin each image host's pushed image digest instead of resolving packages.
         #[arg(long, conflicts_with_all = ["pkgs", "cache"])]
         images: bool,
+        /// Only move each Tumbleweed host's snapshot pin to the newest one its `release_age`
+        /// allows, resolving nothing else.
+        #[arg(long, conflicts_with_all = ["pkgs", "cache", "images"])]
+        snapshots: bool,
         /// Only record the digest of each CI-built artifact (see `fspec ci packages`), resolving
         /// nothing.
         #[arg(long, conflicts_with = "pkgs")]
@@ -609,10 +613,16 @@ fn main() -> Result<()> {
             }
             Ok(())
         }
-        Command::Update { pkgs, images, cache, registry } => {
+        Command::Update { pkgs, images, snapshots, cache, registry } => {
             let op = Operation::new(Kind::Update, &spec_dir.display().to_string(), "Updating fspec.lock", None);
             fspec_core::activity::run(op, || {
-                update(&paths, &spec_path, &spec_dir, pkgs, *images, *cache, registry.as_deref())
+                let mode = match (*images, *snapshots, *cache) {
+                    (true, _, _) => UpdateMode::Images,
+                    (_, true, _) => UpdateMode::Snapshots,
+                    (_, _, true) => UpdateMode::Cache,
+                    _ => UpdateMode::Lock,
+                };
+                update(&paths, &spec_path, &spec_dir, pkgs, mode, registry.as_deref())
             })
         }
         Command::Build { job: Some(job), platform, out, .. } => {
@@ -1019,23 +1029,31 @@ struct Switch<'a> {
 }
 
 /// Commands run for real only on a live root; under `--root` they are logged.
-/// `fspec update`: resolve the spec's packages, images or CI digests into its lock.
+/// What `fspec update` resolves: the flags conflict, so one of these.
+#[derive(Clone, Copy, PartialEq)]
+enum UpdateMode {
+    Lock,
+    Images,
+    Snapshots,
+    Cache,
+}
+
+/// `fspec update`: resolve the spec's packages, images, snapshots or CI digests into its lock.
 fn update(
     paths: &Paths,
     spec_path: &Path,
     spec_dir: &Path,
     pkgs: &[String],
-    images: bool,
-    cache: bool,
+    mode: UpdateMode,
     registry: Option<&str>,
 ) -> Result<()> {
     let lock_path = spec_dir.join("fspec.lock");
     let old = Lock::load(&lock_path)?;
     let (fetch, runner) = (LiveFetch::new(), LiveRunner);
     // Updating named packages keeps every gh: load at its locked commit.
-    let keep = !pkgs.is_empty() || images || cache;
+    let keep = !pkgs.is_empty() || mode != UpdateMode::Lock;
     let spec = fspec_eval::evaluate_resolving(spec_path, &runner, &fetch, &old.loads, keep)?;
-    if cache {
+    if mode == UpdateMode::Cache {
         let registry = fspec_build::cache::registry(&runner, spec_dir, registry)?;
         let mut lock = old.clone();
         let (lines, failed) = fspec_build::cache::record(&mut lock, &spec.hosts, &registry, &runner)?;
@@ -1050,7 +1068,7 @@ fn update(
         }
         return Ok(());
     }
-    if images {
+    if mode == UpdateMode::Images {
         let registry = registry_for(registry, &runner, spec_dir)?;
         fspec_core::activity::phase(Phase::Resolving, None);
         let u = fspec_image::update_images(&spec.hosts, &old, &registry, &fetch)?;
@@ -1069,7 +1087,11 @@ fn update(
     }
     let sources =
         fspec_sources::Cx::new(&fetch, &runner).with_spec_dir(spec_dir).with_catalog(search::catalog(paths, true));
-    let mut result = fspec_sources::update::update(&spec.hosts, &old, pkgs, &sources)?;
+    let mut result = if mode == UpdateMode::Snapshots {
+        fspec_sources::update::snapshots(&spec.hosts, &old, &sources)
+    } else {
+        fspec_sources::update::update(&spec.hosts, &old, pkgs, &sources)?
+    };
     let errors = std::mem::take(&mut result.errors);
     for line in &result.changes {
         println!("{line}");

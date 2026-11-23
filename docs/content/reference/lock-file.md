@@ -126,6 +126,7 @@ pacman = "gcc"
 | `fspec update <pkg>...` | Only those packages. Loads stay at their commit |
 | `fspec update --cache` | Only the `oci` digests and `build` keys of CI-built packages |
 | `fspec update --images` | Only the `[system.<host>]` image digests |
+| `fspec update --snapshots` | Only the `[zypper.<host>]` Tumbleweed snapshot pins |
 
 Resolvers read GitHub's API with `GITHUB_TOKEN`, or with what `gh auth token` prints. Without a
 token GitHub allows 60 requests an hour; a refusal for that reason is reported as the rate limit,

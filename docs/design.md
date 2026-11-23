@@ -474,7 +474,8 @@ listed snapshot, or with `release_age` the newest whose day ended at least that
 long ago, and prints `snapshot <host> <old> -> <new>`. The history holds x86_64 alone, so an
 aarch64 Tumbleweed host gets no pin and stays on the rolling ports repos. openSUSE keeps about a
 month of snapshots, so a pin older than that stops resolving and needs an
-update.
+update. `fspec update --snapshots` moves only those pins, for a scheduled job that keeps them
+inside that month without touching any other entry.
 The lock entry for a distro package holds one artifact per platform, so the
 cached file is used for single-name packages; a multi-name `dnf([...])` package
 installs by name. Flatpak pins live in `any = { commit = … }`, read over HTTP
