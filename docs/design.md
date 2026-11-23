@@ -148,7 +148,7 @@ package name or service name fail the plan.
 | `github(repo)` | release assets matched per platform, or picked by an `asset = "tool-*-x86_64.pkg.tar.zst"` glob, which may name a distro package |
 | `npm(name)` | `npm("@anthropic-ai/claude-code")` |
 | `cargo(name)` | crates.io, prebuilt via cargo-binstall where available |
-| `flatpak(id)` | Flathub, `id/arch/branch` for a runtime such as a Vulkan layer |
+| `flatpak(id)` | Flathub, `id/arch/branch` for a runtime such as a Vulkan layer, `remote` plus `repo` (a `.flatpakrepo` URL) for a vendor's own remote |
 | `brew(name)` | Homebrew bottles and casks on macOS, `tap = "owner/repo"` for a third-party tap |
 | `dnf`, `pacman`, `apt`, `xbps`, `moss`, `zypper` | the distro's own repos, plus `repo(...)` ones on zypper |
 | `git(url, rev)` | build from source with a recipe |

@@ -17,6 +17,7 @@ pub struct FlatpakBackend;
 struct App {
     id: String,
     remote: String,
+    repo: Option<String>,
 }
 
 struct Want {
@@ -26,8 +27,8 @@ struct Want {
 }
 
 fn app(p: &Pkg) -> Result<App> {
-    let Source::Flatpak { id, remote } = &p.source else { bail!("pkg:{} is not a flatpak", p.name) };
-    Ok(App { id: id.clone().unwrap_or_else(|| p.name.clone()), remote: remote.clone() })
+    let Source::Flatpak { id, remote, repo } = &p.source else { bail!("pkg:{} is not a flatpak", p.name) };
+    Ok(App { id: id.clone().unwrap_or_else(|| p.name.clone()), remote: remote.clone(), repo: repo.clone() })
 }
 
 fn locked_commit(cx: &Cx, p: &Pkg) -> Result<Option<String>> {
@@ -44,6 +45,10 @@ fn want(cx: &Cx, p: &Pkg) -> Result<Want> {
 
 fn install_cmd(a: &App) -> Cmd {
     Cmd::new("flatpak").args(["install", "-y", "--noninteractive", "--system"]).arg(&a.remote).arg(&a.id)
+}
+
+fn remote_add_cmd(remote: &str, repo: &str) -> Cmd {
+    Cmd::new("flatpak").args(["remote-add", "--if-not-exists", "--system", remote, repo])
 }
 
 fn pin_cmd(id: &str, commit: &str) -> Cmd {
@@ -78,6 +83,9 @@ fn live_commit(cx: &Cx, id: &str) -> Result<Option<String>> {
 
 /// No undo: a failed apply keeps what it installed (see `pkgs::install`).
 fn install(cx: &Cx, w: &Want) -> Result<Option<String>> {
+    if let Some(repo) = &w.app.repo {
+        cx.runner.check(&remote_add_cmd(&w.app.remote, repo))?;
+    }
     cx.runner.check(&install_cmd(&w.app))?;
     match &w.pin {
         Some(c) => {
@@ -157,7 +165,7 @@ impl Backend for FlatpakBackend {
     fn commit(&self, cx: &Cx, ops: &[Op], _staging: &Path, journal: &mut Journal) -> Result<Records> {
         // A driver newer than Flathub's extensions fails here and stays drift until they ship.
         for id in missing_driver_gl(cx)? {
-            cx.runner.run(&install_cmd(&App { id, remote: "flathub".into() }))?;
+            cx.runner.run(&install_cmd(&App { id, remote: "flathub".into(), repo: None }))?;
         }
         let mut records = Records::new();
         for op in ops {

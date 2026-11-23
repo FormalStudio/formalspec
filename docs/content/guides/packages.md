@@ -122,7 +122,16 @@ such as the distro Rust toolchain behind `rust-src`.
 pkg("obsidian", source = flatpak("md.obsidian.Obsidian")),
 pkg("mangohud", source = flatpak("org.freedesktop.Platform.VulkanLayer.MangoHud/x86_64/25.08")),
 pkg("beta-app", source = flatpak("org.example.App", remote = "flathub-beta")),
+pkg("ladybird", source = flatpak(
+    "org.ladybird.Ladybird",
+    remote = "ladybird",
+    repo = "https://flatpak.ladybird.org/ladybird.flatpakrepo",
+)),
 ```
+
+A vendor's own remote takes `repo`, its `.flatpakrepo` URL: the apply adds the remote with
+`flatpak remote-add --if-not-exists` before the install, and `fspec update` reads the repo URL
+from the file to lock the commit, so the host running it needs no flatpak.
 
 A Flatpak installs system-wide (`flatpak install --system`) and is pinned to the commit in the
 lock with `flatpak update --commit=`. A runtime, such as a Vulkan layer, takes the full

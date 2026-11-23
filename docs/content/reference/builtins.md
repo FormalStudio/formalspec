@@ -181,7 +181,7 @@ Each returns a value for `pkg(source = ...)`.
 | `github(repo)` | `owner/name` | `asset`: a glob over release asset names | GitHub releases, the asset matching the platform |
 | `npm(name)` | `name` | | The npm registry |
 | `cargo(name)` | `name` | | A crate's prebuilt GitHub release assets. Never compiles |
-| `flatpak(id)` | `id` | `remote = "flathub"` | Flathub or another remote. Linux |
+| `flatpak(id)` | `id` | `remote = "flathub"`, `repo = "<.flatpakrepo URL>"` | Flathub or another remote; `repo` adds the remote first. Linux |
 | `brew(name)` | `name` | `cask = False`, `tap = "owner/repo"` | Homebrew formulae and casks. macOS |
 | `url(url)` | `url` | | One file or archive at a fixed URL |
 | `git(url, rev = "main")` | `url`, `rev` | `deps = []`, `image = None`, `paths = []` | A source build at a commit. See [Building from source](../guides/source-builds.md) |

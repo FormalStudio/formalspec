@@ -186,6 +186,27 @@ fn flatpak_install_pins_and_converges() {
 }
 
 #[test]
+fn flatpak_from_a_flatpakrepo_adds_the_remote_first() {
+    let mut w = World::linux();
+    w.lock.upsert(locked("ladybird", "flatpak:org.ladybird.Ladybird", None, &[("any", commit("aaa"))]));
+    let source = json!({
+        "kind": "flatpak",
+        "id": "org.ladybird.Ladybird",
+        "remote": "ladybird",
+        "repo": "https://flatpak.ladybird.org/ladybird.flatpakrepo",
+    });
+    w.apply(Scope::System, &[pkg("ladybird", source, "pinned")]).unwrap();
+    assert_eq!(
+        w.take(),
+        [
+            "flatpak remote-add --if-not-exists --system ladybird https://flatpak.ladybird.org/ladybird.flatpakrepo",
+            "flatpak install -y --noninteractive --system ladybird org.ladybird.Ladybird",
+            &format!("{PIN} --commit=aaa org.ladybird.Ladybird"),
+        ]
+    );
+}
+
+#[test]
 fn flatpak_lock_bump_repins_and_missing_commit_fails() {
     let mut w = World::linux();
     w.lock.upsert(locked("firefox", "flatpak:org.mozilla.firefox", None, &[("any", commit("aaa"))]));

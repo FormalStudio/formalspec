@@ -520,6 +520,10 @@ pub enum Source {
         id: Option<String>,
         #[serde(default = "flathub")]
         remote: String,
+        /// A `.flatpakrepo` URL that adds `remote` before the install, for a remote that is
+        /// not set up on the host already.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        repo: Option<String>,
     },
     Brew {
         #[serde(default)]

@@ -9,9 +9,20 @@ use crate::Cx;
 
 /// The commit a remote's branch points at, read over HTTP from the OSTree repo's
 /// `refs/heads`, so a host without flatpak can lock the flatpaks of every host. A remote fspec
-/// has no URL for is asked through the local flatpak.
-pub fn flatpak(id: &str, remote: &str, platforms: &[String], cx: &Cx, out: &mut LockedPkg) -> Result<()> {
-    let Some(repo) = remote_url(remote) else { return flatpak_local(id, remote, cx, out) };
+/// has no URL for, and no `.flatpakrepo` to read one from, is asked through the local flatpak.
+pub fn flatpak(
+    id: &str,
+    remote: &str,
+    flatpakrepo: Option<&str>,
+    platforms: &[String],
+    cx: &Cx,
+    out: &mut LockedPkg,
+) -> Result<()> {
+    let repo = match (remote_url(remote), flatpakrepo) {
+        (Some(url), _) => url.to_string(),
+        (None, Some(file)) => repo_url(file, cx)?,
+        (None, None) => return flatpak_local(id, remote, cx, out),
+    };
     let refs = match id.split('/').collect::<Vec<_>>()[..] {
         [name, arch, branch] => vec![format!("app/{name}/{arch}/{branch}"), format!("runtime/{name}/{arch}/{branch}")],
         [name] => vec![format!("app/{name}/{}/stable", flatpak_arch(platforms))],
@@ -38,6 +49,15 @@ pub fn flatpak(id: &str, remote: &str, platforms: &[String], cx: &Cx, out: &mut 
         }
     }
     Err(last.unwrap_or_else(|| anyhow!("no ref to look up")).context(format!("{remote} has no {}", refs.join(" or "))))
+}
+
+/// The OSTree repo a `.flatpakrepo` file points at, from its `Url=` key.
+fn repo_url(file: &str, cx: &Cx) -> Result<String> {
+    let body = String::from_utf8(cx.fetch.get(file)?)?;
+    body.lines()
+        .find_map(|l| l.trim().strip_prefix("Url="))
+        .map(|u| u.trim().trim_end_matches('/').to_string())
+        .ok_or_else(|| anyhow!("{file} has no Url= line"))
 }
 
 fn remote_url(remote: &str) -> Option<&'static str> {
