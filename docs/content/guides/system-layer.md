@@ -274,7 +274,9 @@ host(
      `https://download.opensuse.org/history/${fspec_snapshot}/tumbleweed/repo/oss/` (and `non-oss`);
    - disables the rolling repositories (`repo-oss`, `repo-non-oss`, `repo-update`, and the debug
      and source ones when enabled);
-   - runs `zypper --non-interactive dist-upgrade --auto-agree-with-licenses`.
+   - runs `zypper --non-interactive dist-upgrade --auto-agree-with-licenses`, then waits up to a
+     minute for download.opensuse.org to resolve, since an upgrade that restarts NetworkManager or
+     tailscale leaves DNS down for a few seconds.
 
 Moving the pin with the next `fspec update` rewrites the variable and runs the upgrade again.
 Moving it back to an older date downgrades. A failed apply restores the old variable and

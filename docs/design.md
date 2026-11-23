@@ -1328,7 +1328,10 @@ and `fspec-non-oss.repo` with
 cdn.opensuse.org (`repo-oss`, `repo-non-oss`, `repo-update`, and the debug and
 source ones when enabled) with `zypper modifyrepo --disable`, force-refreshes
 the snapshot repos and runs `zypper --non-interactive dist-upgrade
---auto-agree-with-licenses`. Moving the pin rewrites only the variable and runs
+--auto-agree-with-licenses`, then waits up to a minute for download.opensuse.org
+to resolve: an upgrade of NetworkManager, tailscale or systemd-resolved restarts
+them from its scripts, and the next zypper call would otherwise fail every repo.
+Moving the pin rewrites only the variable and runs
 the upgrade again, which also downgrades when the pin moved back. Other repos
 such as openh264 are left alone. The undo puts the old variable and repo files
 back, re-enables the rolling repos and runs the same upgrade against them, so

@@ -1147,6 +1147,7 @@ fn tumbleweed_points_the_repos_at_the_locked_snapshot_then_upgrades() {
             "zypper --non-interactive modifyrepo --disable repo-oss",
             "zypper --non-interactive refresh --force fspec-oss fspec-non-oss",
             "zypper --non-interactive dist-upgrade --auto-agree-with-licenses",
+            "getent hosts download.opensuse.org",
             "zypper --non-interactive install --auto-agree-with-licenses htop",
         ]
     );

@@ -120,7 +120,22 @@ pub(crate) fn move_to(cx: &Cx, journal: &mut Journal, snapshot: &str) -> Result<
     }
     cx.runner.check(&zypper(["refresh", "--force"]).args(SNAPSHOT_REPOS.map(|(a, _)| a)))?;
     cx.runner.check(&dup)?;
-    Ok(())
+    wait_for_dns(cx)
+}
+
+/// A dist-upgrade that updates NetworkManager, tailscale or systemd-resolved restarts them from
+/// its scripts, and names stop resolving for a few seconds. The zypper call after it would then
+/// fail every repo and roll the whole apply back, so this waits for the snapshot host first.
+fn wait_for_dns(cx: &Cx) -> Result<()> {
+    let host = fspec_core::zypp::HISTORY.trim_start_matches("https://").split('/').next().unwrap_or_default();
+    let lookup = Cmd::new("getent").args(["hosts", host]);
+    for _ in 0..60 {
+        if cx.runner.run(&lookup)?.status == 0 {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_secs(1));
+    }
+    bail!("{host} still does not resolve a minute after the dist-upgrade")
 }
 
 /// Where the distro phase leaves the names it will install, for the `pkg` phase's dry run.
