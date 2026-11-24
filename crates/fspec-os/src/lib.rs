@@ -85,6 +85,29 @@ fn read_or_empty(path: &Path) -> Option<String> {
     fs::read_to_string(path).ok()
 }
 
+/// Why a running service is stale: `exec`, the program its init would start now, resolves to
+/// another package in `store` than `running`, the resolved executable of its process. The
+/// package is the first component under the store; Linux reports a removed executable as
+/// `<path> (deleted)`, which keeps that component intact.
+fn store_moved(
+    cx: &fspec_core::apply::Cx,
+    store: &Path,
+    name: &str,
+    running: &str,
+    exec: &str,
+) -> Result<Option<String>> {
+    let Ok(now) = fs::canonicalize(cx.resolve(exec)?) else { return Ok(None) };
+    let package = |p: &Path, store: &Path| {
+        Some(p.strip_prefix(store).ok()?.components().next()?.as_os_str().to_string_lossy().into_owned())
+    };
+    let was = package(&cx.resolve(running)?, store);
+    let is = fs::canonicalize(store).ok().and_then(|store| package(&now, &store));
+    Ok(match (was, is) {
+        (Some(was), Some(is)) if was != is => Some(format!("{name} runs {was}, the store now has {is}")),
+        _ => None,
+    })
+}
+
 /// Fails unless `key` is a valid variable name for a shell script and `env`.
 fn check_env_name(service: &str, key: &str) -> Result<()> {
     let ok = key.chars().next().is_some_and(|c| c.is_ascii_alphabetic() || c == '_')

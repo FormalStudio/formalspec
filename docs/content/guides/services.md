@@ -255,11 +255,11 @@ package. `pkg(timers = [...])` works the same way. See [Packages](packages.md).
 
 ## Restart after a package update
 
-On systemd, apply restarts a running service whose program moved to a new store directory. When a
-`pkg` update moves `/opt/fspec/current/bin/web` to a new version, the running process still
-executes the old one. fspec compares the unit's `ExecStart` with the process's executable, and if
-they resolve to different packages in the store, `plan` reports the service and `apply` restarts
-it:
+On systemd and launchd, apply restarts a running service whose program moved to a new store
+directory. When a `pkg` update moves `/opt/fspec/current/bin/web` to a new version, the running
+process still executes the old one. fspec compares the unit's `ExecStart` (on launchd the job's
+`program`) with the process's executable, and if they resolve to different packages in the store,
+`plan` reports the service and `apply` restarts it:
 
 ```console
 $ fspec plan
@@ -274,9 +274,10 @@ service:web: restarted, fspec-web.service runs 1a2b3c4d-web-1.4.0, the store now
 A restart that fails does not undo the apply, even when the package moved in the same apply: fspec
 warns, keeps the rest, and leaves the service pending, so the next apply restarts it again.
 
-This covers fspec's own services and distro units, system and user, including a user service that
-runs a package from the system scope. A unit that refuses manual starts or stops is left for its
-next start. The other inits do not restart a service for this.
+On systemd this covers fspec's own services and distro units, system and user, including a user
+service that runs a package from the system scope. A unit that refuses manual starts or stops is
+left for its next start. On launchd it covers fspec's own daemons and agents, and the message names
+the job label (`fspec.web runs ...`). The other inits do not restart a service for this.
 
 ## Run a command on a schedule
 

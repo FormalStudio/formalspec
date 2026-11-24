@@ -1083,6 +1083,13 @@ apply back. A unit with `RefuseManualStart` or `RefuseManualStop`
 is left for its next start. One `systemctl show -p MainPID -p ExecStart` per
 manager reads every service at once, whatever their number.
 
+launchd does the same for fspec's own services: `launchctl print` gives the
+job's `program` and `pid`, and the process's executable is the first text file
+`lsof` lists for it (`ps` prints the `current` link it was started by, which
+already points at the new package). A stale job drifts, and the commit boots it
+out and in again; one the same apply replaced is restarted in `refresh` with
+`launchctl kickstart -k`, and a failed kickstart leaves it pending.
+
 A timer's `schedule` is a five-field cron expression or one of `@hourly`,
 `@daily`, `@weekly` and `@monthly`. Timers become systemd timers, cron entries or launchd
 calendar intervals. Features only systemd has (socket activation, cgroup

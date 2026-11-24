@@ -3,6 +3,7 @@ use std::fs;
 use fspec_core::Scope;
 use fspec_core::apply::{Backend, apply_scope, plan_scope};
 use fspec_core::facts::Init;
+use fspec_core::plan::Action;
 use fspec_core::runner::Output;
 use fspec_core::state::State;
 use serde_json::json;
@@ -196,4 +197,106 @@ fn a_timer_carries_its_environment() {
         "env": {"VAULT": "/Users/k/Vault"}}));
     let text = render(&r).unwrap();
     assert!(text.contains("<key>EnvironmentVariables</key>\n\t<dict>\n\t\t<key>VAULT</key>"), "{text}");
+}
+
+/// A user `fspec.t3` agent whose process (pid 42) runs `aaa-t3` while the store's `current` link
+/// now points at `bbb-t3`.
+fn stale_t3(w: &World) {
+    let store = w.paths.fspec_root().join("store");
+    for id in ["aaa-t3", "bbb-t3"] {
+        fs::create_dir_all(store.join(id).join("bin")).unwrap();
+        fs::write(store.join(id).join("bin/t3"), "").unwrap();
+    }
+    let bin = w.paths.fspec_root().join("current/bin");
+    fs::create_dir_all(&bin).unwrap();
+    std::os::unix::fs::symlink("../../store/bbb-t3/bin/t3", bin.join("t3")).unwrap();
+    w.runner.respond("id -u", Output { stdout: "501\n".into(), ..Output::default() });
+    running_t3(w, "aaa-t3", RUNNING);
+}
+
+/// Answers lsof with `package` as the running executable, and `launchctl print` with `print`.
+fn running_t3(w: &World, package: &str, print: &str) {
+    let mut responses = w.runner.responses.lock().unwrap();
+    responses.retain(|(cmd, _)| !cmd.starts_with("lsof") && !cmd.starts_with("launchctl print"));
+    responses.push(("launchctl print gui/501/fspec.t3".into(), Output { stdout: print.into(), ..Output::default() }));
+    responses.push((
+        "lsof -a -p 42 -d txt -Fn".into(),
+        Output {
+            stdout: format!("p42\nftxt\nn/opt/fspec/store/{package}/bin/t3\nftxt\nn/usr/lib/dyld\n"),
+            ..Output::default()
+        },
+    ));
+}
+
+const RUNNING: &str = "gui/501/fspec.t3 = {\n\tstate = running\n\tprogram = /opt/fspec/current/bin/t3\n\tpid = 42\n\
+    \tendpoints = {\n\t\tpid = 7\n\t}\n}\n";
+
+fn t3() -> Resource {
+    resource(json!({"kind": "service", "name": "t3", "exec": "/opt/fspec/current/bin/t3 serve", "user": true}))
+}
+
+#[test]
+fn an_agent_running_a_replaced_store_package_restarts() {
+    let w = World::darwin();
+    let backends: &[&dyn Backend] = &[&LaunchdBackend];
+    stale_t3(&w);
+    let want = vec![desired(t3())];
+    let cx = w.cx(Scope::User);
+    apply_scope(&cx, backends, &want).unwrap();
+
+    let state = State::load(&cx.state_dir().join("state.json")).unwrap();
+    let p = plan_scope(&cx, backends, &want, &state).unwrap();
+    assert_eq!(
+        p.changes[0].action,
+        Action::Drift { notes: vec!["fspec.t3 runs aaa-t3, the store now has bbb-t3".into()] }
+    );
+    // The commit boots the job out and in again, which starts the new program.
+    w.runner.calls.lock().unwrap().clear();
+    apply_scope(&cx, backends, &want).unwrap();
+    let lines = w.runner.lines();
+    assert!(lines.contains(&"launchctl bootout gui/501/fspec.t3".to_string()), "{lines:#?}");
+    assert!(lines.iter().any(|l| l.starts_with("launchctl bootstrap gui/501")), "{lines:#?}");
+
+    // A package the same apply replaced is caught by the refresh after the commit.
+    w.runner.calls.lock().unwrap().clear();
+    let state = State::load(&cx.state_dir().join("state.json")).unwrap();
+    let entries: Vec<Entry> = state.entries.values().cloned().collect();
+    let mut journal = fspec_core::journal::Journal::begin(&cx.state_dir(), 99).unwrap();
+    assert!(LaunchdBackend.refresh(&cx, &entries, &mut journal).unwrap().is_empty());
+    assert!(
+        w.runner.lines().contains(&"launchctl kickstart -k gui/501/fspec.t3".to_string()),
+        "{:#?}",
+        w.runner.lines()
+    );
+    journal.finish().unwrap();
+
+    // Up to date: nothing to restart.
+    running_t3(&w, "bbb-t3", RUNNING);
+    let state = State::load(&cx.state_dir().join("state.json")).unwrap();
+    assert!(plan_scope(&cx, backends, &want, &state).unwrap().changes.is_empty());
+
+    // A bare command runs through /usr/bin/env, which is not a store path.
+    running_t3(&w, "aaa-t3", "\tprogram = /usr/bin/env\n\tpid = 42\n");
+    assert!(plan_scope(&cx, backends, &want, &state).unwrap().changes.is_empty());
+
+    // A job that is loaded but not running has no pid.
+    running_t3(&w, "aaa-t3", "\tprogram = /opt/fspec/current/bin/t3\n\tstate = not running\n");
+    assert!(plan_scope(&cx, backends, &want, &state).unwrap().changes.is_empty());
+}
+
+#[test]
+fn a_refresh_restart_that_fails_leaves_the_agent_pending() {
+    let w = World::darwin();
+    stale_t3(&w);
+    let failed = Output { status: 113, stderr: "Could not find service \"fspec.t3\"\n".into(), ..Output::default() };
+    w.runner.respond("launchctl kickstart", failed);
+    let entries = [Entry { resource: t3(), owner: None, record: serde_json::Map::new() }];
+    let cx = w.cx(Scope::User);
+    let mut journal = fspec_core::journal::Journal::begin(&cx.state_dir(), 1).unwrap();
+    let records = LaunchdBackend.refresh(&cx, &entries, &mut journal).unwrap();
+    assert_eq!(
+        records[&t3().key()]["pending"],
+        "`launchctl kickstart -k gui/501/fspec.t3` failed: Could not find service \"fspec.t3\""
+    );
+    journal.finish().unwrap();
 }

@@ -49,11 +49,13 @@ impl Backend for LaunchdBackend {
 
     fn drift(&self, cx: &Cx, entry: &Entry) -> Result<Vec<String>> {
         let path = plist_path(&entry.resource);
-        Ok(match read_or_empty(&cx.resolve(&path)?) {
+        let mut notes = match read_or_empty(&cx.resolve(&path)?) {
             None => vec![format!("{path} is missing")],
             Some(on_disk) if on_disk != render(&entry.resource)? => vec![format!("{path} was edited")],
             Some(_) => vec![],
-        })
+        };
+        notes.extend(stale(cx, &entry.resource)?);
+        Ok(notes)
     }
 
     fn prepare(&self, _cx: &Cx, ops: &[Op], staging: &Path) -> Result<()> {
@@ -101,6 +103,57 @@ impl Backend for LaunchdBackend {
         }
         Ok(records)
     }
+
+    fn refresh(&self, cx: &Cx, entries: &[Entry], journal: &mut Journal) -> Result<Records> {
+        let mut records = Records::new();
+        for e in entries {
+            if let Some(why) = stale(cx, &e.resource)?
+                && let Some(failed) = restart(cx, journal, &e.resource, &why)?
+            {
+                let mut rec = e.record.clone();
+                fspec_core::apply::pending(&mut rec, failed);
+                records.insert(e.resource.key(), rec);
+            }
+        }
+        Ok(records)
+    }
+}
+
+/// Why a running service is stale: the job's program now resolves to another store package than
+/// the one its process was started from, as after an apply that moved the package's `current`
+/// link. A drifted service is booted out and bootstrapped again by the commit, which starts the
+/// new program.
+fn stale(cx: &Cx, r: &Resource) -> Result<Option<String>> {
+    let Resource::Service(s) = r else { return Ok(None) };
+    let store = cx.paths.fspec_root().join("store");
+    if crate::distro_unit::of(s).is_some() || !store.is_dir() {
+        return Ok(None);
+    }
+    let target = format!("{}/{}", domain(cx, r)?, label(r));
+    // A job that is not loaded fails here, and one that is not running prints no pid. Nested
+    // sections indent deeper, so only the job's own keys sit behind one tab.
+    let shown = cx.runner.run(&Cmd::new("launchctl").args(["print", &target]))?.stdout;
+    let prop = |k: &str| shown.lines().find_map(|l| l.strip_prefix('\t')?.strip_prefix(k)?.strip_prefix(" = "));
+    let (Some(pid), Some(program)) = (prop("pid"), prop("program")) else { return Ok(None) };
+    // `ps` prints the path the process was started by, the `current` link that already points at
+    // the new package. lsof lists the executable first among the text files, resolved.
+    let txt = cx.runner.run(&Cmd::new("lsof").args(["-a", "-p", pid, "-d", "txt", "-Fn"]))?.stdout;
+    let Some(running) = txt.lines().find_map(|l| l.strip_prefix('n')) else { return Ok(None) };
+    crate::store_moved(cx, &store, &label(r), running, program)
+}
+
+/// Restart a stale job. Returns why the restart failed, which leaves the service pending instead
+/// of rolling back the apply.
+fn restart(cx: &Cx, journal: &mut Journal, r: &Resource, why: &str) -> Result<Option<String>> {
+    let kickstart = Cmd::new("launchctl").args(["kickstart", "-k", &format!("{}/{}", domain(cx, r)?, label(r))]);
+    journal.record(Undo::Run { cmd: kickstart.clone() })?;
+    let out = cx.runner.run(&kickstart)?;
+    if out.status != 0 {
+        let msg = out.stderr.lines().chain(out.stdout.lines()).find(|l| !l.trim().is_empty()).unwrap_or("");
+        return Ok(Some(format!("`{kickstart}` failed: {}", msg.trim())));
+    }
+    println!("{}: restarted, {why}", r.key());
+    Ok(None)
 }
 
 fn staged(staging: &Path, op: &Op) -> std::path::PathBuf {

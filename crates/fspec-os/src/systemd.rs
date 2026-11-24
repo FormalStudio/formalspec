@@ -275,19 +275,8 @@ fn stale_from(cx: &Cx, store: &Path, unit: &str, shown: &str) -> Result<Option<S
     else {
         return Ok(None);
     };
-    // The kernel reports a removed executable as `<path> (deleted)`; the package is the first
-    // component under the store either way.
     let Ok(running) = fs::read_link(cx.resolve(&format!("/proc/{pid}/exe"))?) else { return Ok(None) };
-    let Ok(now) = fs::canonicalize(cx.resolve(exec)?) else { return Ok(None) };
-    let package = |p: &Path, store: &Path| {
-        Some(p.strip_prefix(store).ok()?.components().next()?.as_os_str().to_string_lossy().into_owned())
-    };
-    let was = package(&cx.resolve(&running.to_string_lossy())?, store);
-    let is = fs::canonicalize(store).ok().and_then(|store| package(&now, &store));
-    Ok(match (was, is) {
-        (Some(was), Some(is)) if was != is => Some(format!("{unit} runs {was}, the store now has {is}")),
-        _ => None,
-    })
+    crate::store_moved(cx, store, unit, &running.to_string_lossy(), exec)
 }
 
 /// Why `cmd` failed to start or restart `unit`, after clearing the unit's failed state: `Restart=`
