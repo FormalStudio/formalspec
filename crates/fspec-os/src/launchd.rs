@@ -86,17 +86,29 @@ impl Backend for LaunchdBackend {
                 continue;
             }
 
+            let rendered = fs::read_to_string(staged(staging, op))?;
+            // A job changed only because its program moved keeps its plist. bootout returns before
+            // the process exits, so a bootstrap right after it fails with EIO; kickstart -k waits.
+            if op.current.is_some() && read_or_empty(&path).as_deref() == Some(rendered.as_str()) {
+                let kickstart = Cmd::new("launchctl").args(["kickstart", "-k", &target]);
+                journal.record(Undo::Run { cmd: kickstart.clone() })?;
+                cx.runner.check(&kickstart)?;
+                let mut rec = Map::new();
+                rec.insert("plist".into(), json!(spec_path));
+                records.insert(op.key.clone(), rec);
+                continue;
+            }
             if op.current.is_some() {
                 journal.record(Undo::Run { cmd: bootstrap.clone() })?;
             }
             journal.backup(&path)?;
-            write_file(&path, &fs::read_to_string(staged(staging, op))?)?;
+            write_file(&path, &rendered)?;
             if op.current.is_some() {
                 // A job that is not loaded (never started, or booted out by hand) fails here.
                 cx.runner.run(&bootout)?;
             }
             journal.record(Undo::Run { cmd: bootout })?;
-            cx.runner.check(&bootstrap)?;
+            load(cx, &bootstrap)?;
             let mut rec = Map::new();
             rec.insert("plist".into(), json!(spec_path));
             records.insert(op.key.clone(), rec);
@@ -121,8 +133,7 @@ impl Backend for LaunchdBackend {
 
 /// Why a running service is stale: the job's program now resolves to another store package than
 /// the one its process was started from, as after an apply that moved the package's `current`
-/// link. A drifted service is booted out and bootstrapped again by the commit, which starts the
-/// new program.
+/// link. The commit restarts a drifted service with `kickstart -k`, which starts the new program.
 fn stale(cx: &Cx, r: &Resource) -> Result<Option<String>> {
     let Resource::Service(s) = r else { return Ok(None) };
     let store = cx.paths.fspec_root().join("store");
@@ -154,6 +165,21 @@ fn restart(cx: &Cx, journal: &mut Journal, r: &Resource, why: &str) -> Result<Op
     }
     println!("{}: restarted, {why}", r.key());
     Ok(None)
+}
+
+/// `bootout` returns while a job that is slow to exit is still being torn down, and a `bootstrap`
+/// of the same label in that window fails with 5 (EIO). Retry for up to 10 s. A rooted run only
+/// logs commands, so it does not wait.
+fn load(cx: &Cx, bootstrap: &Cmd) -> Result<()> {
+    if cx.paths.root == Path::new("/") {
+        for _ in 0..40 {
+            if cx.runner.run(bootstrap)?.status != 5 {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(250));
+        }
+    }
+    cx.runner.check(bootstrap).map(drop)
 }
 
 fn staged(staging: &Path, op: &Op) -> std::path::PathBuf {

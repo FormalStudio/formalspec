@@ -1086,9 +1086,12 @@ manager reads every service at once, whatever their number.
 launchd does the same for fspec's own services: `launchctl print` gives the
 job's `program` and `pid`, and the process's executable is the first text file
 `lsof` lists for it (`ps` prints the `current` link it was started by, which
-already points at the new package). A stale job drifts, and the commit boots it
-out and in again; one the same apply replaced is restarted in `refresh` with
-`launchctl kickstart -k`, and a failed kickstart leaves it pending.
+already points at the new package). A stale job drifts, and the commit restarts it
+with `launchctl kickstart -k`, since its plist is unchanged; one the same apply
+replaced is restarted the same way in `refresh`, and a failed kickstart leaves
+it pending. A job whose plist changed is booted out and bootstrapped again.
+`bootout` returns before a slow job has exited, and a `bootstrap` in that window
+fails with 5 (EIO), so the bootstrap is retried for up to 10 s.
 
 A timer's `schedule` is a five-field cron expression or one of `@hourly`,
 `@daily`, `@weekly` and `@monthly`. Timers become systemd timers, cron entries or launchd

@@ -250,12 +250,12 @@ fn an_agent_running_a_replaced_store_package_restarts() {
         p.changes[0].action,
         Action::Drift { notes: vec!["fspec.t3 runs aaa-t3, the store now has bbb-t3".into()] }
     );
-    // The commit boots the job out and in again, which starts the new program.
+    // The plist is unchanged, so the commit kickstarts the job instead of booting it out and in.
     w.runner.calls.lock().unwrap().clear();
     apply_scope(&cx, backends, &want).unwrap();
     let lines = w.runner.lines();
-    assert!(lines.contains(&"launchctl bootout gui/501/fspec.t3".to_string()), "{lines:#?}");
-    assert!(lines.iter().any(|l| l.starts_with("launchctl bootstrap gui/501")), "{lines:#?}");
+    assert!(lines.contains(&"launchctl kickstart -k gui/501/fspec.t3".to_string()), "{lines:#?}");
+    assert!(!lines.iter().any(|l| l.starts_with("launchctl bootout")), "{lines:#?}");
 
     // A package the same apply replaced is caught by the refresh after the commit.
     w.runner.calls.lock().unwrap().clear();
