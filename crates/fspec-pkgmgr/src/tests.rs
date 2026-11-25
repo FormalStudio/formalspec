@@ -1349,6 +1349,28 @@ fn from_1password(name: &str) -> Desired {
 }
 
 #[test]
+fn a_package_tied_to_a_repo_installs_from_it_apart_from_the_batch() {
+    let w = tumbleweed();
+    disable_rolling(&w);
+    fs::write(
+        w.paths.root.join("etc/zypp/repos.d/1password.repo"),
+        format!("[1password]\nenabled=1\nbaseurl={REPO_URL}\n"),
+    )
+    .unwrap();
+    let plain = pkg("htop", json!({"kind": "zypper", "names": []}), "pinned");
+    let other = pkg("btop", json!({"kind": "zypper", "names": []}), "pinned");
+    w.apply(Scope::System, &[from_1password("1password-cli"), plain, other]).unwrap();
+    let installs: Vec<String> = w.take().into_iter().filter(|l| l.contains(" install ")).collect();
+    assert!(
+        installs.contains(
+            &"zypper --non-interactive install --auto-agree-with-licenses --from 1password 1password-cli".into()
+        ),
+        "{installs:#?}"
+    );
+    assert!(installs.iter().all(|l| !l.contains("--from") || !l.contains("htop")), "{installs:#?}");
+}
+
+#[test]
 fn a_repo_whose_key_cannot_be_fetched_is_deferred_with_its_packages() {
     let w = tumbleweed();
     disable_rolling(&w);

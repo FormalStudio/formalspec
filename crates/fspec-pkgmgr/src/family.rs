@@ -62,6 +62,16 @@ impl Family {
         }]
     }
 
+    /// zypper keeps an installed package's vendor unless the install names the repo, so
+    /// `--from` is what moves a package the distro already installed (its ffmpeg, say) over to
+    /// the third-party build.
+    pub fn install_names_from(self, names: &[String], repo: Option<&str>) -> Vec<Cmd> {
+        match (self, repo) {
+            (Family::Zypper, Some(r)) => vec![zypper_install().args(["--from", r]).args(names)],
+            _ => self.install_names(names),
+        }
+    }
+
     /// Install a cached package file. A local xbps repository needs its index built first, and
     /// installs by name from it. moss packages lock by name only, so they never have a file.
     pub fn install_file(self, file: &Path, names: &[String]) -> Vec<Cmd> {

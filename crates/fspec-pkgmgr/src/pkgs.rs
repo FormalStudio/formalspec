@@ -33,6 +33,8 @@ struct Want {
     /// The cached file to install instead of the names. Only for a single-name package, since
     /// the lock holds one artifact per package.
     cached: Option<Cached>,
+    /// The `repo(...)` alias the names install from.
+    repo: Option<String>,
 }
 
 fn names(fam: Family, p: &Pkg) -> Result<Vec<String>> {
@@ -60,7 +62,7 @@ fn want(fam: Family, cx: &Cx, p: &Pkg) -> Result<Want> {
         },
         _ => None,
     };
-    Ok(Want { names, cached })
+    Ok(Want { names, cached, repo: from_repo(p).map(str::to_string) })
 }
 
 pub(crate) fn cache_dir(cx: &Cx) -> PathBuf {
@@ -217,10 +219,10 @@ fn journal_undo(cx: &Cx, journal: &mut Journal, fam: Family, cmds: impl FnOnce()
     }
 }
 
-fn install_cmds(cx: &Cx, fam: Family, names: &[String], cached: Option<&Cached>) -> Vec<Cmd> {
+fn install_cmds(cx: &Cx, fam: Family, names: &[String], cached: Option<&Cached>, repo: Option<&str>) -> Vec<Cmd> {
     match cached {
         Some(c) => fam.install_file(&cache_dir(cx).join(&c.file), names),
-        None => fam.install_names(names),
+        None => fam.install_names_from(names, repo),
     }
 }
 
@@ -230,7 +232,11 @@ fn install_cmds(cx: &Cx, fam: Family, names: &[String], cached: Option<&Cached>)
 /// there. Undoing would mean removing every new package, which for a first apply is thousands, and
 /// reinstalling a `!name` the wanted set conflicts with fails anyway.
 pub(crate) fn install(cx: &Cx, fam: Family, names: &[String], cached: Option<&Cached>) -> Result<()> {
-    run_all(cx, &install_cmds(cx, fam, names, cached))
+    run_all(cx, &install_cmds(cx, fam, names, cached, None))
+}
+
+fn install_want(cx: &Cx, fam: Family, w: &Want) -> Result<()> {
+    run_all(cx, &install_cmds(cx, fam, &w.names, w.cached.as_ref(), w.repo.as_deref()))
 }
 
 /// Installing over an existing package can only be reversed when the previous file is cached.
@@ -239,7 +245,7 @@ fn upgrade(cx: &Cx, journal: &mut Journal, fam: Family, w: &Want, rec: &Map<Stri
         Some(prev) => fam.install_file(&prev, &w.names),
         None => Vec::new(),
     })?;
-    run_all(cx, &install_cmds(cx, fam, &w.names, w.cached.as_ref()))
+    install_want(cx, fam, w)
 }
 
 /// Remove `names`, journaling the install that puts them back: the cached file when the record
@@ -372,15 +378,15 @@ impl PkgEngine {
             }
             let w = want(fam, cx, p)?;
             match had {
-                None if w.cached.is_none() => {
+                None if w.cached.is_none() && w.repo.is_none() => {
                     fresh.push((op, w));
                     continue;
                 }
-                None => install(cx, fam, &w.names, w.cached.as_ref())?,
+                None => install_want(cx, fam, &w)?,
                 Some((n, rec)) if n == w.names => upgrade(cx, journal, fam, &w, &rec)?,
                 Some((n, rec)) => {
                     remove(cx, journal, fam, &n, &rec)?;
-                    install(cx, fam, &w.names, w.cached.as_ref())?;
+                    install_want(cx, fam, &w)?;
                 }
             }
             done.push((op, w));

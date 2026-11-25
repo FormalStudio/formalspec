@@ -190,7 +190,9 @@ Each returns a value for `pkg(source = ...)`.
 | `dnf(names)`, `pacman(names)`, `apt(names)`, `xbps(names)`, `moss(names)`, `zypper(names)` | a name or a list | `repo` (zypper only) | The distro's repositories, on hosts of that distro |
 
 `names` defaults to the package's own name. `zypper("nordvpn", repo = "nordvpn")` ties the
-package to a `repo(...)`, so it waits with that repository when the repository is unreachable.
+package to a `repo(...)`, so it waits with that repository when the repository is unreachable,
+and installs from that repository with `zypper install --from`, replacing a copy the distro
+already installed.
 
 ## file
 

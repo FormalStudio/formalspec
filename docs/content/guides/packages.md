@@ -104,7 +104,9 @@ while any `?` line remains. On a bootc image host, distro packages go
 in `image(packages = ...)` instead. The base packages of a classic distro go in
 `system = fedora(packages = [...])`; see [The system layer](system-layer.md).
 
-`zypper(repo = ...)` ties the package to a third-party `repo(...)` on openSUSE Tumbleweed.
+`zypper(repo = ...)` ties the package to a third-party `repo(...)` on openSUSE Tumbleweed. It
+installs with `zypper install --from <repo>`, so a package the distro already installed switches
+to that repository's build.
 
 On Tumbleweed, `apply` asks zypper's solver about the new base packages before anything
 changes (`zypper --no-refresh install --dry-run`), and about the new `pkg` packages together
