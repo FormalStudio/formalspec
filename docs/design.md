@@ -1370,9 +1370,9 @@ too, after the repos. A package tied to a repo installs with `zypper install
 --from <name>`, outside the batched install of the other new packages: zypper
 otherwise keeps the vendor of a package the distro already installed, so a
 third-party build of a distro library (Packman's ffmpeg) would never replace it. Drift
-asks `zypper search -i -r <name>` whether the installed build is the repo's, since
-the distro's build often carries the same version; one that is not reinstalls
-with `--from`.
+asks `zypper search -i` which repo the installed build matches, since the
+distro's build often carries the same version; one another repo carries
+reinstalls with `--from`. A build no repo carries any more does not drift.
 
 A repo the host cannot reach is deferred, not an error: its key cannot be
 fetched, or `zypper refresh <name>` fails after the add (the vendor is down,

@@ -321,8 +321,8 @@ impl PkgEngine {
                     let wanted: Vec<String> =
                         names.iter().filter(|n| !n.starts_with('!') && live.contains_key(*n)).cloned().collect();
                     if !wanted.is_empty() {
-                        for n in crate::zypper::not_from_repo(cx, alias, &wanted)? {
-                            notes.push(format!("{n} is not from repo:{alias}"));
+                        for n in crate::zypper::from_another_repo(cx, alias, &wanted)? {
+                            notes.push(format!("{n} is another repo's build, not repo:{alias}'s"));
                         }
                     }
                 }

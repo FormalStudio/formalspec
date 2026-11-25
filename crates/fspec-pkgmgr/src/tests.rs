@@ -1379,12 +1379,13 @@ fn a_repo_package_the_distro_built_drifts_until_it_comes_from_the_repo() {
         format!("[1password]\nenabled=1\nbaseurl={REPO_URL}\n"),
     )
     .unwrap();
-    let search = "zypper --non-interactive --no-refresh -x search -s -i -r 1password 1password-cli";
+    let search = "zypper --non-interactive --no-refresh -x search --match-exact -s -i 1password-cli";
     let want = [from_1password("1password-cli")];
     w.apply(Scope::System, &want).unwrap();
     w.take();
 
-    w.answer(search, 104, "<?xml version='1.0'?>\n<stream>\n</stream>\n");
+    let solvable = |repo: &str| format!(r#"<solvable status="installed" name="1password-cli" repository="{repo}"/>"#);
+    w.answer(search, 0, &solvable("openSUSE Tumbleweed repo/oss/"));
     let changes = w.plan(Scope::System, &want).unwrap().changes;
     assert_eq!(changes.len(), 1, "{changes:?}");
     w.apply(Scope::System, &want).unwrap();
@@ -1392,7 +1393,9 @@ fn a_repo_package_the_distro_built_drifts_until_it_comes_from_the_repo() {
         &"zypper --non-interactive install --auto-agree-with-licenses --from 1password 1password-cli".into()
     ));
 
-    w.answer(search, 0, r#"<solvable status="installed" name="1password-cli" kind="package" repository="1password"/>"#);
+    w.answer(search, 0, &solvable("1password"));
+    assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
+    w.answer(search, 0, &solvable("(System Packages)"));
     assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
 }
 

@@ -337,22 +337,33 @@ pub(crate) fn repo_enabled(cx: &Cx, alias: &str) -> bool {
     repos(cx).iter().any(|k| k.alias == alias && k.enabled)
 }
 
-/// Of `names`, the ones whose installed build is not the one `alias` carries. The distro's build
-/// of a package often has the same version as the third-party one (openSUSE's and Packman's
-/// ffmpeg), so only the repo zypper matches the installed package to tells them apart.
-pub(crate) fn not_from_repo(cx: &Cx, alias: &str, names: &[String]) -> Result<Vec<String>> {
-    let out = cx.runner.run(&zypper(["--no-refresh", "-x", "search", "-s", "-i", "-r", alias]).args(names))?;
+/// Of `names`, the ones whose installed build zypper matches to a repo other than `alias`: the
+/// distro's build of a package often has the same version as the third-party one (openSUSE's and
+/// Packman's ffmpeg), so the version alone cannot tell them apart. A build no repo carries any
+/// more, after the vendor moved on, matches only `(System Packages)` and does not count.
+pub(crate) fn from_another_repo(cx: &Cx, alias: &str, names: &[String]) -> Result<Vec<String>> {
+    let out = cx.runner.run(&zypper(["--no-refresh", "-x", "search", "--match-exact", "-s", "-i"]).args(names))?;
     // 104 is zypper's "no matching items found".
     if out.status != 0 && out.status != 104 {
-        bail!("zypper search in repo:{alias} failed ({}): {}", out.status, out.stderr.trim());
+        bail!("zypper search for repo:{alias} failed ({}): {}", out.status, out.stderr.trim());
     }
-    let installed: Vec<&str> = out
+    let attr = |line: &str, key: &str| -> Option<String> {
+        Some(line.split(&format!(r#" {key}=""#)).nth(1)?.split('"').next()?.to_string())
+    };
+    let installed: Vec<(String, String)> = out
         .stdout
         .lines()
         .filter(|l| l.contains("<solvable ") && l.contains(r#"status="installed""#))
-        .filter_map(|l| l.split(r#" name=""#).nth(1)?.split('"').next())
+        .filter_map(|l| Some((attr(l, "name")?, attr(l, "repository")?)))
         .collect();
-    Ok(names.iter().filter(|n| !installed.contains(&n.as_str())).cloned().collect())
+    Ok(names
+        .iter()
+        .filter(|n| {
+            let repos: Vec<&str> = installed.iter().filter(|(i, _)| i == *n).map(|(_, r)| r.as_str()).collect();
+            !repos.contains(&alias) && repos.iter().any(|r| *r != "(System Packages)")
+        })
+        .cloned()
+        .collect())
 }
 
 /// Remove the repo. Its key stays imported, since other repos may be signed with it.
