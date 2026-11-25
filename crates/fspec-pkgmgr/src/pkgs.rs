@@ -313,7 +313,20 @@ impl PkgEngine {
             .zip(&names)
             .map(|(entry, names)| {
                 let mut notes = names_drift(names, &entry.record, &live);
-                if let Some(c) = want(fam, cx, pkg(&entry.resource)?)?.cached
+                let p = pkg(&entry.resource)?;
+                if let Some(alias) = from_repo(p)
+                    && fam == Family::Zypper
+                    && crate::zypper::repo_enabled(cx, alias)
+                {
+                    let wanted: Vec<String> =
+                        names.iter().filter(|n| !n.starts_with('!') && live.contains_key(*n)).cloned().collect();
+                    if !wanted.is_empty() {
+                        for n in crate::zypper::not_from_repo(cx, alias, &wanted)? {
+                            notes.push(format!("{n} is not from repo:{alias}"));
+                        }
+                    }
+                }
+                if let Some(c) = want(fam, cx, p)?.cached
                     && text(&entry.record, "file").as_deref() != Some(&c.file)
                 {
                     notes.push(format!("lock moved to {}", c.file));

@@ -1371,6 +1371,32 @@ fn a_package_tied_to_a_repo_installs_from_it_apart_from_the_batch() {
 }
 
 #[test]
+fn a_repo_package_the_distro_built_drifts_until_it_comes_from_the_repo() {
+    let w = tumbleweed();
+    disable_rolling(&w);
+    fs::write(
+        w.paths.root.join("etc/zypp/repos.d/1password.repo"),
+        format!("[1password]\nenabled=1\nbaseurl={REPO_URL}\n"),
+    )
+    .unwrap();
+    let search = "zypper --non-interactive --no-refresh -x search -s -i -r 1password 1password-cli";
+    let want = [from_1password("1password-cli")];
+    w.apply(Scope::System, &want).unwrap();
+    w.take();
+
+    w.answer(search, 104, "<?xml version='1.0'?>\n<stream>\n</stream>\n");
+    let changes = w.plan(Scope::System, &want).unwrap().changes;
+    assert_eq!(changes.len(), 1, "{changes:?}");
+    w.apply(Scope::System, &want).unwrap();
+    assert!(w.take().contains(
+        &"zypper --non-interactive install --auto-agree-with-licenses --from 1password 1password-cli".into()
+    ));
+
+    w.answer(search, 0, r#"<solvable status="installed" name="1password-cli" kind="package" repository="1password"/>"#);
+    assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
+}
+
+#[test]
 fn a_repo_whose_key_cannot_be_fetched_is_deferred_with_its_packages() {
     let w = tumbleweed();
     disable_rolling(&w);

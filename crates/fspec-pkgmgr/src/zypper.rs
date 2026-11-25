@@ -337,6 +337,24 @@ pub(crate) fn repo_enabled(cx: &Cx, alias: &str) -> bool {
     repos(cx).iter().any(|k| k.alias == alias && k.enabled)
 }
 
+/// Of `names`, the ones whose installed build is not the one `alias` carries. The distro's build
+/// of a package often has the same version as the third-party one (openSUSE's and Packman's
+/// ffmpeg), so only the repo zypper matches the installed package to tells them apart.
+pub(crate) fn not_from_repo(cx: &Cx, alias: &str, names: &[String]) -> Result<Vec<String>> {
+    let out = cx.runner.run(&zypper(["--no-refresh", "-x", "search", "-s", "-i", "-r", alias]).args(names))?;
+    // 104 is zypper's "no matching items found".
+    if out.status != 0 && out.status != 104 {
+        bail!("zypper search in repo:{alias} failed ({}): {}", out.status, out.stderr.trim());
+    }
+    let installed: Vec<&str> = out
+        .stdout
+        .lines()
+        .filter(|l| l.contains("<solvable ") && l.contains(r#"status="installed""#))
+        .filter_map(|l| l.split(r#" name=""#).nth(1)?.split('"').next())
+        .collect();
+    Ok(names.iter().filter(|n| !installed.contains(&n.as_str())).cloned().collect())
+}
+
 /// Remove the repo. Its key stays imported, since other repos may be signed with it.
 pub(crate) fn remove_repo(cx: &Cx, journal: &mut Journal, r: &Repo) -> Result<()> {
     if !repos(cx).iter().any(|k| k.alias == r.name) {
