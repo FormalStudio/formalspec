@@ -1395,6 +1395,13 @@ fn a_repo_package_the_distro_built_drifts_until_it_comes_from_the_repo() {
 
     w.answer(search, 0, &solvable("1password"));
     assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
+    fs::write(
+        w.paths.root.join("etc/zypp/repos.d/1password.repo"),
+        format!("[1password]\nname=1Password Stable Channel\nenabled=1\nbaseurl={REPO_URL}\n"),
+    )
+    .unwrap();
+    w.answer(search, 0, &solvable("1Password Stable Channel"));
+    assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
     w.answer(search, 0, &solvable("(System Packages)"));
     assert!(w.plan(Scope::System, &want).unwrap().changes.is_empty());
 }

@@ -22,6 +22,9 @@ const ROLLING: [&str; 4] = ["/tumbleweed/", "/update/tumbleweed", "/debug/tumble
 #[derive(Debug)]
 pub(crate) struct RepoFile {
     pub alias: String,
+    /// What `zypper search` prints as the repository. A vendor's package can rewrite its own
+    /// repo file with a display name ("1Password Stable Channel"); without `name=` it is the alias.
+    pub name: String,
     pub url: String,
     pub enabled: bool,
 }
@@ -37,10 +40,11 @@ pub(crate) fn repos(cx: &Cx) -> Vec<RepoFile> {
     for text in paths.iter().filter_map(|p| fs::read_to_string(p).ok()) {
         for line in text.lines().map(str::trim) {
             if let Some(alias) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
-                out.push(RepoFile { alias: alias.into(), url: String::new(), enabled: true });
+                out.push(RepoFile { alias: alias.into(), name: alias.into(), url: String::new(), enabled: true });
             } else if let (Some(r), Some((k, v))) = (out.last_mut(), line.split_once('=')) {
                 match k.trim() {
                     "baseurl" => r.url = v.trim().into(),
+                    "name" => r.name = v.trim().into(),
                     "enabled" => r.enabled = v.trim() == "1",
                     _ => {}
                 }
@@ -347,6 +351,7 @@ pub(crate) fn from_another_repo(cx: &Cx, alias: &str, names: &[String]) -> Resul
     if out.status != 0 && out.status != 104 {
         bail!("zypper search for repo:{alias} failed ({}): {}", out.status, out.stderr.trim());
     }
+    let name = repos(cx).into_iter().find(|r| r.alias == alias).map_or_else(|| alias.to_string(), |r| r.name);
     let attr = |line: &str, key: &str| -> Option<String> {
         Some(line.split(&format!(r#" {key}=""#)).nth(1)?.split('"').next()?.to_string())
     };
@@ -360,7 +365,7 @@ pub(crate) fn from_another_repo(cx: &Cx, alias: &str, names: &[String]) -> Resul
         .iter()
         .filter(|n| {
             let repos: Vec<&str> = installed.iter().filter(|(i, _)| i == *n).map(|(_, r)| r.as_str()).collect();
-            !repos.contains(&alias) && repos.iter().any(|r| *r != "(System Packages)")
+            !repos.contains(&name.as_str()) && repos.iter().any(|r| *r != "(System Packages)")
         })
         .cloned()
         .collect())
